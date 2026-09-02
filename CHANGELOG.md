@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The one-tile glide time is a runtime setting (`smooth-movement timestep <ms>`,
+  default 100 ms). A movement keeps the time it started with.
 - Mirror creature sprites horizontally so they face their direction of travel.
   Dwarf Fortress creature art natively faces west, so only creatures moving
   east are mirrored. Facing is sticky: only horizontal movement changes it,

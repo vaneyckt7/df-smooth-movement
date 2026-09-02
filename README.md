@@ -8,6 +8,7 @@ A visual plugin for Dwarf Fortress that makes movement smoother.
 - **Synced icons:** status icons follow their creature while it moves.
 - **Animated carts:** wheelbarrows and minecarts move smoothly too.
 - **Sprites flip** creatures can optionally face the direction they are walking.
+- **Adjustable step time:** how long a one-tile glide takes is a runtime setting.
 - **Free camera:** the camera can optionally glide and be dragged with the mouse (WIP).
 
 ## Installation
@@ -31,6 +32,7 @@ smooth-movement             # show plugin status
 disable smooth-movement     # disable the plugin
 smooth-movement flip on     # enable sprites flip
 smooth-movement camera on   # enable the free camera
+smooth-movement timestep 150  # one-tile glide takes 150 ms (default 100, range 20-2000)
 ```
 
 ## Compatibility

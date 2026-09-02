@@ -53,6 +53,7 @@ void run_frame(
 int main()
 {
 	visual_animation_managerst manager;
+	manager.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	manager.begin_frame(1000);
 	assert(manager.get_frame_time_ms()==1000);
 	assert(manager.get_frame_delta_ms()==0);
@@ -65,6 +66,7 @@ int main()
 	assert(manager.get_frame_delta_ms()==0);
 
 	visual_animation_managerst rollover;
+	rollover.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	rollover.begin_frame(std::numeric_limits<uint32_t>::max()-5);
 	rollover.begin_frame(3);
 	assert(rollover.get_frame_delta_ms()==9);
@@ -105,6 +107,7 @@ int main()
 	// Moving west sets west facing on the target tile.
 	{
 	visual_animation_managerst manager;
+	manager.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto input=make_input(viewport,dim,empty);
 	set_layer(input,viewport_visual_layer::center,before,empty);
 	run_frame(manager,input,1000);
@@ -117,6 +120,7 @@ int main()
 	// East is neither the grid default nor the source facing, so the assertion is not vacuous.
 	{
 	visual_animation_managerst manager;
+	manager.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto input=make_input(viewport,dim,empty);
 	set_layer(input,viewport_visual_layer::center,before,empty);
 	run_frame(manager,input,1000);
@@ -132,6 +136,7 @@ int main()
 	// It must rise only for a genuinely mirrored creature and fall when that tile empties.
 	{
 	visual_animation_managerst manager;
+	manager.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto input=make_input(viewport,dim,empty);
 	set_layer(input,viewport_visual_layer::center,before,empty);
 	run_frame(manager,input,1000);
@@ -157,6 +162,7 @@ int main()
 	// Pure vertical movement carries the existing facing to the new tile.
 	{
 	visual_animation_managerst manager;
+	manager.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto input=make_input(viewport,dim,empty);
 	set_layer(input,viewport_visual_layer::center,before,empty);
 	run_frame(manager,input,1000);
@@ -173,6 +179,7 @@ int main()
 	// Out-of-range and unknown viewports fall back to the native facing.
 	{
 	visual_animation_managerst manager;
+	manager.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto input=make_input(viewport,dim,empty);
 	set_layer(input,viewport_visual_layer::center,before,empty);
 	run_frame(manager,input,1000);
@@ -188,6 +195,7 @@ int main()
 	const void *lower_viewport=&lower_token;
 	const void *main_viewport=&main_token;
 	visual_animation_managerst z_levels;
+	z_levels.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto lower_input=make_input(lower_viewport,dim,empty);
 	auto main_input=make_input(main_viewport,dim,empty);
 	set_layer(lower_input,viewport_visual_layer::center,before,empty);
@@ -229,6 +237,7 @@ int main()
 	north_west[2*diag_dim+2]=77;   // (3,3) -> (2,2): dx -1, dy -1
 
 	visual_animation_managerst diagonal;
+	diagonal.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto input=make_input(diag_viewport,diag_dim,diag_empty);
 	set_layer(input,viewport_visual_layer::center,start,diag_empty);
 	run_frame(diagonal,input,1000);
@@ -278,6 +287,7 @@ int main()
 	// LANDED: the shift is recognized, so facing follows the buffers.
 	{
 	visual_animation_managerst landed;
+	landed.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto input=make_input(pan_viewport,pan_dim,pan_empty);
 	set_layer(input,viewport_visual_layer::center,at_one,pan_empty);
 	run_frame(landed,input,1000);
@@ -305,6 +315,7 @@ int main()
 	// The empty-tile sweep cannot reach that case, so only an explicit reset clears it.
 	{
 	visual_animation_managerst abandoned;
+	abandoned.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto input=make_input(pan_viewport,pan_dim,pan_empty);
 	set_layer(input,viewport_visual_layer::center,at_one,pan_empty);
 	run_frame(abandoned,input,2000);
@@ -354,6 +365,7 @@ int main()
 	frame_c[2*chase_dim+3]=88;   // B: (2,2) -> (2,3)
 
 	visual_animation_managerst manager;
+	manager.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto input=make_input(chase_viewport,chase_dim,chase_empty);
 	set_layer(input,viewport_visual_layer::center,frame_a,chase_empty);
 	run_frame(manager,input,1000);
@@ -396,6 +408,7 @@ int main()
 	frame_c[2*gap_dim+1]=55;   // F appears at (2,1), untracked
 
 	visual_animation_managerst manager;
+	manager.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	auto input=make_input(gap_viewport,gap_dim,gap_empty);
 	set_layer(input,viewport_visual_layer::center,frame_a,gap_empty);
 	run_frame(manager,input,1000);
@@ -433,6 +446,7 @@ int main()
 	set_layer(input,viewport_visual_layer::center,current.data(),previous.data());
 
 	visual_animation_managerst movement;
+	movement.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	run_frame(movement,input,1990);
 	assert(!movement.requires_full_redraw());
 
@@ -461,6 +475,7 @@ int main()
 	assert(!movement.requires_full_redraw());
 
 	visual_animation_managerst ambiguous;
+	ambiguous.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	run_frame(ambiguous,input,2990);
 	previous.fill(0);
 	previous[0*3+1]=42;
@@ -472,6 +487,7 @@ int main()
 
 	// A handler and led animal form an occupied chain: each enters the other's old space.
 	visual_animation_managerst convoy;
+	convoy.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	current.fill(0);
 	previous.fill(0);
 	run_frame(convoy,input,3490);
@@ -504,6 +520,7 @@ int main()
 		}
 
 	visual_animation_managerst context;
+	context.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	current.fill(0);
 	previous.fill(0);
 	run_frame(context,input,4000);
@@ -535,6 +552,7 @@ int main()
 	// Frame B's buffers look exactly like a real move ((1,1)->(0,1) with a unique source) — the
 	// manager must recognize it as the pending pan and create NO movement.
 	visual_animation_managerst floaty;
+	floaty.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	pan_previous[1*3+1]=42;
 	pan_current[1*3+1]=42;
 	run_frame(floaty,pan_input,4990);
@@ -550,6 +568,7 @@ int main()
 	// FOLLOW: an in-flight movement survives the announce frame untouched and is translated on the
 	// frame the buffers shift, so the sprite tracks the scrolled world.
 	visual_animation_managerst panner;
+	panner.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	pan_current.fill(0);
 	pan_previous.fill(0);
 	pan_input.pan_x=0;
@@ -576,6 +595,7 @@ int main()
 
 	// SAME-FRAME: pan announced and buffers shifted in the same call — translated immediately.
 	visual_animation_managerst same_frame;
+	same_frame.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	pan_current.fill(0);
 	pan_previous.fill(0);
 	pan_input.pan_x=0;
@@ -594,6 +614,7 @@ int main()
 
 	// A change that is NOT a pure pan (context revision bump) still resets, even with in-flight work.
 	visual_animation_managerst reset_on_zoom;
+	reset_on_zoom.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	pan_current.fill(0);
 	pan_previous.fill(0);
 	pan_input.pan_x=0;
@@ -623,6 +644,7 @@ int main()
 		status_current.data(),
 		status_previous.data());
 	visual_animation_managerst companion;
+	companion.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	run_frame(companion,input,8990);
 	previous[0*3+1]=42;
 	current[1*3+1]=42;
@@ -662,6 +684,7 @@ int main()
 	status_current.fill(0);
 	status_previous.fill(0);
 	visual_animation_managerst crowd;
+	crowd.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	run_frame(crowd,input,9990);
 	previous[0*3+0]=41;
 	current[0*3+1]=41;
@@ -686,6 +709,7 @@ int main()
 	input.previous.fill(empty.data());
 	set_layer(input,viewport_visual_layer::item,current.data(),previous.data());
 	visual_animation_managerst item;
+	item.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	run_frame(item,input,10990);
 	previous[0*3+1]=77;
 	current[1*3+1]=77;
@@ -701,6 +725,7 @@ int main()
 	input.previous.fill(empty.data());
 	set_layer(input,viewport_visual_layer::vehicle,current.data(),previous.data());
 	visual_animation_managerst vehicle;
+	vehicle.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	run_frame(vehicle,input,11990);
 	previous[0*3+1]=77;
 	current[1*3+1]=78;
@@ -721,4 +746,43 @@ int main()
 		viewport,viewport_visual_layer::vehicle,2,1);
 	assert(chained.active&&chained.source_x>0.0f&&chained.source_x<1.0f&&
 		chained.progress==0.0f);
+
+	// A movement keeps the time step it started with: changing timestep mid-flight neither
+	// expires it early nor stretches it.
+	{
+	constexpr int32_t dim=3;
+	int32_t empty[dim*dim]={};
+	int32_t before[dim*dim]={};
+	int32_t after[dim*dim]={};
+	const int token=0;
+	const void *viewport=&token;
+	before[1*dim+1]=90;
+	after[2*dim+1]=90;
+	visual_animation_managerst slow;
+	slow.set_base_duration_ms(200);
+	auto input=make_input(viewport,dim,empty);
+	set_layer(input,viewport_visual_layer::center,before,empty);
+	run_frame(slow,input,5000);
+	set_layer(input,viewport_visual_layer::center,after,before);
+	run_frame(slow,input,5016);
+	slow.set_base_duration_ms(50);
+	set_layer(input,viewport_visual_layer::center,after,after);
+	run_frame(slow,input,5116);
+	const auto halfway=slow.get_movement(viewport,viewport_visual_layer::center,2,1);
+	assert(halfway.active&&halfway.progress==0.5f); // 100 ms into a 200 ms step
+	run_frame(slow,input,5215);
+	assert(slow.get_movement(viewport,viewport_visual_layer::center,2,1).active);
+	run_frame(slow,input,5216);
+	assert(!slow.get_movement(viewport,viewport_visual_layer::center,2,1).active);
+	// And a movement started after the change uses the new step.
+	int32_t back[dim*dim]={};
+	back[1*dim+1]=90;
+	set_layer(input,viewport_visual_layer::center,back,after);
+	run_frame(slow,input,5300);
+	run_frame(slow,input,5349);
+	assert(slow.get_movement(viewport,viewport_visual_layer::center,1,1).active);
+	run_frame(slow,input,5350);
+	assert(!slow.get_movement(viewport,viewport_visual_layer::center,1,1).active);
+	}
+
 }

@@ -1412,6 +1412,7 @@ command_result status_command(
 			camera_enabled?"on":"off",-rest_x,-rest_y);
 		out.print("sprite flipping: {}\n",
 			flip_enabled?"on":"off");
+		out.print("time step: {} ms\n",animation_manager.base_duration_ms());
 		return CR_OK;
 		}
 	if(parameters[0]=="camera")
@@ -1491,6 +1492,27 @@ command_result status_command(
 			}
 		return CR_WRONG_USAGE;
 		}
+	if(parameters[0]=="timestep")
+		{
+		if(parameters.size()==1)
+			{
+			out.print("time step: {} ms\n",animation_manager.base_duration_ms());
+			return CR_OK;
+			}
+		if(parameters.size()==2)
+			{
+			try
+				{
+				const int32_t ms=std::stoi(parameters[1]);
+				if(ms<20||ms>2000)return CR_WRONG_USAGE;
+				animation_manager.set_base_duration_ms(uint32_t(ms));
+				out.print("smooth-movement: time step {} ms\n",ms);
+				return CR_OK;
+				}
+			catch(...){return CR_WRONG_USAGE;}
+			}
+		return CR_WRONG_USAGE;
+		}
 	return CR_WRONG_USAGE;
 }
 
@@ -1501,7 +1523,7 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 {
 	commands.emplace_back(
 		"smooth-movement",
-		"Smooth movement status; free camera: camera on|off|reset|<fx> <fy>; "
+		"Smooth movement status; time step: timestep <ms>; free camera: camera on|off|reset|<fx> <fy>; "
 		"sprite flipping: flip on|off.",
 		status_command);
 	return CR_OK;

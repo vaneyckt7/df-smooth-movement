@@ -221,6 +221,7 @@ class visual_animation_managerst
 		int32_t target_x;
 		int32_t target_y;
 		uint32_t start_time_ms;
+		uint32_t duration_ms=100;
 	};
 
 	struct viewport_animationst
@@ -261,7 +262,8 @@ class visual_animation_managerst
 	bool force_full_redraw=false;
 	std::vector<viewport_animationst> viewports;
 
-	static constexpr uint32_t movement_duration_ms=100;
+	// Base time for one tile step; settable at runtime ('timestep <ms>').
+	uint32_t movement_duration_ms=100;
 	// Scrolling faster than detection keeps up: give up rather than test ever more prefixes.
 	static constexpr size_t max_pending_shifts=8;
 	// Bounds the wait on a scroll that never lands, so suppression cannot stick forever.
@@ -405,13 +407,24 @@ class visual_animation_managerst
 		return viewports.back();
 		}
 
-	float movement_progress(uint32_t start_time_ms) const
+	float movement_progress(const movementst &movement) const
 		{
 		return animation_progress(
-			frame_time_ms,start_time_ms,movement_duration_ms);
+			frame_time_ms,
+			movement.start_time_ms,
+			movement.duration_ms);
 		}
 
 	public:
+		uint32_t base_duration_ms() const
+			{
+			return movement_duration_ms;
+			}
+		void set_base_duration_ms(uint32_t ms)
+			{
+			movement_duration_ms=std::max<uint32_t>(1,ms);
+			}
+
 		visual_animation_managerst()=default;
 
 		void begin_frame(uint32_t now_ms)
@@ -725,6 +738,7 @@ class visual_animation_managerst
 							claimed_sources[source]=1;
 							float visual_source_x=float(source/input.dim_y);
 							float visual_source_y=float(source%input.dim_y);
+							const uint32_t duration_ms=movement_duration_ms;
 							for(size_t i=0;i<existing_movement_count;++i)
 								{
 								const movementst &movement=state.movements[i];
@@ -732,8 +746,7 @@ class visual_animation_managerst
 										static_cast<viewport_visual_layer>(layer)||
 									movement.target_x!=visual_source_x||
 									movement.target_y!=visual_source_y)continue;
-								const float progress=
-									movement_progress(movement.start_time_ms);
+								const float progress=movement_progress(movement);
 								visual_source_x=movement.source_x+
 									(movement.target_x-movement.source_x)*progress;
 								visual_source_y=movement.source_y+
@@ -748,7 +761,8 @@ class visual_animation_managerst
 								visual_source_y,
 								x,
 								y,
-								frame_time_ms
+								frame_time_ms,
+								duration_ms
 								});
 							if(static_cast<viewport_visual_layer>(layer)==
 									viewport_visual_layer::center&&
@@ -790,7 +804,7 @@ class visual_animation_managerst
 						const size_t layer=static_cast<size_t>(movement.layer);
 						const int32_t target=movement.target_x*input.dim_y+movement.target_y;
 						const int32_t current=input.current[layer][target];
-						return frame_time_ms-movement.start_time_ms>=movement_duration_ms||
+						return frame_time_ms-movement.start_time_ms>=movement.duration_ms||
 							current==0||
 							!visual_layer_matches(movement.layer,current,movement.texpos);
 						}),
@@ -889,7 +903,7 @@ class visual_animation_managerst
 							true,
 							movement.source_x,
 							movement.source_y,
-							movement_progress(movement.start_time_ms)
+							movement_progress(movement)
 							};
 						}
 					if(layer==viewport_visual_layer::vehicle||
@@ -913,7 +927,7 @@ class visual_animation_managerst
 						true,
 						target_x+companion->source_x-companion->target_x,
 						target_y+companion->source_y-companion->target_y,
-						movement_progress(companion->start_time_ms),
+						movement_progress(*companion),
 						true
 						};
 				break;
