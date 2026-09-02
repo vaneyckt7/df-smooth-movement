@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Optional walk bob (`smooth-movement bob on`, off by default): creature sprites
+  hop twice per tile step while they glide, with `bob <amount>` for the height,
+  `bobmult <horizontal> <diagonal> <vertical>` for per-direction multipliers and
+  `hops 1|2` for the footfalls per step. Render-only; the glide itself is
+  unchanged, and the lift is capped so it never leaves stale pixels above the
+  path.
 - The one-tile glide time is a runtime setting (`smooth-movement timestep <ms>`,
   default 100 ms). A movement keeps the time it started with.
 - Mirror creature sprites horizontally so they face their direction of travel.

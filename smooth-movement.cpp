@@ -64,6 +64,28 @@ int32_t previous_pan_x=0;
 int32_t previous_pan_y=0;
 bool has_pan_context=false;
 bool flip_enabled=false;
+// Walk bob (off by default): creature sprites bounce twice per tile step, like two footfalls.
+bool bob_enabled=false;
+float bob_amplitude=0.10f; // fraction of a tile, settable: bob <amount>
+// Per-direction multipliers on the amplitude, settable: bobmult <horizontal> <diagonal> <vertical>.
+// A step with a vertical component glides the sprite a whole tile up or down, which drowns a
+// small hop, so those steps get more; on a straight up/down step the hop is parallel to the
+// travel and shows only as a stall, so it needs more still.
+float bob_horizontal_mult=1.0f;
+float bob_diagonal_mult=2.4f;
+float bob_vertical_mult=2.7f;
+// Footfalls per tile step: 2 reads as walking, 1 as a single bounce. Settable: hops 1|2.
+int bob_hops=2;
+
+void reset_bob_settings()
+{
+	bob_enabled=false;
+	bob_amplitude=0.10f;
+	bob_horizontal_mult=1.0f;
+	bob_diagonal_mult=2.4f;
+	bob_vertical_mult=2.7f;
+	bob_hops=2;
+}
 
 // --- free camera -------------------------------------------------------------------------------
 // The camera is visually unbound from the tile grid. Two layered offsets:
@@ -561,6 +583,10 @@ struct render_proxyst
 	SDL_Texture *texture;
 	bool mirrored=false;
 	int32_t mirror_shift=0;
+	// The walk bob is decided per creature: fragments, status icons and carried items point
+	// at their centre proxy (an index into the proxy list, -1 for none) and follow its bob.
+	bool bob=false;
+	int32_t anchor=-1;
 	std::set<std::pair<int32_t,int32_t>> coverage;
 };
 
@@ -845,13 +871,17 @@ void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
 	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
 	const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
 	const float mirror_offset=float(proxy.mirror_shift)*tile_size;
-	const SDL_FRect destination=
-		{
-		source_x+(target_x-source_x)*proxy.progress+mirror_offset,
-		source_y+(target_y-source_y)*proxy.progress,
-		tile_size,
-		tile_size
-		};
+	const walk_bob_directionst bob_direction=walk_bob_direction(
+		proxy.source_x,proxy.source_y,proxy.target_x,proxy.target_y);
+	const float bob_mult=
+		bob_direction==walk_bob_directionst::horizontal?bob_horizontal_mult:
+		bob_direction==walk_bob_directionst::vertical?bob_vertical_mult:
+		bob_diagonal_mult;
+	const float bob_offset=proxy.bob?
+		-walk_bob_lift(proxy.progress,bob_hops,bob_amplitude,bob_mult)*tile_size:0.0f;
+	const float base_x=source_x+(target_x-source_x)*proxy.progress+mirror_offset;
+	const float base_y=source_y+(target_y-source_y)*proxy.progress+bob_offset;
+	const SDL_FRect destination={base_x,base_y,tile_size,tile_size};
 	render_copy_maybe_mirrored(
 		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
 		proxy.texture,
@@ -887,20 +917,30 @@ std::vector<render_proxyst> collect_proxies(
 				const bool inherited_source_in_bounds=
 					inherited_source_x>=0&&inherited_source_x<vp->dim_x&&
 					inherited_source_y>=0&&inherited_source_y<vp->dim_y;
-				if(!visual_layer_moves_independently(visual_layer))
+				// The centre proxy this tile rides on, if any: a creature fragment or an icon
+				// or item sharing the creature's motion. Used for the anchoring checks below
+				// and for the creature-level bob decision. A centre is always its own root,
+				// and a vehicle takes no part, so neither couples to a neighbour that happens
+				// to move in lockstep (a dwarf and the wheelbarrow it pushes, a squad column).
+				int32_t anchor_index=-1;
+				const bool bob_rider=visual_layer!=viewport_visual_layer::center&&
+					visual_layer!=viewport_visual_layer::vehicle;
+				for(size_t i=0;i<proxies.size()&&
+					(bob_rider||!visual_layer_moves_independently(visual_layer));++i)
 					{
-					bool anchored=false;
-					for(const render_proxyst &anchor:proxies)
+					const render_proxyst &anchor=proxies[i];
+					if(anchor.layer==viewport_visual_layer::center&&
+						std::abs(anchor.target_x-x)<=1&&
+						std::abs(anchor.target_y-y)<=1&&
+						anchor.source_x-anchor.target_x==movement.source_x-x&&
+						anchor.source_y-anchor.target_y==movement.source_y-y&&
+						anchor.progress==movement.progress)
 						{
-						if(anchor.layer==viewport_visual_layer::center&&
-							std::abs(anchor.target_x-x)<=1&&
-							std::abs(anchor.target_y-y)<=1&&
-							anchor.source_x-anchor.target_x==movement.source_x-x&&
-							anchor.source_y-anchor.target_y==movement.source_y-y&&
-							anchor.progress==movement.progress)anchored=true;
+						anchor_index=int32_t(i);
+						break;
 						}
-					if(!anchored)continue;
 					}
+				if(!visual_layer_moves_independently(visual_layer)&&anchor_index<0)continue;
 					if((visual_layer==viewport_visual_layer::item||
 						visual_layer==viewport_visual_layer::designation)&&
 						movement.inherited)
@@ -928,13 +968,21 @@ std::vector<render_proxyst> collect_proxies(
 						{
 					const auto &descriptor=visual_layer_descriptor(visual_layer);
 					bool owns_fragment=false;
-					for(const render_proxyst &anchor:proxies)
+					for(size_t i=0;i<proxies.size();++i)
+						{
+						const render_proxyst &anchor=proxies[i];
 						if(anchor.layer==viewport_visual_layer::center&&
 							anchor.target_x==x+descriptor.center_x&&
 							anchor.target_y==y+descriptor.center_y&&
 							anchor.source_x-anchor.target_x==movement.source_x-x&&
 							anchor.source_y-anchor.target_y==movement.source_y-y&&
-							anchor.progress==movement.progress)owns_fragment=true;
+							anchor.progress==movement.progress)
+							{
+							owns_fragment=true;
+							anchor_index=int32_t(i);
+							break;
+							}
+						}
 					if(!owns_fragment)continue;
 						}
 					}
@@ -970,8 +1018,35 @@ std::vector<render_proxyst> collect_proxies(
 					nullptr,
 					mirrored,
 					mirror_shift,
+					// Creatures bob; whatever rides on a creature (fragments, status icons,
+					// carried items) bobs with it. Vehicles never do.
+					bob_enabled&&
+						(visual_layer==viewport_visual_layer::center||anchor_index>=0),
+					bob_rider?anchor_index:-1,
 					{}
 					};
+				// The bob lifts the sprite into the row above its path, so that row (and its
+				// mirrored image) must be erasable and repaintable too. If it is outside the
+				// clip or burning, this tile cannot bob; the whole creature then glides
+				// without the bob (resolved below), because the bob is optional and the glide
+				// is not. Only the candidate is decided here; the coverage is added after the
+				// creature-level decision.
+				if(proxy.bob)
+					{
+					const int32_t bob_row=int32_t(std::floor(
+						std::min(proxy.source_y,float(y))))-1;
+					for(int32_t bob_x=int32_t(std::floor(
+							std::min(proxy.source_x,float(x))));
+						bob_x<=int32_t(std::ceil(
+							std::max(proxy.source_x,float(x))))&&proxy.bob;++bob_x)
+						for(const int32_t shifted_x:{bob_x,bob_x+proxy.mirror_shift})
+							if(!inside_clip(vp,shifted_x,bob_row)||
+								has_fire(vp,shifted_x,bob_row))
+								{
+								proxy.bob=false;
+								break;
+								}
+					}
 				bool blocked=false;
 				for(int32_t coverage_x=int32_t(std::floor(
 						std::min(proxy.source_x,float(x))));
@@ -1030,6 +1105,40 @@ std::vector<render_proxyst> collect_proxies(
 			}
 		}
 
+	// One bob per creature: if any tile riding on a centre cannot bob, none of them do, so a
+	// multi-tile creature never tears and an icon never detaches from its creature. Then the
+	// row above every bobbing tile joins its coverage; the candidate check above already
+	// established that row is inside the clip and not burning.
+	if(bob_enabled)
+		{
+		std::vector<int32_t> anchors;
+		std::vector<bool> bobs;
+		anchors.reserve(proxies.size());
+		bobs.reserve(proxies.size());
+		for(const render_proxyst &proxy:proxies)
+			{
+			anchors.push_back(proxy.anchor);
+			bobs.push_back(proxy.bob);
+			}
+		resolve_creature_bob(anchors,bobs);
+		for(size_t i=0;i<proxies.size();++i)
+			{
+			render_proxyst &proxy=proxies[i];
+			proxy.bob=bobs[i];
+			if(!proxy.bob)continue;
+			const int32_t bob_row=int32_t(std::floor(
+				std::min(proxy.source_y,float(proxy.target_y))))-1;
+			for(int32_t bob_x=int32_t(std::floor(
+					std::min(proxy.source_x,float(proxy.target_x))));
+				bob_x<=int32_t(std::ceil(
+					std::max(proxy.source_x,float(proxy.target_x))));++bob_x)
+				{
+				proxy.coverage.emplace(bob_x,bob_row);
+				proxy.coverage.emplace(bob_x+proxy.mirror_shift,bob_row);
+				}
+			}
+		}
+
 	// A creature that has stopped still needs its mirrored sprite painted each frame.
 	// Otherwise the engine repaints it natively and the two orientations alternate between steps.
 	// A fragment's tile is its anchor minus the layer's centre offset, inverting the moving path.
@@ -1076,6 +1185,8 @@ std::vector<render_proxyst> collect_proxies(
 						nullptr,
 						true,
 						mirrored_tile_x(x,anchor_x)-x,
+						false,
+						-1,
 						{}
 						};
 					// The sprite lands on x+mirror_shift, so that interval must be repaintable.
@@ -1396,6 +1507,7 @@ void reset_state()
 	camera_has_prev=false;
 	camera_was_offset=false;
 	flip_enabled=false;
+	reset_bob_settings();
 }
 
 command_result status_command(
@@ -1413,6 +1525,11 @@ command_result status_command(
 		out.print("sprite flipping: {}\n",
 			flip_enabled?"on":"off");
 		out.print("time step: {} ms\n",animation_manager.base_duration_ms());
+		out.print("walk bob: {}\n",
+			bob_enabled?"on":"off");
+		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
+			bob_horizontal_mult,bob_diagonal_mult,bob_vertical_mult);
+		out.print("hops per step: {}\n",bob_hops);
 		return CR_OK;
 		}
 	if(parameters[0]=="camera")
@@ -1513,6 +1630,94 @@ command_result status_command(
 			}
 		return CR_WRONG_USAGE;
 		}
+	if(parameters[0]=="hops")
+		{
+		if(parameters.size()==1)
+			{
+			out.print("hops per step: {}\n",bob_hops);
+			return CR_OK;
+			}
+		if(parameters.size()==2&&(parameters[1]=="1"||parameters[1]=="2"))
+			{
+			bob_hops=parameters[1]=="1"?1:2;
+			out.print("smooth-movement: hops per step {}\n",bob_hops);
+			return CR_OK;
+			}
+		return CR_WRONG_USAGE;
+		}
+	if(parameters[0]=="bobmult")
+		{
+		if(parameters.size()==1)
+			{
+			out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
+				bob_horizontal_mult,bob_diagonal_mult,bob_vertical_mult);
+			return CR_OK;
+			}
+		if(parameters.size()==4)
+			{
+			float horizontal=0.0f,diagonal=0.0f,vertical=0.0f;
+			try
+				{
+				horizontal=std::stof(parameters[1]);
+				diagonal=std::stof(parameters[2]);
+				vertical=std::stof(parameters[3]);
+				}
+			catch(...){return CR_WRONG_USAGE;}
+			// Written so that NaN fails too.
+			if(!(horizontal>=0.0f&&horizontal<=5.0f)||!(diagonal>=0.0f&&diagonal<=5.0f)||
+				!(vertical>=0.0f&&vertical<=5.0f))return CR_WRONG_USAGE;
+			if(!walk_bob_lift_fits(bob_amplitude,horizontal,diagonal,vertical))
+				{
+				out.printerr("smooth-movement: bob {:.2f} times that multiplier lifts more than {:.2f} tile; lower one of them\n",
+					bob_amplitude,max_walk_bob_lift);
+				return CR_FAILURE;
+				}
+			bob_horizontal_mult=horizontal;
+			bob_diagonal_mult=diagonal;
+			bob_vertical_mult=vertical;
+			out.print("smooth-movement: bob multipliers horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
+				bob_horizontal_mult,bob_diagonal_mult,bob_vertical_mult);
+			return CR_OK;
+			}
+		return CR_WRONG_USAGE;
+		}
+	if(parameters[0]=="bob")
+		{
+		if(parameters.size()==1)
+			{
+			out.print("walk bob: {} (amount {:.2f})\n",bob_enabled?"on":"off",bob_amplitude);
+			return CR_OK;
+			}
+		if(parameters.size()==2&&parameters[1]!="on"&&parameters[1]!="off")
+			{
+			try
+				{
+				const float amount=std::stof(parameters[1]);
+				// Turning the bob off is 'bob off'; an amount only sets the height.
+				if(!(amount>0.0f)||amount>max_walk_bob_lift)return CR_WRONG_USAGE;
+				if(!walk_bob_lift_fits(amount,bob_horizontal_mult,bob_diagonal_mult,
+						bob_vertical_mult))
+					{
+					out.printerr("smooth-movement: bob {:.2f} times the current multipliers lifts more than {:.2f} tile; lower the multipliers first\n",
+						amount,max_walk_bob_lift);
+					return CR_FAILURE;
+					}
+				bob_amplitude=amount;
+				if(gps!=nullptr)++gps->force_full_display_count;
+				out.print("smooth-movement: bob amount {:.2f}\n",bob_amplitude);
+				return CR_OK;
+				}
+			catch(...){return CR_WRONG_USAGE;}
+			}
+		if(parameters.size()==2&&(parameters[1]=="on"||parameters[1]=="off"))
+			{
+			bob_enabled=parameters[1]=="on";
+			if(gps!=nullptr)++gps->force_full_display_count;
+			out.print("smooth-movement: walk bob {}\n",bob_enabled?"enabled":"disabled");
+			return CR_OK;
+			}
+		return CR_WRONG_USAGE;
+		}
 	return CR_WRONG_USAGE;
 }
 
@@ -1524,7 +1729,9 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 	commands.emplace_back(
 		"smooth-movement",
 		"Smooth movement status; time step: timestep <ms>; free camera: camera on|off|reset|<fx> <fy>; "
-		"sprite flipping: flip on|off.",
+		"sprite flipping: flip on|off; "
+		"walk bob: bob on|off|<amount>; bob multipliers: bobmult <horizontal> <diagonal> <vertical>; "
+		"hops per step: hops 1|2.",
 		status_command);
 	return CR_OK;
 }

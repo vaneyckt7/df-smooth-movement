@@ -166,6 +166,58 @@ inline float animation_progress(
 	return linear*linear*(3.0f-2.0f*linear);
 }
 
+// Walk bob: how far, in tiles, a moving sprite is lifted at 'progress' through a step.
+// |sin(pi*hops*progress)| rises and falls once per hop and is zero at both ends, so the
+// sprite always lands on the grid. 'multiplier' is the per-direction factor.
+inline float walk_bob_lift(float progress,int hops,float amplitude,float multiplier)
+{
+	return std::fabs(std::sin(progress*3.14159265f*float(hops)))*amplitude*multiplier;
+}
+
+// Which multiplier a step takes. The source can be fractional when a step retargets from an
+// in-flight position, so it is rounded back to the tile the creature was last seen on; the
+// direction is that of the whole tile step, not of the remaining fraction.
+enum class walk_bob_directionst{horizontal,diagonal,vertical};
+
+inline walk_bob_directionst walk_bob_direction(
+	float source_x,float source_y,int32_t target_x,int32_t target_y)
+{
+	const bool same_x=std::lround(source_x)==target_x;
+	const bool same_y=std::lround(source_y)==target_y;
+	if(same_y)return walk_bob_directionst::horizontal;
+	if(same_x)return walk_bob_directionst::vertical;
+	return walk_bob_directionst::diagonal;
+}
+
+// One bob per creature. anchors[i] is the index of the proxy that i rides on (-1 for a root:
+// a creature's centre tile), bob[i] whether i could bob on its own. Afterwards every proxy
+// carries its root's decision, which is the AND over everything riding on that root. Anchors
+// are followed to the root, so the depth of the chain does not matter.
+inline void resolve_creature_bob(const std::vector<int32_t> &anchors,std::vector<bool> &bob)
+{
+	const size_t count=anchors.size();
+	auto root_of=[&](size_t i)
+		{
+		for(size_t hops=0;anchors[i]>=0&&hops<count;++hops)i=size_t(anchors[i]);
+		return i;
+		};
+	for(size_t i=0;i<count;++i)
+		if(!bob[i])bob[root_of(i)]=false;
+	for(size_t i=0;i<count;++i)
+		bob[i]=bob[root_of(i)];
+}
+
+// The renderer erases and repaints exactly one row above a bobbing sprite's path, so the
+// tallest possible lift must stay under a tile or the apex leaves stale pixels behind.
+constexpr float max_walk_bob_lift=0.9f;
+
+inline bool walk_bob_lift_fits(
+	float amplitude,float horizontal,float diagonal,float vertical)
+{
+	// A little slack so a product that lands on the cap (0.3 x 3.0) is not rejected by rounding.
+	return amplitude*std::max({horizontal,diagonal,vertical})<=max_walk_bob_lift+1e-4f;
+}
+
 inline bool visual_moved_between_tiles(
 	viewport_visual_layer layer,
 	const int32_t *current,
