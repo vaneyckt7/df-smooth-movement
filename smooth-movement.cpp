@@ -13,6 +13,7 @@
 #include "df/renderer_2d_base.h"
 #include "df/texture_fullid.h"
 
+#include "frame_render.h"
 #include "visual_animation.h"
 
 #include <SDL_render.h>
@@ -21,10 +22,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <set>
 #include <string>
-#include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -52,7 +50,9 @@ decltype(&SDL_GetRenderDrawColor) get_render_draw_color=nullptr;
 decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
 
 visual_animation_managerst animation_manager;
-std::set<std::pair<int32_t,int32_t>> previous_coverage;
+frame_rendererst<df::graphic_viewportst> frame_renderer;
+// Sprite flipping and walk bob, both off by default: `flip on`, `bob on`.
+render_settingst &render_settings=frame_renderer.get_settings();
 uint64_t visual_context_revision=0;
 const void *previous_viewport=nullptr;
 std::array<int32_t,12> previous_view_signature{};
@@ -63,29 +63,6 @@ bool has_view_signature=false;
 int32_t previous_pan_x=0;
 int32_t previous_pan_y=0;
 bool has_pan_context=false;
-bool flip_enabled=false;
-// Walk bob (off by default): creature sprites bounce twice per tile step, like two footfalls.
-bool bob_enabled=false;
-float bob_amplitude=0.10f; // fraction of a tile, settable: bob <amount>
-// Per-direction multipliers on the amplitude, settable: bobmult <horizontal> <diagonal> <vertical>.
-// A step with a vertical component glides the sprite a whole tile up or down, which drowns a
-// small hop, so those steps get more; on a straight up/down step the hop is parallel to the
-// travel and shows only as a stall, so it needs more still.
-float bob_horizontal_mult=1.0f;
-float bob_diagonal_mult=2.4f;
-float bob_vertical_mult=2.7f;
-// Footfalls per tile step: 2 reads as walking, 1 as a single bounce. Settable: hops 1|2.
-int bob_hops=2;
-
-void reset_bob_settings()
-{
-	bob_enabled=false;
-	bob_amplitude=0.10f;
-	bob_horizontal_mult=1.0f;
-	bob_diagonal_mult=2.4f;
-	bob_vertical_mult=2.7f;
-	bob_hops=2;
-}
 
 // --- free camera -------------------------------------------------------------------------------
 // The camera is visually unbound from the tile grid. Two layered offsets:
@@ -382,8 +359,6 @@ void update_camera(
 		}
 }
 
-constexpr uint32_t fire_bits=0x70000000U;
-
 void update_visual_context(
 	const df::renderer_2d_base *renderer,
 	const df::graphic_viewportst *vp)
@@ -410,7 +385,7 @@ void update_visual_context(
 	if(changed)
 		{
 		++visual_context_revision;
-		previous_coverage.clear();
+		frame_renderer.forget_coverage();
 		cancel_camera_transients();
 		}
 	previous_viewport=vp;
@@ -422,406 +397,45 @@ void update_visual_context(
 	const int32_t pan_x=window_x?*window_x:0;
 	const int32_t pan_y=window_y?*window_y:0;
 	if(!has_pan_context||previous_pan_x!=pan_x||previous_pan_y!=pan_y)
-		previous_coverage.clear();
+		frame_renderer.forget_coverage();
 	previous_pan_x=pan_x;
 	previous_pan_y=pan_y;
 	has_pan_context=true;
 }
 
-using viewport_layer_memberst=int32_t *df::graphic_viewportst::*;
-
-struct visual_layer_bufferst
+viewport_visual_animation_inputst animation_input(const df::graphic_viewportst *vp)
 {
-	viewport_visual_layer layer;
-	viewport_layer_memberst current;
-	viewport_layer_memberst previous;
-};
-
-constexpr std::array visual_layer_buffers=
-	{
-	visual_layer_bufferst{viewport_visual_layer::right,
-		&df::graphic_viewportst::screentexpos_right_creature,
-		&df::graphic_viewportst::screentexpos_right_creature_old},
-	visual_layer_bufferst{viewport_visual_layer::center,
-		&df::graphic_viewportst::screentexpos,
-		&df::graphic_viewportst::screentexpos_old},
-	visual_layer_bufferst{viewport_visual_layer::left,
-		&df::graphic_viewportst::screentexpos_left_creature,
-		&df::graphic_viewportst::screentexpos_left_creature_old},
-	visual_layer_bufferst{viewport_visual_layer::upright,
-		&df::graphic_viewportst::screentexpos_upright_creature,
-		&df::graphic_viewportst::screentexpos_upright_creature_old},
-	visual_layer_bufferst{viewport_visual_layer::up,
-		&df::graphic_viewportst::screentexpos_up_creature,
-		&df::graphic_viewportst::screentexpos_up_creature_old},
-	visual_layer_bufferst{viewport_visual_layer::upleft,
-		&df::graphic_viewportst::screentexpos_upleft_creature,
-		&df::graphic_viewportst::screentexpos_upleft_creature_old},
-	visual_layer_bufferst{viewport_visual_layer::vehicle,
-		&df::graphic_viewportst::screentexpos_vehicle,
-		&df::graphic_viewportst::screentexpos_vehicle_old},
-	visual_layer_bufferst{viewport_visual_layer::item,
-		&df::graphic_viewportst::screentexpos_item,
-		&df::graphic_viewportst::screentexpos_item_old},
-	visual_layer_bufferst{viewport_visual_layer::designation,
-		&df::graphic_viewportst::screentexpos_designation,
-		&df::graphic_viewportst::screentexpos_designation_old}
-	};
-
-constexpr bool valid_visual_layer_buffers()
-{
-	uint16_t layers=0;
-	for(const auto &buffer:visual_layer_buffers)
-		{
-		const uint16_t layer=uint16_t(1U<<static_cast<uint8_t>(buffer.layer));
-		if(layers&layer)return false;
-		layers|=layer;
-		}
-	return layers==uint16_t((1U<<visual_layer_count)-1);
-}
-
-static_assert(valid_visual_layer_buffers());
-
-template<typename Viewport>
-auto visual_layers(Viewport *vp,bool previous=false)
-{
-	using layer_pointer=std::conditional_t<
-		std::is_const_v<Viewport>,const int32_t *,int32_t *>;
-	std::array<layer_pointer,visual_layer_count> layers{};
-	for(const auto &buffer:visual_layer_buffers)
-		layers[static_cast<size_t>(buffer.layer)]=vp->*(previous?
-			buffer.previous:buffer.current);
-	return layers;
-}
-
-viewport_visual_animation_inputst animation_input(df::graphic_viewportst *vp)
-{
-	const df::graphic_viewportst *const_viewport=vp;
+	using table=viewport_layer_tablest<df::graphic_viewportst>;
 	return {
 		vp,
 		vp->dim_x,
 		vp->dim_y,
 		visual_context_revision,
-		visual_layers(const_viewport),
-		visual_layers(const_viewport,true),
+		table::current(vp),
+		table::previous(vp),
 		window_x?*window_x:0,
 		window_y?*window_y:0
 		};
 }
 
 // The layer buffers are freed and nulled without clearing the active flag.
-bool viewport_readable(df::graphic_viewportst *vp)
+bool viewport_readable(const df::graphic_viewportst *vp)
 {
 	return vp!=nullptr&&vp->flag.bits.active&&animation_input(vp).valid();
 }
 
-int32_t tile_pixel(int32_t tile,int32_t origin,int32_t zoom)
+std::vector<df::graphic_viewportst *> active_viewports()
 {
-	return zoom==128?32*tile+origin:(zoom*32*tile)/128+origin;
-}
-
-bool inside_clip(const df::graphic_viewportst *vp,int32_t x,int32_t y)
-{
-	return x>=vp->clipx[0]&&x<=vp->clipx[1]&&
-		y>=vp->clipy[0]&&y<=vp->clipy[1];
-}
-
-bool has_fire(const df::graphic_viewportst *vp,int32_t x,int32_t y)
-{
-	return vp->screentexpos_spatter_flag!=nullptr&&
-		(vp->screentexpos_spatter_flag[x*vp->dim_y+y]&fire_bits)!=0;
-}
-
-template<typename T>
-class scoped_value_restorest
-{
-	T &value;
-	T saved;
-
-	public:
-		explicit scoped_value_restorest(T &value,T replacement=T{}):
-			value(value),
-			saved(std::exchange(value,std::move(replacement)))
-			{
-			static_assert(std::is_nothrow_move_assignable_v<T>);
-			}
-
-		~scoped_value_restorest() noexcept
-			{
-			value=std::move(saved);
-			}
-
-		scoped_value_restorest(const scoped_value_restorest &)=delete;
-		scoped_value_restorest &operator=(const scoped_value_restorest &)=delete;
-		scoped_value_restorest(scoped_value_restorest &&)=delete;
-		scoped_value_restorest &operator=(scoped_value_restorest &&)=delete;
-};
-
-template<typename Callback>
-void with_zeroed_values(const Callback &callback)
-{
-	callback();
-}
-
-template<typename Callback,typename T,typename... Values>
-void with_zeroed_values(const Callback &callback,T &value,Values &...values)
-{
-	scoped_value_restorest<T> zero(value);
-	with_zeroed_values(callback,values...);
-}
-
-struct render_proxyst
-{
-	viewport_visual_layer layer;
-	float source_x;
-	float source_y;
-	int32_t target_x;
-	int32_t target_y;
-	int32_t texpos;
-	float progress;
-	SDL_Texture *texture;
-	bool mirrored=false;
-	int32_t mirror_shift=0;
-	// The walk bob is decided per creature: fragments, status icons and carried items point
-	// at their centre proxy (an index into the proxy list, -1 for none) and follow its bob.
-	bool bob=false;
-	int32_t anchor=-1;
-	std::set<std::pair<int32_t,int32_t>> coverage;
-};
-
-using tile_coveragest=std::set<std::pair<int32_t,int32_t>>;
-
-struct render_coveragest
-{
-	tile_coveragest all;
-	std::array<tile_coveragest,static_cast<size_t>(visual_render_groupst::count)> groups;
-	std::unordered_map<int32_t,uint16_t> selected;
-};
-
-struct viewport_renderst
-{
-	df::graphic_viewportst *viewport;
-	std::vector<render_proxyst> proxies;
-	render_coveragest coverage;
-};
-
-constexpr uint16_t visual_layer_bit(viewport_visual_layer layer)
-{
-	return uint16_t(1U<<static_cast<uint8_t>(layer));
-}
-
-uint16_t selected_mask(
-	const std::unordered_map<int32_t,uint16_t> &selected,
-	int32_t index)
-{
-	const auto found=selected.find(index);
-	return found==selected.end()?0:found->second;
-}
-
-template<size_t Layer=0,typename Callback>
-void with_suppressed_visual_layers(
-	const std::array<int32_t *,visual_layer_count> &layers,
-	int32_t index,
-	uint16_t mask,
-	const Callback &callback)
-{
-	if constexpr(Layer==visual_layer_count)
-		callback();
-	else if(mask&(1U<<Layer))
+	std::vector<df::graphic_viewportst *> viewports;
+	if(gps==nullptr)return viewports;
+	for(int32_t lower=7;lower>=0;--lower)
 		{
-		scoped_value_restorest<int32_t> zero(layers[Layer][index]);
-		with_suppressed_visual_layers<Layer+1>(layers,index,mask,callback);
+		df::graphic_viewportst *vp=gps->lower_viewport[lower];
+		if(viewport_readable(vp))viewports.push_back(vp);
 		}
-	else
-		with_suppressed_visual_layers<Layer+1>(layers,index,mask,callback);
-}
-
-template<typename Callback>
-void with_base_suppressed(
-	df::graphic_viewportst *vp,
-	int32_t index,
-	const Callback &callback)
-{
-	with_zeroed_values(
-		callback,
-		vp->screentexpos_background[index],
-		vp->screentexpos_floor_flag[index],
-		vp->screentexpos_background_two[index],
-		vp->screentexpos_liquid_flag[index],
-		vp->screentexpos_spatter_flag[index],
-		vp->screentexpos_spatter[index],
-		vp->screentexpos_ramp_flag[index],
-		vp->screentexpos_shadow_flag[index],
-		vp->screentexpos_building_one[index]);
-}
-
-template<typename Callback>
-void with_main_suppressed(
-	df::graphic_viewportst *vp,
-	int32_t index,
-	const Callback &callback)
-{
-	with_base_suppressed(vp,index,[&]
-		{
-		with_zeroed_values(callback,vp->screentexpos_vermin[index]);
-		});
-}
-
-template<typename Callback>
-void with_upper_suppressed(
-	df::graphic_viewportst *vp,
-	int32_t index,
-	const Callback &callback)
-{
-	with_main_suppressed(vp,index,[&]
-		{
-		with_zeroed_values(
-			callback,
-			vp->screentexpos_building_two[index],
-			vp->screentexpos_projectile[index],
-			vp->screentexpos_high_flow[index],
-			vp->screentexpos_top_shadow[index],
-			vp->screentexpos_signpost[index]);
-		});
-}
-
-void redraw_viewport_tile(
-	df::renderer_2d_base *renderer,
-	const viewport_renderst &viewport,
-	int32_t x,
-	int32_t y,
-	bool defer_interface)
-{
-	df::graphic_viewportst *vp=viewport.viewport;
-	const int32_t index=x*vp->dim_y+y;
-	const auto redraw=[&]{renderer->update_viewport_tile(vp,x,y);};
-	const auto stage=[&]
-		{
-		with_suppressed_visual_layers(
-			visual_layers(vp),index,
-			selected_mask(viewport.coverage.selected,index),redraw);
-		};
-	// The interface layer is the shading for levels below the camera.
-	// A staged tile has a sprite drawn over it afterwards, so draw_interface_only places it instead.
-	if(!defer_interface||vp->screentexpos_interface==nullptr)stage();
-	else with_zeroed_values(stage,vp->screentexpos_interface[index]);
-}
-
-// Every buffer the interface-only pass zeroes has to exist before it can be zeroed.
-bool interface_pass_readable(const df::graphic_viewportst *vp)
-{
-	return vp!=nullptr&&
-		vp->screentexpos_interface!=nullptr&&
-		vp->screentexpos_background!=nullptr&&
-		vp->screentexpos_floor_flag!=nullptr&&
-		vp->screentexpos_background_two!=nullptr&&
-		vp->screentexpos_liquid_flag!=nullptr&&
-		vp->screentexpos_spatter_flag!=nullptr&&
-		vp->screentexpos_spatter!=nullptr&&
-		vp->screentexpos_ramp_flag!=nullptr&&
-		vp->screentexpos_shadow_flag!=nullptr&&
-		vp->screentexpos_building_one!=nullptr&&
-		vp->screentexpos_vermin!=nullptr&&
-		vp->screentexpos_building_two!=nullptr&&
-		vp->screentexpos_projectile!=nullptr&&
-		vp->screentexpos_high_flow!=nullptr&&
-		vp->screentexpos_signpost!=nullptr;
-}
-
-// Runs after the proxies so the shading covers them rather than sitting underneath.
-void draw_interface_only(
-	df::renderer_2d_base *renderer,
-	df::graphic_viewportst *vp,
-	int32_t x,
-	int32_t y)
-{
-	if(!interface_pass_readable(vp))return;
-	const int32_t index=x*vp->dim_y+y;
-	const auto redraw=[&]{renderer->update_viewport_tile(vp,x,y);};
-	const auto without_visuals=[&]
-		{
-		with_suppressed_visual_layers(
-			visual_layers(vp),
-			index,
-			uint16_t((1U<<visual_layer_count)-1),
-			redraw);
-		};
-	with_zeroed_values(
-		without_visuals,
-		vp->screentexpos_background[index],
-		vp->screentexpos_floor_flag[index],
-		vp->screentexpos_background_two[index],
-		vp->screentexpos_liquid_flag[index],
-		vp->screentexpos_spatter_flag[index],
-		vp->screentexpos_spatter[index],
-		vp->screentexpos_ramp_flag[index],
-		vp->screentexpos_shadow_flag[index],
-		vp->screentexpos_building_one[index],
-		vp->screentexpos_vermin[index],
-		vp->screentexpos_building_two[index],
-		vp->screentexpos_projectile[index],
-		vp->screentexpos_high_flow[index],
-		vp->screentexpos_signpost[index]);
-}
-
-void redraw_world_tile(
-	df::renderer_2d_base *renderer,
-	const std::vector<viewport_renderst> &viewports,
-	const tile_coveragest &staged,
-	int32_t x,
-	int32_t y)
-{
-	// The stage pass repaints everything above the lowest across the staged tiles, after the proxies.
-	const bool staged_tile=staged.count({x,y})!=0;
-	for(const viewport_renderst &viewport:viewports)
-		{
-		if(inside_clip(viewport.viewport,x,y))
-			redraw_viewport_tile(renderer,viewport,x,y,staged_tile);
-		if(staged_tile)break;
-		}
-}
-
-constexpr uint16_t visual_layers_through_group(visual_render_groupst group)
-{
-	uint16_t mask=0;
-	for(const auto &descriptor:visual_layer_descriptors)
-		if(descriptor.render_group!=visual_render_groupst::designation&&
-			static_cast<uint8_t>(descriptor.render_group)<=static_cast<uint8_t>(group))
-			mask|=visual_layer_bit(descriptor.layer);
-	return mask;
-}
-
-void redraw_above(
-	df::renderer_2d_base *renderer,
-	df::graphic_viewportst *vp,
-	int32_t x,
-	int32_t y,
-	visual_render_groupst group,
-	const std::unordered_map<int32_t,uint16_t> &selected)
-{
-	const int32_t index=x*vp->dim_y+y;
-	const auto redraw=[&]{renderer->update_viewport_tile(vp,x,y);};
-	const auto suppress_visuals=[&]
-		{
-		const auto stage=[&]
-			{
-			with_suppressed_visual_layers(
-				visual_layers(vp),
-				index,
-				selected_mask(selected,index)|visual_layers_through_group(group),
-				redraw);
-			};
-		// The interface layer sits above every group, so each group's redraw would paint it again.
-		// draw_interface_only places it once, after the sprites.
-		if(vp->screentexpos_interface==nullptr)stage();
-		else with_zeroed_values(stage,vp->screentexpos_interface[index]);
-		};
-	if(group==visual_render_groupst::item||group==visual_render_groupst::vehicle)
-		with_base_suppressed(vp,index,suppress_visuals);
-	else if(group==visual_render_groupst::main)
-		with_main_suppressed(vp,index,suppress_visuals);
-	else
-		with_upper_suppressed(vp,index,suppress_visuals);
+	if(viewport_readable(gps->main_viewport))
+		viewports.push_back(gps->main_viewport);
+	return viewports;
 }
 
 SDL_Texture *cached_texture(
@@ -843,500 +457,83 @@ SDL_Texture *cached_texture(
 		static_cast<SDL_Texture *>(texture->second);
 }
 
-// The render_copy_ex_f null check is defensive only, not a graceful-degradation path.
-// `bind` aborts load_sdl on any missing symbol and plugin_enable then refuses the render hook.
-void render_copy_maybe_mirrored(
-	SDL_Renderer *renderer,
-	SDL_Texture *texture,
-	const SDL_FRect &destination,
-	bool mirrored)
+// The engine's renderer as the canvas frame_rendererst paints on.
+class sdl_canvasst
 {
-	if(mirrored&&render_copy_ex_f!=nullptr)
-		{
-		render_copy_ex_f(
-			renderer,texture,nullptr,&destination,
-			0.0,nullptr,SDL_FLIP_HORIZONTAL);
-		return;
-		}
-	render_copy_f(renderer,texture,nullptr,&destination);
-}
+	df::renderer_2d_base *renderer;
+	SDL_Renderer *sdl;
 
-void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
-{
-	const int32_t zoom=renderer->viewport_zoom_factor;
-	const int32_t target_x=tile_pixel(proxy.target_x,renderer->origin_x,zoom);
-	const int32_t target_y=tile_pixel(proxy.target_y,renderer->origin_y,zoom);
-	const float tile_size=float(zoom==128?32:std::max(1,zoom*32/128));
-	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
-	const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
-	const float mirror_offset=float(proxy.mirror_shift)*tile_size;
-	const walk_bob_directionst bob_direction=walk_bob_direction(
-		proxy.source_x,proxy.source_y,proxy.target_x,proxy.target_y);
-	const float bob_mult=
-		bob_direction==walk_bob_directionst::horizontal?bob_horizontal_mult:
-		bob_direction==walk_bob_directionst::vertical?bob_vertical_mult:
-		bob_diagonal_mult;
-	const float bob_offset=proxy.bob?
-		-walk_bob_lift(proxy.progress,bob_hops,bob_amplitude,bob_mult)*tile_size:0.0f;
-	const float base_x=source_x+(target_x-source_x)*proxy.progress+mirror_offset;
-	const float base_y=source_y+(target_y-source_y)*proxy.progress+bob_offset;
-	const SDL_FRect destination={base_x,base_y,tile_size,tile_size};
-	render_copy_maybe_mirrored(
-		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
-		proxy.texture,
-		destination,
-		proxy.mirrored);
-}
-
-std::vector<render_proxyst> collect_proxies(
-	df::renderer_2d_base *renderer,
-	df::graphic_viewportst *vp)
-{
-	std::vector<render_proxyst> proxies;
-	auto layers=visual_layers(vp);
-	auto previous_layers=visual_layers(vp,true);
-	// Only tiles near a movement can hold a moving proxy, so visit those rather than the grid.
-	// Scratch vectors persist across frames to avoid reallocating; the render hook is serial.
-	static std::vector<int32_t> candidates;
-	animation_manager.movement_candidate_tiles(vp,candidates);
-	// Same visiting order as the former grid sweep: row by row, left to right. Anchor lookups
-	// below rely on a centre proxy preceding the tiles that ride on it.
-	const int32_t dim_y=vp->dim_y;
-	std::sort(candidates.begin(),candidates.end(),
-		[dim_y](int32_t a,int32_t b)
+	public:
+		explicit sdl_canvasst(df::renderer_2d_base *renderer):
+			renderer(renderer),
+			sdl(static_cast<SDL_Renderer *>(renderer->sdl_renderer))
 			{
-			return std::make_pair(a%dim_y,a/dim_y)<std::make_pair(b%dim_y,b/dim_y);
-			});
-	for(uint8_t draw_order=0;draw_order<visual_layer_count;++draw_order)
-		{
-		const viewport_visual_layer visual_layer=visual_layer_at_draw_order(draw_order);
-		const size_t layer=static_cast<size_t>(visual_layer);
-		for(const int32_t index:candidates)
-			{
-				{
-				const int32_t x=index/dim_y;
-				const int32_t y=index%dim_y;
-				const int32_t texpos=layers[layer][index];
-				if(texpos==0)continue;
-				const auto movement=animation_manager.get_movement(
-					vp,static_cast<viewport_visual_layer>(layer),x,y);
-				if(!movement.active)continue;
-				const int32_t inherited_source_x=inherited_visual_source_tile(
-					x,movement.source_x,x);
-				const int32_t inherited_source_y=inherited_visual_source_tile(
-					y,movement.source_y,y);
-				const bool inherited_source_in_bounds=
-					inherited_source_x>=0&&inherited_source_x<vp->dim_x&&
-					inherited_source_y>=0&&inherited_source_y<vp->dim_y;
-				// The centre proxy this tile rides on, if any: a creature fragment or an icon
-				// or item sharing the creature's motion. Used for the anchoring checks below
-				// and for the creature-level bob decision. A centre is always its own root,
-				// and a vehicle takes no part, so neither couples to a neighbour that happens
-				// to move in lockstep (a dwarf and the wheelbarrow it pushes, a squad column).
-				int32_t anchor_index=-1;
-				const bool bob_rider=visual_layer!=viewport_visual_layer::center&&
-					visual_layer!=viewport_visual_layer::vehicle;
-				for(size_t i=0;i<proxies.size()&&
-					(bob_rider||!visual_layer_moves_independently(visual_layer));++i)
-					{
-					const render_proxyst &anchor=proxies[i];
-					if(anchor.layer==viewport_visual_layer::center&&
-						std::abs(anchor.target_x-x)<=1&&
-						std::abs(anchor.target_y-y)<=1&&
-						anchor.source_x-anchor.target_x==movement.source_x-x&&
-						anchor.source_y-anchor.target_y==movement.source_y-y&&
-						anchor.progress==movement.progress)
-						{
-						anchor_index=int32_t(i);
-						break;
-						}
-					}
-				if(!visual_layer_moves_independently(visual_layer)&&anchor_index<0)continue;
-					if((visual_layer==viewport_visual_layer::item||
-						visual_layer==viewport_visual_layer::designation)&&
-						movement.inherited)
-					{
-					if(visual_layer==viewport_visual_layer::item&&
-						vp->screentexpos_old[index]!=0)continue;
-					if(!inherited_source_in_bounds)continue;
-					const int32_t source=
-						inherited_source_x*vp->dim_y+inherited_source_y;
-					if(!visual_moved_between_tiles(
-						visual_layer,
-							layers[layer],
-							previous_layers[layer],
-							source,
-							index))continue;
-					}
-				if(!visual_layer_moves_independently(visual_layer)&&
-					visual_layer!=viewport_visual_layer::designation&&movement.inherited)
-					{
-					const bool fragment_moved=inherited_source_in_bounds&&
-						visual_moved_between_tiles(
-							visual_layer,layers[layer],previous_layers[layer],
-							inherited_source_x*vp->dim_y+inherited_source_y,index);
-					if(!fragment_moved)
-						{
-					const auto &descriptor=visual_layer_descriptor(visual_layer);
-					bool owns_fragment=false;
-					for(size_t i=0;i<proxies.size();++i)
-						{
-						const render_proxyst &anchor=proxies[i];
-						if(anchor.layer==viewport_visual_layer::center&&
-							anchor.target_x==x+descriptor.center_x&&
-							anchor.target_y==y+descriptor.center_y&&
-							anchor.source_x-anchor.target_x==movement.source_x-x&&
-							anchor.source_y-anchor.target_y==movement.source_y-y&&
-							anchor.progress==movement.progress)
-							{
-							owns_fragment=true;
-							anchor_index=int32_t(i);
-							break;
-							}
-						}
-					if(!owns_fragment)continue;
-						}
-					}
-
-				// Items, vehicles and designations keep their vanilla orientation.
-				const auto &mirror_descriptor=
-					visual_layer_descriptor(visual_layer);
-				const visual_render_groupst group=
-					visual_render_group(visual_layer);
-				const bool mirror_eligible=flip_enabled&&
-					(group==visual_render_groupst::main||
-					group==visual_render_groupst::upper);
-				// Facing is read from the anchor tile so every fragment of one creature agrees.
-				const bool mirrored=mirror_eligible&&
-					animation_manager.get_facing(
-						vp,
-						x+mirror_descriptor.center_x,
-						y+mirror_descriptor.center_y)!=native_sprite_facing;
-				// The anchor's own layer has center_x 0, so it flips in place.
-				const int32_t mirror_shift=
-					mirrored?
-					mirrored_tile_x(x,x+mirror_descriptor.center_x)-x:
-					0;
-				render_proxyst proxy=
-					{
-					static_cast<viewport_visual_layer>(layer),
-					movement.source_x,
-					movement.source_y,
-					x,
-					y,
-					texpos,
-					movement.progress,
-					nullptr,
-					mirrored,
-					mirror_shift,
-					// Creatures bob; whatever rides on a creature (fragments, status icons,
-					// carried items) bobs with it. Vehicles never do.
-					bob_enabled&&
-						(visual_layer==viewport_visual_layer::center||anchor_index>=0),
-					bob_rider?anchor_index:-1,
-					{}
-					};
-				// The bob lifts the sprite into the row above its path, so that row (and its
-				// mirrored image) must be erasable and repaintable too. If it is outside the
-				// clip or burning, this tile cannot bob; the whole creature then glides
-				// without the bob (resolved below), because the bob is optional and the glide
-				// is not. Only the candidate is decided here; the coverage is added after the
-				// creature-level decision.
-				if(proxy.bob)
-					{
-					const int32_t bob_row=int32_t(std::floor(
-						std::min(proxy.source_y,float(y))))-1;
-					for(int32_t bob_x=int32_t(std::floor(
-							std::min(proxy.source_x,float(x))));
-						bob_x<=int32_t(std::ceil(
-							std::max(proxy.source_x,float(x))))&&proxy.bob;++bob_x)
-						for(const int32_t shifted_x:{bob_x,bob_x+proxy.mirror_shift})
-							if(!inside_clip(vp,shifted_x,bob_row)||
-								has_fire(vp,shifted_x,bob_row))
-								{
-								proxy.bob=false;
-								break;
-								}
-					}
-				bool blocked=false;
-				for(int32_t coverage_x=int32_t(std::floor(
-						std::min(proxy.source_x,float(x))));
-					coverage_x<=int32_t(std::ceil(
-						std::max(proxy.source_x,float(x))));++coverage_x)
-					{
-					for(int32_t coverage_y=int32_t(std::floor(
-							std::min(proxy.source_y,float(y))));
-						coverage_y<=int32_t(std::ceil(
-							std::max(proxy.source_y,float(y))));++coverage_y)
-						{
-						if(!inside_clip(vp,coverage_x,coverage_y))
-							{
-							blocked=true;
-							break;
-							}
-						if(visual_render_group(proxy.layer)==visual_render_groupst::main&&
-							has_fire(vp,coverage_x,coverage_y))
-							{
-							blocked=true;
-							break;
-							}
-						proxy.coverage.emplace(coverage_x,coverage_y);
-						}
-					if(blocked)break;
-					}
-				if(blocked)continue;
-				if(proxy.mirror_shift!=0)
-					{
-					std::set<std::pair<int32_t,int32_t>> mirrored_coverage;
-					for(const auto &tile:proxy.coverage)
-						mirrored_coverage.emplace(
-							tile.first+proxy.mirror_shift,tile.second);
-					for(const auto &tile:mirrored_coverage)
-						{
-						if(!inside_clip(vp,tile.first,tile.second))
-							{
-							blocked=true;
-							break;
-							}
-						if(visual_render_group(proxy.layer)==visual_render_groupst::main&&
-							has_fire(vp,tile.first,tile.second))
-							{
-							blocked=true;
-							break;
-							}
-						proxy.coverage.insert(tile);
-						}
-					if(blocked)continue;
-					}
-
-				proxy.texture=cached_texture(renderer,texpos);
-				if(proxy.texture==nullptr)continue;
-				proxies.push_back(std::move(proxy));
-				}
 			}
-		}
 
-	// One bob per creature: if any tile riding on a centre cannot bob, none of them do, so a
-	// multi-tile creature never tears and an icon never detaches from its creature. Then the
-	// row above every bobbing tile joins its coverage; the candidate check above already
-	// established that row is inside the clip and not burning.
-	if(bob_enabled)
-		{
-		std::vector<int32_t> anchors;
-		std::vector<bool> bobs;
-		anchors.reserve(proxies.size());
-		bobs.reserve(proxies.size());
-		for(const render_proxyst &proxy:proxies)
+		int32_t origin_x() const
 			{
-			anchors.push_back(proxy.anchor);
-			bobs.push_back(proxy.bob);
+			return renderer->origin_x;
 			}
-		resolve_creature_bob(anchors,bobs);
-		for(size_t i=0;i<proxies.size();++i)
+
+		int32_t origin_y() const
 			{
-			render_proxyst &proxy=proxies[i];
-			proxy.bob=bobs[i];
-			if(!proxy.bob)continue;
-			const int32_t bob_row=int32_t(std::floor(
-				std::min(proxy.source_y,float(proxy.target_y))))-1;
-			for(int32_t bob_x=int32_t(std::floor(
-					std::min(proxy.source_x,float(proxy.target_x))));
-				bob_x<=int32_t(std::ceil(
-					std::max(proxy.source_x,float(proxy.target_x))));++bob_x)
-				{
-				proxy.coverage.emplace(bob_x,bob_row);
-				proxy.coverage.emplace(bob_x+proxy.mirror_shift,bob_row);
-				}
+			return renderer->origin_y;
 			}
-		}
 
-	// A creature that has stopped still needs its mirrored sprite painted each frame.
-	// Otherwise the engine repaints it natively and the two orientations alternate between steps.
-	// A fragment's tile is its anchor minus the layer's centre offset, inverting the moving path.
-	if(flip_enabled)
-		{
-		static std::vector<int32_t> mirrored;
-		animation_manager.mirrored_tiles(vp,mirrored);
-		for(const int32_t anchor_index:mirrored)
+		int32_t zoom() const
 			{
-				{
-				const int32_t anchor_x=anchor_index/vp->dim_y;
-				const int32_t anchor_y=anchor_index%vp->dim_y;
-				for(uint8_t draw_order=0;draw_order<visual_layer_count;++draw_order)
-					{
-					const viewport_visual_layer visual_layer=
-						visual_layer_at_draw_order(draw_order);
-					const visual_render_groupst group=
-						visual_render_group(visual_layer);
-					if(group!=visual_render_groupst::main&&
-						group!=visual_render_groupst::upper)continue;
-					const auto &descriptor=visual_layer_descriptor(visual_layer);
-					const int32_t x=anchor_x-descriptor.center_x;
-					const int32_t y=anchor_y-descriptor.center_y;
-					if(x<0||x>=vp->dim_x||y<0||y>=vp->dim_y)continue;
-					const size_t layer=static_cast<size_t>(visual_layer);
-					const int32_t texpos=layers[layer][x*vp->dim_y+y];
-					if(texpos==0)continue;
-					bool already_drawn=false;
-					for(const render_proxyst &existing:proxies)
-						if(existing.layer==visual_layer&&
-							existing.target_x==x&&existing.target_y==y)
-							already_drawn=true;
-					if(already_drawn)continue;
-
-					// source == target at progress 1.0 draws in place, moved only by mirror_shift.
-					render_proxyst proxy=
-						{
-						visual_layer,
-						float(x),
-						float(y),
-						x,
-						y,
-						texpos,
-						1.0f,
-						nullptr,
-						true,
-						mirrored_tile_x(x,anchor_x)-x,
-						false,
-						-1,
-						{}
-						};
-					// The sprite lands on x+mirror_shift, so that interval must be repaintable.
-					// The shift has either sign, so order the interval ends first.
-					const int32_t coverage_first=std::min(x,x+proxy.mirror_shift);
-					const int32_t coverage_last=std::max(x,x+proxy.mirror_shift);
-					bool blocked=false;
-					for(int32_t coverage_x=coverage_first;
-						coverage_x<=coverage_last;++coverage_x)
-						{
-						if(!inside_clip(vp,coverage_x,y)||
-							(group==visual_render_groupst::main&&
-							has_fire(vp,coverage_x,y)))
-							{
-							blocked=true;
-							break;
-							}
-						proxy.coverage.emplace(coverage_x,y);
-						}
-					if(blocked)continue;
-
-					proxy.texture=cached_texture(renderer,texpos);
-					if(proxy.texture==nullptr)continue;
-					proxies.push_back(std::move(proxy));
-					}
-				}
+			return renderer->viewport_zoom_factor;
 			}
-		}
-	return proxies;
-}
 
-render_coveragest collect_coverage(
-	const std::vector<render_proxyst> &proxies,
-	int32_t dim_y)
-{
-	render_coveragest coverage;
-	for(const render_proxyst &proxy:proxies)
-		{
-		coverage.all.insert(proxy.coverage.begin(),proxy.coverage.end());
-		coverage.selected[proxy.target_x*dim_y+proxy.target_y]|=
-			visual_layer_bit(proxy.layer);
-		auto &group=coverage.groups[static_cast<size_t>(visual_render_group(proxy.layer))];
-		group.insert(proxy.coverage.begin(),proxy.coverage.end());
-		}
-	return coverage;
-}
-
-std::vector<df::graphic_viewportst *> active_viewports()
-{
-	std::vector<df::graphic_viewportst *> viewports;
-	if(gps==nullptr)return viewports;
-	for(int32_t lower=7;lower>=0;--lower)
-		{
-		df::graphic_viewportst *vp=gps->lower_viewport[lower];
-		if(viewport_readable(vp))viewports.push_back(vp);
-		}
-	if(viewport_readable(gps->main_viewport))
-		viewports.push_back(gps->main_viewport);
-	return viewports;
-}
-
-std::vector<viewport_renderst> collect_viewport_renders(
-	df::renderer_2d_base *renderer,
-	const std::vector<df::graphic_viewportst *> &viewports)
-{
-	std::vector<viewport_renderst> renders;
-	renders.reserve(viewports.size());
-	for(df::graphic_viewportst *vp:viewports)
-		{
-		viewport_renderst render={vp,collect_proxies(renderer,vp),{}};
-		render.coverage=collect_coverage(render.proxies,vp->dim_y);
-		renders.push_back(std::move(render));
-		}
-	return renders;
-}
-
-tile_coveragest collect_viewport_coverage(
-	const std::vector<viewport_renderst> &viewports)
-{
-	tile_coveragest coverage;
-	for(const viewport_renderst &viewport:viewports)
-		coverage.insert(
-			viewport.coverage.all.begin(),viewport.coverage.all.end());
-	return coverage;
-}
-
-void draw_interpolation_stages(
-	df::renderer_2d_base *renderer,
-	df::graphic_viewportst *vp,
-	const std::vector<render_proxyst> &proxies,
-	const render_coveragest &coverage)
-{
-	for(size_t index=0;index<coverage.groups.size();++index)
-		{
-		const auto group=static_cast<visual_render_groupst>(index);
-		for(const render_proxyst &proxy:proxies)
-			if(visual_render_group(proxy.layer)==group)draw_proxy(renderer,proxy);
-		if(group==visual_render_groupst::designation)continue;
-		for(const auto &[x,y]:coverage.groups[index])
-			redraw_above(renderer,vp,x,y,group,coverage.selected);
-		}
-}
-
-void redraw_viewport_tiles(
-	df::renderer_2d_base *renderer,
-	const viewport_renderst &viewport,
-	const tile_coveragest &coverage)
-{
-	df::graphic_viewportst *vp=viewport.viewport;
-	for(const auto &[x,y]:coverage)
-		{
-		if(!inside_clip(vp,x,y))continue;
-		redraw_viewport_tile(renderer,viewport,x,y,true);
-		}
-}
-
-void draw_viewport_interpolation_stages(
-	df::renderer_2d_base *renderer,
-	const std::vector<viewport_renderst> &viewports,
-	const tile_coveragest &coverage)
-{
-	for(size_t index=0;index<viewports.size();++index)
-		{
-		// A lower z-level's proxy must be covered by the next viewport's fog and terrain.
-		// Reapply that viewport before its own proxies, matching DF's lower-to-main draw order.
-		if(index>0)redraw_viewport_tiles(renderer,viewports[index],coverage);
-		const viewport_renderst &viewport=viewports[index];
-		draw_interpolation_stages(
-			renderer,viewport.viewport,viewport.proxies,viewport.coverage);
-		// A viewport shades everything drawn beneath it, so this covers every staged tile.
-		// Restricting it to the tiles this viewport has sprites on would not deepen with distance.
-		for(const auto &[x,y]:coverage)
+		void offset_origin(int32_t dx,int32_t dy)
 			{
-			if(inside_clip(viewport.viewport,x,y))
-				draw_interface_only(renderer,viewport.viewport,x,y);
+			renderer->origin_x+=dx;
+			renderer->origin_y+=dy;
 			}
-		}
-}
+
+		void repaint(df::graphic_viewportst *vp,int32_t x,int32_t y)
+			{
+			renderer->update_viewport_tile(vp,x,y);
+			}
+
+		const void *texture(int32_t texpos) const
+			{
+			return cached_texture(renderer,texpos);
+			}
+
+		// The render_copy_ex_f null check is defensive only, not a graceful-degradation path:
+		// `bind` aborts load_sdl on any missing symbol and plugin_enable then refuses the hook.
+		void draw_sprite(const void *texture,float x,float y,float size,bool mirrored)
+			{
+			SDL_Texture *sdl_texture=static_cast<SDL_Texture *>(const_cast<void *>(texture));
+			const SDL_FRect destination={x,y,size,size};
+			if(mirrored&&render_copy_ex_f!=nullptr)
+				render_copy_ex_f(
+					sdl,sdl_texture,nullptr,&destination,0.0,nullptr,SDL_FLIP_HORIZONTAL);
+			else render_copy_f(sdl,sdl_texture,nullptr,&destination);
+			}
+
+		void fill_black(const pixel_rectst &rect)
+			{
+			const SDL_Rect sdl_rect={rect.x,rect.y,rect.w,rect.h};
+			Uint8 r=0,g=0,b=0,a=255;
+			get_render_draw_color(sdl,&r,&g,&b,&a);
+			set_render_draw_color(sdl,0,0,0,255);
+			render_fill_rect(sdl,&sdl_rect);
+			set_render_draw_color(sdl,r,g,b,a);
+			}
+
+		void set_clip(const pixel_rectst &rect)
+			{
+			const SDL_Rect sdl_rect={rect.x,rect.y,rect.w,rect.h};
+			render_set_clip_rect(sdl,&sdl_rect);
+			}
+
+		void clear_clip()
+			{
+			render_set_clip_rect(sdl,nullptr);
+			}
+};
 
 bool has_mirrored_viewport_facing(
 	const std::vector<df::graphic_viewportst *> &viewports)
@@ -1354,7 +551,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	if(vp!=nullptr)update_visual_context(renderer,vp);
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
 	animation_manager.begin_frame(now_ms);
-	for(df::graphic_viewportst *viewport:viewports)
+	for(const df::graphic_viewportst *viewport:viewports)
 		animation_manager.synchronize_viewport(animation_input(viewport));
 	animation_manager.end_frame();
 
@@ -1373,86 +570,11 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		}
 	if(glide)camera_was_offset=true;
 	if(!glide&&!animation_manager.requires_full_redraw()&&
-		(!flip_enabled||!has_mirrored_viewport_facing(viewports)))
+		(!render_settings.flip||!has_mirrored_viewport_facing(viewports)))
 		return;
 
-	std::vector<viewport_renderst> viewport_renders=
-		collect_viewport_renders(renderer,viewports);
-	tile_coveragest coverage=collect_viewport_coverage(viewport_renders);
-
-	SDL_Renderer *sdl_renderer=static_cast<SDL_Renderer *>(renderer->sdl_renderer);
-	const int32_t zoom=renderer->viewport_zoom_factor;
-	const int32_t tile_size=zoom==128?32:std::max(1,zoom*32/128);
-
-	if(glide)
-		{
-		// Camera mid-glide: repaint the WHOLE map rect at the shifted origin so the world (and
-		// the creature proxies, which read origin at draw time) renders between tiles. The engine
-		// already drew this frame at the snapped position; everything here overdraws it, clipped
-		// to the map rect so shifted tiles never spill over the UI. The uncovered strip on the
-		// trailing edge stays black until the glide lands.
-		const SDL_Rect map_rect=
-			{
-			tile_pixel(vp->clipx[0],renderer->origin_x,zoom),
-			tile_pixel(vp->clipy[0],renderer->origin_y,zoom),
-			tile_pixel(vp->clipx[1]+1,renderer->origin_x,zoom)-
-				tile_pixel(vp->clipx[0],renderer->origin_x,zoom),
-			tile_pixel(vp->clipy[1]+1,renderer->origin_y,zoom)-
-				tile_pixel(vp->clipy[0],renderer->origin_y,zoom)
-			};
-		render_set_clip_rect(sdl_renderer,&map_rect);
-		Uint8 old_r=0,old_g=0,old_b=0,old_a=255;
-		get_render_draw_color(sdl_renderer,&old_r,&old_g,&old_b,&old_a);
-		set_render_draw_color(sdl_renderer,0,0,0,255);
-		render_fill_rect(sdl_renderer,&map_rect);
-		set_render_draw_color(sdl_renderer,old_r,old_g,old_b,old_a);
-
-		const int32_t saved_origin_x=renderer->origin_x;
-		const int32_t saved_origin_y=renderer->origin_y;
-		renderer->origin_x+=glide_x;
-		renderer->origin_y+=glide_y;
-		for(int32_t x=vp->clipx[0];x<=vp->clipx[1];++x)
-			{
-			for(int32_t y=vp->clipy[0];y<=vp->clipy[1];++y)
-				redraw_world_tile(renderer,viewport_renders,coverage,x,y);
-			}
-		draw_viewport_interpolation_stages(renderer,viewport_renders,coverage);
-		renderer->origin_x=saved_origin_x;
-		renderer->origin_y=saved_origin_y;
-		render_set_clip_rect(sdl_renderer,nullptr);
-
-		// Everything was repainted; per-tile coverage bookkeeping restarts after the glide.
-		previous_coverage.clear();
-		return;
-		}
-
-	tile_coveragest redraw_coverage=coverage;
-	redraw_coverage.insert(previous_coverage.begin(),previous_coverage.end());
-	Uint8 old_r=0,old_g=0,old_b=0,old_a=255;
-	get_render_draw_color(sdl_renderer,&old_r,&old_g,&old_b,&old_a);
-	set_render_draw_color(sdl_renderer,0,0,0,255);
-	for(const auto &[x,y]:redraw_coverage)
-		{
-		if(!inside_clip(vp,x,y))continue;
-		const SDL_Rect tile_rect=
-			{
-			tile_pixel(x,renderer->origin_x,zoom),
-			tile_pixel(y,renderer->origin_y,zoom),
-			tile_size,
-			tile_size
-			};
-		render_fill_rect(sdl_renderer,&tile_rect);
-		}
-	set_render_draw_color(sdl_renderer,old_r,old_g,old_b,old_a);
-
-	for(const auto &[x,y]:redraw_coverage)
-		{
-		if(inside_clip(vp,x,y))
-			redraw_world_tile(renderer,viewport_renders,coverage,x,y);
-		}
-	draw_viewport_interpolation_stages(renderer,viewport_renders,coverage);
-
-	previous_coverage=std::move(coverage);
+	sdl_canvasst canvas(renderer);
+	frame_renderer.render(canvas,viewports,vp,animation_manager,glide_x,glide_y);
 }
 
 struct renderer_hook : df::renderer_2d_base
@@ -1504,7 +626,7 @@ bool load_sdl(color_ostream &out)
 void reset_state()
 {
 	animation_manager=visual_animation_managerst();
-	previous_coverage.clear();
+	frame_renderer=frame_rendererst<df::graphic_viewportst>();
 	visual_context_revision=0;
 	previous_viewport=nullptr;
 	previous_view_signature={};
@@ -1518,8 +640,6 @@ void reset_state()
 	camera_enabled=false;
 	camera_has_prev=false;
 	camera_was_offset=false;
-	flip_enabled=false;
-	reset_bob_settings();
 }
 
 command_result status_command(
@@ -1535,13 +655,13 @@ command_result status_command(
 		out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
 			camera_enabled?"on":"off",-rest_x,-rest_y);
 		out.print("sprite flipping: {}\n",
-			flip_enabled?"on":"off");
+			render_settings.flip?"on":"off");
 		out.print("time step: {} ms\n",animation_manager.base_duration_ms());
 		out.print("walk bob: {}\n",
-			bob_enabled?"on":"off");
+			render_settings.bob.enabled?"on":"off");
 		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-			bob_horizontal_mult,bob_diagonal_mult,bob_vertical_mult);
-		out.print("hops per step: {}\n",bob_hops);
+			render_settings.bob.horizontal_mult,render_settings.bob.diagonal_mult,render_settings.bob.vertical_mult);
+		out.print("hops per step: {}\n",render_settings.bob.hops);
 		return CR_OK;
 		}
 	if(parameters[0]=="camera")
@@ -1598,7 +718,7 @@ command_result status_command(
 		if(parameters.size()==1)
 			{
 			out.print("sprite flipping: {}\n",
-				flip_enabled?"on":"off");
+				render_settings.flip?"on":"off");
 			return CR_OK;
 			}
 		// A toggle changes the screen without changing anything DF knows, so DF will not repaint.
@@ -1607,14 +727,14 @@ command_result status_command(
 		// Same flush plugin_enable(false) uses.
 		if(parameters.size()==2&&parameters[1]=="on")
 			{
-			flip_enabled=true;
+			render_settings.flip=true;
 			if(gps!=nullptr)++gps->force_full_display_count;
 			out.print("smooth-movement: sprite flipping enabled\n");
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="off")
 			{
-			flip_enabled=false;
+			render_settings.flip=false;
 			if(gps!=nullptr)++gps->force_full_display_count;
 			out.print("smooth-movement: sprite flipping disabled\n");
 			return CR_OK;
@@ -1646,13 +766,13 @@ command_result status_command(
 		{
 		if(parameters.size()==1)
 			{
-			out.print("hops per step: {}\n",bob_hops);
+			out.print("hops per step: {}\n",render_settings.bob.hops);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&(parameters[1]=="1"||parameters[1]=="2"))
 			{
-			bob_hops=parameters[1]=="1"?1:2;
-			out.print("smooth-movement: hops per step {}\n",bob_hops);
+			render_settings.bob.hops=parameters[1]=="1"?1:2;
+			out.print("smooth-movement: hops per step {}\n",render_settings.bob.hops);
 			return CR_OK;
 			}
 		return CR_WRONG_USAGE;
@@ -1662,7 +782,7 @@ command_result status_command(
 		if(parameters.size()==1)
 			{
 			out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-				bob_horizontal_mult,bob_diagonal_mult,bob_vertical_mult);
+				render_settings.bob.horizontal_mult,render_settings.bob.diagonal_mult,render_settings.bob.vertical_mult);
 			return CR_OK;
 			}
 		if(parameters.size()==4)
@@ -1678,17 +798,17 @@ command_result status_command(
 			// Written so that NaN fails too.
 			if(!(horizontal>=0.0f&&horizontal<=5.0f)||!(diagonal>=0.0f&&diagonal<=5.0f)||
 				!(vertical>=0.0f&&vertical<=5.0f))return CR_WRONG_USAGE;
-			if(!walk_bob_lift_fits(bob_amplitude,horizontal,diagonal,vertical))
+			if(!walk_bob_lift_fits(render_settings.bob.amplitude,horizontal,diagonal,vertical))
 				{
 				out.printerr("smooth-movement: bob {:.2f} times that multiplier lifts more than {:.2f} tile; lower one of them\n",
-					bob_amplitude,max_walk_bob_lift);
+					render_settings.bob.amplitude,max_walk_bob_lift);
 				return CR_FAILURE;
 				}
-			bob_horizontal_mult=horizontal;
-			bob_diagonal_mult=diagonal;
-			bob_vertical_mult=vertical;
+			render_settings.bob.horizontal_mult=horizontal;
+			render_settings.bob.diagonal_mult=diagonal;
+			render_settings.bob.vertical_mult=vertical;
 			out.print("smooth-movement: bob multipliers horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-				bob_horizontal_mult,bob_diagonal_mult,bob_vertical_mult);
+				render_settings.bob.horizontal_mult,render_settings.bob.diagonal_mult,render_settings.bob.vertical_mult);
 			return CR_OK;
 			}
 		return CR_WRONG_USAGE;
@@ -1697,7 +817,7 @@ command_result status_command(
 		{
 		if(parameters.size()==1)
 			{
-			out.print("walk bob: {} (amount {:.2f})\n",bob_enabled?"on":"off",bob_amplitude);
+			out.print("walk bob: {} (amount {:.2f})\n",render_settings.bob.enabled?"on":"off",render_settings.bob.amplitude);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]!="on"&&parameters[1]!="off")
@@ -1707,25 +827,25 @@ command_result status_command(
 				const float amount=std::stof(parameters[1]);
 				// Turning the bob off is 'bob off'; an amount only sets the height.
 				if(!(amount>0.0f)||amount>max_walk_bob_lift)return CR_WRONG_USAGE;
-				if(!walk_bob_lift_fits(amount,bob_horizontal_mult,bob_diagonal_mult,
-						bob_vertical_mult))
+				if(!walk_bob_lift_fits(amount,render_settings.bob.horizontal_mult,render_settings.bob.diagonal_mult,
+						render_settings.bob.vertical_mult))
 					{
 					out.printerr("smooth-movement: bob {:.2f} times the current multipliers lifts more than {:.2f} tile; lower the multipliers first\n",
 						amount,max_walk_bob_lift);
 					return CR_FAILURE;
 					}
-				bob_amplitude=amount;
+				render_settings.bob.amplitude=amount;
 				if(gps!=nullptr)++gps->force_full_display_count;
-				out.print("smooth-movement: bob amount {:.2f}\n",bob_amplitude);
+				out.print("smooth-movement: bob amount {:.2f}\n",render_settings.bob.amplitude);
 				return CR_OK;
 				}
 			catch(...){return CR_WRONG_USAGE;}
 			}
 		if(parameters.size()==2&&(parameters[1]=="on"||parameters[1]=="off"))
 			{
-			bob_enabled=parameters[1]=="on";
+			render_settings.bob.enabled=parameters[1]=="on";
 			if(gps!=nullptr)++gps->force_full_display_count;
-			out.print("smooth-movement: walk bob {}\n",bob_enabled?"enabled":"disabled");
+			out.print("smooth-movement: walk bob {}\n",render_settings.bob.enabled?"enabled":"disabled");
 			return CR_OK;
 			}
 		return CR_WRONG_USAGE;

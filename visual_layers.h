@@ -123,6 +123,26 @@ constexpr bool visual_layer_matches(
 }
 
 constexpr size_t visual_layer_count=static_cast<size_t>(viewport_visual_layer::count);
+
+// One bit per layer, for masks of layers to suppress or of layers a tile has proxies on.
+constexpr uint16_t visual_layer_bit(viewport_visual_layer layer)
+{
+	return uint16_t(1U<<static_cast<uint8_t>(layer));
+}
+
+// The layers a redraw through `group` has already painted as proxies, and so must hide.
+// Designations are drawn last and stand alone.
+constexpr uint16_t visual_layers_through_group(visual_render_groupst group)
+{
+	uint16_t mask=0;
+	for(const auto &descriptor:visual_layer_descriptors)
+		if(descriptor.render_group!=visual_render_groupst::designation&&
+			static_cast<uint8_t>(descriptor.render_group)<=static_cast<uint8_t>(group))
+			mask|=visual_layer_bit(descriptor.layer);
+	return mask;
+}
+
+constexpr uint16_t all_visual_layers_mask=uint16_t((1U<<visual_layer_count)-1);
 using visual_layer_pointerst=std::array<const int32_t *,visual_layer_count>;
 
 // A viewport's tile grid. The buffers are column-major: index = x*dim_y+y.
