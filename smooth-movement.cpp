@@ -437,7 +437,6 @@ struct visual_layer_bufferst
 	viewport_layer_memberst previous;
 };
 
-constexpr size_t visual_layer_count=static_cast<size_t>(viewport_visual_layer::count);
 constexpr std::array visual_layer_buffers=
 	{
 	visual_layer_bufferst{viewport_visual_layer::right,

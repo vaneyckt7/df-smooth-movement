@@ -3,316 +3,75 @@
 #ifndef VISUAL_ANIMATION_H
 #define VISUAL_ANIMATION_H
 
+#include "buffer_signature.h"
+#include "facing_grid.h"
+#include "movement_detector.h"
+#include "movement_store.h"
+#include "scroll_tracker.h"
+#include "visual_layers.h"
+
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstdint>
-#include <cstring>
-#include <cstdlib>
 #include <vector>
 
-enum class viewport_visual_layer : uint8_t
-{
-	right,
-	center,
-	left,
-	upright,
-	up,
-	upleft,
-	vehicle,
-	item,
-	designation,
-	count
-};
-
-enum class visual_render_groupst : uint8_t
-{
-	item,
-	vehicle,
-	main,
-	upper,
-	designation,
-	count
-};
-
-struct visual_layer_descriptorst
-{
-	viewport_visual_layer layer;
-	visual_render_groupst render_group;
-	bool moves_independently;
-	bool matches_any_previous;
-	uint8_t draw_order;
-	int8_t center_x;
-	int8_t center_y;
-};
-
-constexpr std::array visual_layer_descriptors=
-	{
-	visual_layer_descriptorst{viewport_visual_layer::right,
-		visual_render_groupst::main,false,false,3,-1,0},
-	visual_layer_descriptorst{viewport_visual_layer::center,
-		visual_render_groupst::main,true,false,0,0,0},
-	visual_layer_descriptorst{viewport_visual_layer::left,
-		visual_render_groupst::main,false,false,4,1,0},
-	visual_layer_descriptorst{viewport_visual_layer::upright,
-		visual_render_groupst::upper,false,false,5,-1,1},
-	visual_layer_descriptorst{viewport_visual_layer::up,
-		visual_render_groupst::upper,false,false,6,0,1},
-	visual_layer_descriptorst{viewport_visual_layer::upleft,
-		visual_render_groupst::upper,false,false,7,1,1},
-	visual_layer_descriptorst{viewport_visual_layer::vehicle,
-		visual_render_groupst::vehicle,true,true,2,0,0},
-	visual_layer_descriptorst{viewport_visual_layer::item,
-		visual_render_groupst::item,true,false,1,0,0},
-	visual_layer_descriptorst{viewport_visual_layer::designation,
-		visual_render_groupst::designation,false,true,8,0,0}
-	};
-
-constexpr bool valid_visual_layer_descriptors()
-{
-	uint16_t draw_orders=0;
-	for(size_t i=0;i<visual_layer_descriptors.size();++i)
-		{
-		const auto &descriptor=visual_layer_descriptors[i];
-		if(static_cast<size_t>(descriptor.layer)!=i||
-			descriptor.draw_order>=visual_layer_descriptors.size()||
-			(draw_orders&(1U<<descriptor.draw_order)))return false;
-		draw_orders|=uint16_t(1U<<descriptor.draw_order);
-		}
-	return true;
-}
-
-static_assert(valid_visual_layer_descriptors());
-
-constexpr const visual_layer_descriptorst &visual_layer_descriptor(
-	viewport_visual_layer layer)
-{
-	return visual_layer_descriptors[static_cast<size_t>(layer)];
-}
-
-constexpr viewport_visual_layer visual_layer_at_draw_order(uint8_t draw_order)
-{
-	for(const auto &descriptor:visual_layer_descriptors)
-		if(descriptor.draw_order==draw_order)return descriptor.layer;
-	return viewport_visual_layer::count;
-}
-
-constexpr visual_render_groupst visual_render_group(viewport_visual_layer layer)
-{
-	return visual_layer_descriptor(layer).render_group;
-}
-
-constexpr bool visual_layer_moves_independently(viewport_visual_layer layer)
-{
-	return visual_layer_descriptor(layer).moves_independently;
-}
-
-constexpr bool visual_layer_tracks_own_movement(viewport_visual_layer layer)
-{
-	const auto &descriptor=visual_layer_descriptor(layer);
-	return descriptor.moves_independently||
-		descriptor.render_group==visual_render_groupst::designation;
-}
-
-constexpr bool visual_layer_matches(
-	viewport_visual_layer layer,
-	int32_t current,
-	int32_t previous)
-{
-	return visual_layer_descriptor(layer).matches_any_previous?
-		previous!=0:
-		previous==current;
-}
-
-struct viewport_visual_animation_inputst
-{
-	const void *viewport=nullptr;
-	int32_t dim_x=0;
-	int32_t dim_y=0;
-	uint64_t context_revision=0;
-	std::array<const int32_t *,static_cast<size_t>(viewport_visual_layer::count)> current{};
-	std::array<const int32_t *,static_cast<size_t>(viewport_visual_layer::count)> previous{};
-	// Current map-scroll offset (window_x/window_y). A pure pan does not bump context_revision.
-	// Only a hint: it changes at input time, the buffers shift on a later render frame.
-	int32_t pan_x=0;
-	int32_t pan_y=0;
-
-	bool valid() const
-		{
-		if(viewport==nullptr||dim_x<=0||dim_y<=0)return false;
-		for(size_t layer=0;layer<current.size();++layer)
-			{
-			if(current[layer]==nullptr||previous[layer]==nullptr)return false;
-			}
-		return true;
-		}
-};
-
-struct visual_movement_renderst
-{
-	bool active=false;
-	float source_x=0.0f;
-	float source_y=0.0f;
-	float progress=1.0f;
-	bool inherited=false;
-};
-
-inline float animation_progress(
-	uint32_t now_ms,
-	uint32_t start_time_ms,
-	uint32_t duration_ms)
-{
-	const float linear=std::min(
-		1.0f,float(now_ms-start_time_ms)/duration_ms);
-	return linear*linear*(3.0f-2.0f*linear);
-}
-
-// Walk bob: how far, in tiles, a moving sprite is lifted at 'progress' through a step.
-// |sin(pi*hops*progress)| rises and falls once per hop and is zero at both ends, so the
-// sprite always lands on the grid. 'multiplier' is the per-direction factor.
-inline float walk_bob_lift(float progress,int hops,float amplitude,float multiplier)
-{
-	return std::fabs(std::sin(progress*3.14159265f*float(hops)))*amplitude*multiplier;
-}
-
-// Which multiplier a step takes. The source can be fractional when a step retargets from an
-// in-flight position, so it is rounded back to the tile the creature was last seen on; the
-// direction is that of the whole tile step, not of the remaining fraction.
-enum class walk_bob_directionst{horizontal,diagonal,vertical};
-
-inline walk_bob_directionst walk_bob_direction(
-	float source_x,float source_y,int32_t target_x,int32_t target_y)
-{
-	const bool same_x=std::lround(source_x)==target_x;
-	const bool same_y=std::lround(source_y)==target_y;
-	if(same_y)return walk_bob_directionst::horizontal;
-	if(same_x)return walk_bob_directionst::vertical;
-	return walk_bob_directionst::diagonal;
-}
-
-// One bob per creature. anchors[i] is the index of the proxy that i rides on (-1 for a root:
-// a creature's centre tile), bob[i] whether i could bob on its own. Afterwards every proxy
-// carries its root's decision, which is the AND over everything riding on that root. Anchors
-// are followed to the root, so the depth of the chain does not matter.
-inline void resolve_creature_bob(const std::vector<int32_t> &anchors,std::vector<bool> &bob)
-{
-	const size_t count=anchors.size();
-	auto root_of=[&](size_t i)
-		{
-		for(size_t hops=0;anchors[i]>=0&&hops<count;++hops)i=size_t(anchors[i]);
-		return i;
-		};
-	for(size_t i=0;i<count;++i)
-		if(!bob[i])bob[root_of(i)]=false;
-	for(size_t i=0;i<count;++i)
-		bob[i]=bob[root_of(i)];
-}
-
-// The renderer erases and repaints exactly one row above a bobbing sprite's path, so the
-// tallest possible lift must stay under a tile or the apex leaves stale pixels behind.
-constexpr float max_walk_bob_lift=0.9f;
-
-inline bool walk_bob_lift_fits(
-	float amplitude,float horizontal,float diagonal,float vertical)
-{
-	// A little slack so a product that lands on the cap (0.3 x 3.0) is not rejected by rounding.
-	return amplitude*std::max({horizontal,diagonal,vertical})<=max_walk_bob_lift+1e-4f;
-}
-
-inline bool visual_moved_between_tiles(
-	viewport_visual_layer layer,
-	const int32_t *current,
-	const int32_t *previous,
-	int32_t source,
-	int32_t target)
-{
-	return previous[target]==0&&current[source]==0&&
-		(layer==viewport_visual_layer::designation||previous[source]!=0);
-}
-
-inline int32_t inherited_visual_source_tile(
-	int32_t overlay_target,
-	float center_source,
-	float center_target)
-{
-	return overlay_target+int32_t(std::lround(center_source-center_target));
-}
-
-enum class visual_facingst : int8_t
-{
-	east=0,
-	west=1
-};
-
-// DF creature art faces west, so only east needs flipping. Also the default and cleared value.
-constexpr visual_facingst native_sprite_facing=visual_facingst::west;
-
-// Sticky facing: only a horizontal component changes it.
-constexpr visual_facingst facing_after_move(
+// Fraction of tracked sprites consistent with the buffers having shifted by (dx,dy):
+// current[x]==previous[x+dx]. Negative when there is nothing to compare.
+inline double shift_match_ratio(
+	const viewport_visual_animation_inputst &input,
 	int32_t dx,
-	visual_facingst previous)
+	int32_t dy)
 {
-	if(dx>0)return visual_facingst::east;
-	if(dx<0)return visual_facingst::west;
-	return previous;
-}
-
-// center_x is only -1, 0 or +1, so a creature is at most three columns wide here.
-constexpr int32_t mirrored_tile_x(int32_t piece_x,int32_t anchor_x)
-{
-	return anchor_x-(piece_x-anchor_x);
+	const visual_gridst grid=input.grid();
+	int32_t considered=0;
+	int32_t matches=0;
+	for(size_t layer=0;layer<visual_layer_count;++layer)
+		{
+		const auto id=static_cast<viewport_visual_layer>(layer);
+		if(!visual_layer_tracks_own_movement(id))continue;
+		// A layer matching any non-zero previous carries no position, so it would vote for
+		// every hypothesis and carry an unapplied scroll over the bar.
+		if(visual_layer_descriptor(id).matches_any_previous)continue;
+		const int32_t *current=input.current[layer];
+		const int32_t *previous=input.previous[layer];
+		for(int32_t x=0;x<grid.dim_x;++x)
+			{
+			for(int32_t y=0;y<grid.dim_y;++y)
+				{
+				const int32_t texpos=current[grid.index(x,y)];
+				if(texpos==0||!grid.contains(x+dx,y+dy))continue;
+				++considered;
+				if(visual_layer_matches(id,texpos,previous[grid.index(x+dx,y+dy)]))++matches;
+				}
+			}
+		}
+	if(considered==0)return -1.0;
+	return double(matches)/double(considered);
 }
 
 class visual_animation_managerst
 {
-	struct movementst
-	{
-		viewport_visual_layer layer;
-		int32_t texpos;
-		float source_x;
-		float source_y;
-		int32_t target_x;
-		int32_t target_y;
-		uint32_t start_time_ms;
-		uint32_t duration_ms=100;
-	};
-
 	struct viewport_animationst
 	{
 		const void *viewport=nullptr;
-		int32_t dim_x=0;
-		int32_t dim_y=0;
+		visual_gridst grid;
 		uint64_t context_revision=0;
 		bool has_context=false;
 		bool seen=false;
-		std::vector<movementst> movements;
-		// (layer, target tile) -> index into movements, sorted; rebuilt whenever movements
-		// change so lookups are a binary search rather than a scan of every movement.
-		std::vector<std::pair<uint64_t,int32_t>> movement_index;
-		// One facing per tile, not per unit: the viewport exposes one creature texpos per tile.
-		std::vector<int8_t> facing;
-		// Stationary mirrored creatures are repainted every frame; this is the cheap pre-check.
-		bool has_mirrored=false;
 		int32_t pan_x=0;
 		int32_t pan_y=0;
 		bool has_pan=false;
-		// Window scrolls not yet observed in the buffers, oldest first.
-		// A signed total would cancel on a reversing drag while both shifts are still owed.
-		std::vector<std::array<int32_t,2>> pending;
-		// Redraws no prefix has matched.
-		int32_t pending_frames=0;
-		// Redraws spent waiting for the buffers to move at all.
-		int32_t pending_age=0;
-		// Redraws left in which new-movement detection stays suppressed after scroll activity.
-		int32_t suppress_frames=0;
+		movement_storest movements;
+		facing_gridst facing;
+		scroll_trackerst scroll;
 		// Buffer contents last seen, to recognize a repeat of them.
 		uint64_t buffer_signature=0;
 		bool has_buffer_signature=false;
-		// Signature of the previous buffers, kept only while previous_view_stale: the
-		// crossing shows there when the current buffers already held the new view.
-		uint64_t previous_buffer_signature=0;
-		// Set while the previous buffer still belongs to a view that has been left behind.
+		// Set while the previous buffer still belongs to a view that has been left behind,
+		// with that buffer's signature: the crossing shows there when the current buffers
+		// already held the new view.
 		bool previous_view_stale=false;
+		uint64_t previous_buffer_signature=0;
 	};
 
 	uint32_t frame_time_ms=0;
@@ -320,221 +79,86 @@ class visual_animation_managerst
 	bool has_frame=false;
 	bool force_full_redraw=false;
 	std::vector<viewport_animationst> viewports;
+	movement_detectorst detector;
+	// Scratch for the landing frame's rebased previous buffers.
+	std::array<std::vector<int32_t>,visual_layer_count> rebased_previous;
 
 	// Base time for one tile step; settable at runtime ('timestep <ms>').
 	uint32_t movement_duration_ms=100;
-	// Scrolling faster than detection keeps up: give up rather than test ever more prefixes.
-	static constexpr size_t max_pending_shifts=8;
-	// Bounds the wait on a scroll that never lands, so suppression cannot stick forever.
-	static constexpr int32_t max_pending_age_frames=120;
 
-	static void clear_pending(viewport_animationst &state)
-		{
-		state.pending.clear();
-		state.pending_frames=0;
-		state.pending_age=0;
-		}
-
-	static uint64_t movement_key(viewport_visual_layer layer,int32_t target_x,int32_t target_y)
-		{
-		// Targets are viewport tile coordinates, so both fit in 16 bits with room to spare.
-		return (uint64_t(static_cast<uint8_t>(layer))<<32)|
-			(uint64_t(uint16_t(target_x))<<16)|uint64_t(uint16_t(target_y));
-		}
-
-	static void rebuild_movement_index(viewport_animationst &state)
-		{
-		state.movement_index.clear();
-		state.movement_index.reserve(state.movements.size());
-		for(size_t i=0;i<state.movements.size();++i)
-			{
-			const movementst &movement=state.movements[i];
-			state.movement_index.emplace_back(
-				movement_key(movement.layer,movement.target_x,movement.target_y),int32_t(i));
-			}
-		// Ordered by position within movements for equal keys, so the first registered wins,
-		// exactly as the scan it replaces did.
-		std::sort(state.movement_index.begin(),state.movement_index.end());
-		}
-
-	static const movementst *find_movement(
-		const viewport_animationst &state,
-		viewport_visual_layer layer,
-		int32_t target_x,
-		int32_t target_y)
-		{
-		const uint64_t key=movement_key(layer,target_x,target_y);
-		const auto it=std::lower_bound(
-			state.movement_index.begin(),
-			state.movement_index.end(),
-			std::make_pair(key,int32_t(-1)));
-		if(it==state.movement_index.end()||it->first!=key)return nullptr;
-		return &state.movements[size_t(it->second)];
-		}
-
-	static void abandon_pending(viewport_animationst &state)
-		{
-		state.movements.clear();
-		rebuild_movement_index(state);
-		clear_pending(state);
-		}
-
-	static void reset_facing(viewport_animationst &state)
-		{
-		std::fill(
-			state.facing.begin(),
-			state.facing.end(),
-			int8_t(native_sprite_facing));
-		state.has_mirrored=false;
-		}
-
-	static void reset_tracking(viewport_animationst &state)
-		{
-		abandon_pending(state);
-		state.suppress_frames=0;
-		}
-
-	// Identifies the buffer contents this frame, to tell a redrawn viewport from a repeated one.
-	static uint64_t compute_buffer_signature(
-		const viewport_visual_animation_inputst &input,
-		const std::array<const int32_t *,static_cast<size_t>(viewport_visual_layer::count)> &buffers)
-		{
-		// FNV-1a over the current buffers only: if nothing on screen changed, no sprite moved,
-		// and the previous buffers add nothing the comparison needs. Only ever compared against
-		// the previous frame's value, never stored. Two tiles per step and four independent
-		// lanes, since one chain is a serial multiply per element over every tracked buffer of
-		// every viewport each frame. The lanes are folded at the end.
-		constexpr uint64_t fnv_offset_basis=0xcbf29ce484222325ULL;
-		constexpr uint64_t fnv_prime=0x100000001b3ULL;
-		constexpr size_t lanes=4;
-		std::array<uint64_t,lanes> hash;
-		for(size_t lane=0;lane<lanes;++lane)hash[lane]=fnv_offset_basis+lane;
-		const size_t tile_count=size_t(input.dim_x)*size_t(input.dim_y);
-		const size_t word_count=tile_count/2;
-		for(size_t layer=0;layer<buffers.size();++layer)
-			{
-			if(!visual_layer_tracks_own_movement(
-				static_cast<viewport_visual_layer>(layer)))continue;
-			const int32_t *current=buffers[layer];
-			size_t word=0;
-			for(;word+lanes<=word_count;word+=lanes)
-				{
-				for(size_t lane=0;lane<lanes;++lane)
-					{
-					uint64_t value;
-					std::memcpy(&value,current+2*(word+lane),sizeof value);
-					hash[lane]=(hash[lane]^value)*fnv_prime;
-					}
-				}
-			for(;word<word_count;++word)
-				{
-				uint64_t value;
-				std::memcpy(&value,current+2*word,sizeof value);
-				hash[0]=(hash[0]^value)*fnv_prime;
-				}
-			if(tile_count%2)
-				hash[0]=(hash[0]^uint64_t(uint32_t(current[tile_count-1])))*fnv_prime;
-			}
-		uint64_t folded=fnv_offset_basis;
-		for(const uint64_t lane:hash)folded=(folded^lane)*fnv_prime;
-		return folded;
-		}
-
-	// Fraction of tracked sprites consistent with a buffer shift: current[x]==previous[x+dwx].
-	// Negative when there is nothing to compare.
-	static double shift_match_ratio(
-		const viewport_visual_animation_inputst &input,
-		int32_t dwx,
-		int32_t dwy)
-		{
-		int32_t considered=0;
-		int32_t matches=0;
-		for(size_t layer=0;layer<input.current.size();++layer)
-			{
-			const auto id=static_cast<viewport_visual_layer>(layer);
-			if(!visual_layer_tracks_own_movement(id))continue;
-			// A layer matching any non-zero previous carries no position, so it would vote for
-			// every hypothesis and carry an unapplied scroll over the bar.
-			if(visual_layer_descriptor(id).matches_any_previous)continue;
-			const int32_t *current=input.current[layer];
-			const int32_t *previous=input.previous[layer];
-			for(int32_t x=0;x<input.dim_x;++x)
-				{
-				const int32_t sx=x+dwx;
-				if(sx<0||sx>=input.dim_x)continue;
-				for(int32_t y=0;y<input.dim_y;++y)
-					{
-					const int32_t texpos=current[x*input.dim_y+y];
-					if(texpos==0)continue;
-					const int32_t sy=y+dwy;
-					if(sy<0||sy>=input.dim_y)continue;
-					++considered;
-					if(visual_layer_matches(id,texpos,previous[sx*input.dim_y+sy]))++matches;
-					}
-				}
-			}
-		if(considered==0)return -1.0;
-		return double(matches)/double(considered);
-		}
-
-	static std::array<int32_t,2> shared_movement_delta(
-		const int32_t *current,
-		const int32_t *previous,
-		int32_t dim_x,
-		int32_t dim_y)
-		{
-		std::array<int32_t,2> best{};
-		int32_t best_count=1;
-		bool ambiguous=false;
-		for(int32_t dx=-1;dx<=1;++dx)
-			{
-			for(int32_t dy=-1;dy<=1;++dy)
-				{
-				if(dx==0&&dy==0)continue;
-				int32_t count=0;
-				for(int32_t x=0;x<dim_x;++x)
-					{
-					const int32_t source_x=x+dx;
-					if(source_x<0||source_x>=dim_x)continue;
-					for(int32_t y=0;y<dim_y;++y)
-						{
-						const int32_t source_y=y+dy;
-						if(source_y<0||source_y>=dim_y)continue;
-						const int32_t target=x*dim_y+y;
-						const int32_t texpos=current[target];
-						if(texpos!=0&&previous[target]!=texpos&&
-							previous[source_x*dim_y+source_y]==texpos)++count;
-						}
-					}
-				if(count>best_count)
-					{
-					best_count=count;
-					best={dx,dy};
-					ambiguous=false;
-					}
-				else if(count==best_count&&count>1)ambiguous=true;
-				}
-			}
-		return ambiguous?std::array<int32_t,2>{}:best;
-		}
-
-	viewport_animationst &get_viewport(const viewport_visual_animation_inputst &input)
+	viewport_animationst &get_viewport(const void *viewport)
 		{
 		for(viewport_animationst &state:viewports)
-			{
-			if(state.viewport==input.viewport)return state;
-			}
+			if(state.viewport==viewport)return state;
 		viewports.emplace_back();
-		viewports.back().viewport=input.viewport;
+		viewports.back().viewport=viewport;
 		return viewports.back();
 		}
 
-	float movement_progress(const movementst &movement) const
+	const viewport_animationst *find_viewport(const void *viewport) const
 		{
-		return animation_progress(
-			frame_time_ms,
-			movement.start_time_ms,
-			movement.duration_ms);
+		for(const viewport_animationst &state:viewports)
+			if(state.viewport==viewport)return &state;
+		return nullptr;
+		}
+
+	// Whether the buffers hold something not seen on the last redraw. The hook runs every
+	// frame; the viewport is recomputed only when it changes, and while paused hardly at all.
+	static bool observe_buffers(
+		viewport_animationst &state,
+		const viewport_visual_animation_inputst &input)
+		{
+		const uint64_t signature=tracked_buffer_signature(input.grid(),input.current);
+		bool advanced=!state.has_buffer_signature||state.buffer_signature!=signature;
+		state.buffer_signature=signature;
+		state.has_buffer_signature=true;
+		// After a view switch the buffers may already show the new view on the input frame,
+		// so the crossing is visible only in `previous` catching up a frame later. Hash it
+		// for just that window; the rest of the time it is the last frame's current.
+		if(state.previous_view_stale)
+			{
+			const uint64_t previous_signature=
+				tracked_buffer_signature(input.grid(),input.previous);
+			advanced=advanced||state.previous_buffer_signature!=previous_signature;
+			state.previous_buffer_signature=previous_signature;
+			}
+		return advanced;
+		}
+
+	// On the landing frame `previous` is still framed on the pre-scroll view. Rebasing it by
+	// the landed delta keeps a creature that walked during the scroll.
+	visual_layer_pointerst rebase_previous(
+		const viewport_visual_animation_inputst &input,
+		const scroll_trackerst::shiftst &shift)
+		{
+		visual_layer_pointerst previous=input.previous;
+		const visual_gridst grid=input.grid();
+		for(size_t layer=0;layer<visual_layer_count;++layer)
+			{
+			if(!visual_layer_tracks_own_movement(
+				static_cast<viewport_visual_layer>(layer)))continue;
+			std::vector<int32_t> &buffer=rebased_previous[layer];
+			buffer.resize(grid.tile_count());
+			translate_grid(
+				grid,input.previous[layer],buffer.data(),shift[0],shift[1],int32_t(0));
+			previous[layer]=buffer.data();
+			}
+		return previous;
+		}
+
+	// Movements that ended, or whose sprite is no longer where they were heading.
+	void expire_movements(
+		viewport_animationst &state,
+		const viewport_visual_animation_inputst &input) const
+		{
+		const visual_gridst grid=input.grid();
+		state.movements.erase_if([&](const visual_movementst &movement)
+			{
+			const int32_t current=input.current[static_cast<size_t>(movement.layer)]
+				[grid.index(movement.target_x,movement.target_y)];
+			return movement.finished(frame_time_ms)||current==0||
+				!visual_layer_matches(movement.layer,current,movement.texpos);
+			});
 		}
 
 	public:
@@ -566,85 +190,54 @@ class visual_animation_managerst
 		void synchronize_viewport(const viewport_visual_animation_inputst &input)
 			{
 			if(input.viewport==nullptr)return;
-			viewport_animationst &state=get_viewport(input);
+			viewport_animationst &state=get_viewport(input.viewport);
 			state.seen=true;
 
 			if(!input.valid())
 				{
-				reset_tracking(state);
+				state.movements.clear();
+				state.scroll.reset();
 				state.has_context=false;
-				state.has_mirrored=false;
+				state.facing.reset();
 				return;
 				}
 
+			const visual_gridst grid=input.grid();
 			// Only a replaced view leaves a previous buffer belonging somewhere else; a first
 			// sighting does not.
 			const bool view_switched=state.has_context&&
-				(state.context_revision!=input.context_revision||
-				state.dim_x!=input.dim_x||state.dim_y!=input.dim_y);
+				(state.context_revision!=input.context_revision||state.grid!=grid);
 			const bool context_changed=!state.has_context||view_switched;
-			// The scroll delta is queued here as a hint; the buffers are hypothesis-tested each
-			// frame to find where it lands. Detection stays suppressed until then: a shifted
-			// buffer makes every panned creature look like a real move.
 			if(state.has_pan&&(state.pan_x!=input.pan_x||state.pan_y!=input.pan_y))
 				{
-				if(state.pending.size()>=max_pending_shifts)
+				if(state.scroll.queue(input.pan_x-state.pan_x,input.pan_y-state.pan_y))
 					{
-					// Same give-up as the other two sites: the owed shifts are unknowable now.
-					abandon_pending(state);
-					reset_facing(state);
+					// The owed shifts are unknowable now: nothing anchored on them survives.
+					state.movements.clear();
+					state.facing.reset();
 					}
-				state.pending.push_back(
-					{input.pan_x-state.pan_x,input.pan_y-state.pan_y});
-				state.pending_frames=0;
-				state.suppress_frames=2;
 				}
 			state.context_revision=input.context_revision;
-			state.dim_x=input.dim_x;
-			state.dim_y=input.dim_y;
+			state.grid=grid;
 			state.has_context=true;
 			state.pan_x=input.pan_x;
 			state.pan_y=input.pan_y;
 			state.has_pan=true;
-			if(context_changed)
-				{
-				state.facing.assign(
-					size_t(input.dim_x)*size_t(input.dim_y),
-					int8_t(native_sprite_facing));
-				state.has_mirrored=false;
-				}
-			// This hook runs per frame; the viewport is recomputed only when it changes, and while
-			// paused hardly at all. Re-reading a landed scroll steps every sprite by a tile.
-			const uint64_t signature=compute_buffer_signature(input,input.current);
-			bool buffers_advanced=!state.has_buffer_signature||
-				state.buffer_signature!=signature;
-			state.buffer_signature=signature;
-			state.has_buffer_signature=true;
-			// After a view switch the buffers may already show the new view on the input frame,
-			// so the crossing is visible only in `previous` catching up a frame later. Hash it
-			// for just that window; the rest of the time it is the last frame's current and
-			// adds nothing.
-			if(state.previous_view_stale)
-				{
-				const uint64_t previous_signature=
-					compute_buffer_signature(input,input.previous);
-				buffers_advanced=buffers_advanced||
-					state.previous_buffer_signature!=previous_signature;
-				state.previous_buffer_signature=previous_signature;
-				}
+			if(context_changed)state.facing.resize(grid);
+
+			const bool buffers_advanced=observe_buffers(state,input);
 
 			if(context_changed)
 				{
-				// Skips the recompute sweep, so clear has_mirrored here or a stale true survives.
-				state.has_mirrored=false;
-				reset_tracking(state);
+				state.movements.clear();
+				state.scroll.reset();
 				// window_z, zoom and resize change at input time; the buffers cross later.
 				// This reset covers only the input frame, not the crossing itself.
 				if(view_switched)
 					{
 					state.previous_view_stale=true;
 					state.previous_buffer_signature=
-						compute_buffer_signature(input,input.previous);
+						tracked_buffer_signature(grid,input.previous);
 					}
 				return;
 				}
@@ -655,317 +248,46 @@ class visual_animation_managerst
 			if(buffers_advanced)state.previous_view_stale=false;
 			// The new view is drawn at the current window, so a queued scroll is already in it.
 			// Left queued it would never match, and suppress everything until it aged out.
-			if(crossed_views)clear_pending(state);
+			if(crossed_views)state.scroll.forget();
 
-			bool translated=false;
-			std::array<int32_t,2> landed_shift{};
-			if(buffers_advanced&&!crossed_views&&!state.pending.empty())
+			scroll_trackerst::resultst scroll;
+			if(buffers_advanced&&!crossed_views)
 				{
-				// Queued scrolls land in order and may coalesce, so each hypothesis is a prefix.
-				// Shortest first: over-retiring leaves owed shifts to be read as movement.
-				std::array<int32_t,2> landed{};
-				size_t landed_count=0;
-				bool any_data=false;
-				std::array<int32_t,2> shift{};
-				for(size_t count=1;count<=state.pending.size();++count)
+				scroll=state.scroll.observe([&](int32_t dx,int32_t dy)
 					{
-					shift[0]+=state.pending[count-1][0];
-					shift[1]+=state.pending[count-1][1];
-					// A prefix netting to zero is indistinguishable from "nothing landed yet".
-					// Accepting it would retire shifts the buffers have still to apply.
-					if(shift[0]==0&&shift[1]==0)continue;
-					const double ratio=shift_match_ratio(input,shift[0],shift[1]);
-					// Emptiness is per-prefix: a long one can push every sprite out of range
-					// while a shorter one still has something to say.
-					if(ratio<0.0)continue;
-					any_data=true;
-					if(ratio>=0.5)
-						{
-						landed=shift;
-						landed_count=count;
-						break;
-						}
+					return shift_match_ratio(input,dx,dy);
+					});
+				if(scroll.outcome==scroll_trackerst::outcomest::landed)
+					{
+					// Everything that describes tiles moves with them.
+					state.movements.translate(grid,scroll.shift[0],scroll.shift[1]);
+					state.facing.translate(grid,scroll.shift[0],scroll.shift[1]);
 					}
-				if(!any_data)
+				else if(scroll.outcome==scroll_trackerst::outcomest::abandoned)
 					{
-					// Nothing visible to anchor the test on: nothing to animate either.
-					abandon_pending(state);
-					reset_facing(state);
-					}
-				else if(landed_count>0)
-					{
-					// Re-anchor in-flight movements and drop anything scrolled off-screen.
-					const int32_t dwx=landed[0];
-					const int32_t dwy=landed[1];
-					state.movements.erase(
-						std::remove_if(
-							state.movements.begin(),
-							state.movements.end(),
-							[&](movementst &movement)
-								{
-								movement.source_x-=dwx;
-								movement.source_y-=dwy;
-								movement.target_x-=dwx;
-								movement.target_y-=dwy;
-								return movement.target_x<0||movement.target_x>=input.dim_x||
-									movement.target_y<0||movement.target_y>=input.dim_y;
-								}),
-						state.movements.end());
-					rebuild_movement_index(state);
-					// Facing describes creatures still on screen, so translate it rather than drop it.
-					if(state.facing.size()==
-						size_t(input.dim_x)*size_t(input.dim_y))
-						{
-						std::vector<int8_t> shifted(
-							state.facing.size(),int8_t(native_sprite_facing));
-						for(int32_t x=0;x<input.dim_x;++x)
-							{
-							const int32_t sx=x+dwx;
-							if(sx<0||sx>=input.dim_x)continue;
-							for(int32_t y=0;y<input.dim_y;++y)
-								{
-								const int32_t sy=y+dwy;
-								if(sy<0||sy>=input.dim_y)continue;
-								shifted[x*input.dim_y+y]=
-									state.facing[sx*input.dim_y+sy];
-								}
-							}
-						state.facing.swap(shifted);
-						}
-					state.pending.erase(
-						state.pending.begin(),
-						state.pending.begin()+std::ptrdiff_t(landed_count));
-					state.pending_frames=0;
-					state.pending_age=0;
-					// The scroll is accounted for; the settle window must not block the rebased pass.
-					state.suppress_frames=0;
-					landed_shift=landed;
-					translated=true;
-					}
-				else if(shift_match_ratio(input,0,0)>=0.5&&
-					++state.pending_age<=max_pending_age_frames)
-					{
-					// The buffers have not moved yet, so the scroll is still in flight.
-					state.pending_frames=0;
-					}
-				else if(++state.pending_frames>4)
-					{
-					// The shift never showed up recognizably: fall back to the safe reset.
-					abandon_pending(state);
-					// The delta was never identified, so the grid cannot be translated.
-					reset_facing(state);
-					// It may yet land, so do not resume detection on the very next redraw.
-					state.suppress_frames=2;
+					// The delta was never identified, so nothing can be translated.
+					state.movements.clear();
+					state.facing.reset();
 					}
 				}
 
-			const bool suppress=!buffers_advanced||crossed_views||
-				!state.pending.empty()||state.suppress_frames>0;
-			// The countdown measures redraws, not frames, so a repeated viewport must not spend it.
-			if(buffers_advanced&&state.suppress_frames>0)--state.suppress_frames;
-
-			// On the landing frame `previous` is still framed on the pre-scroll view.
-			// Rebasing it by the landed delta keeps a creature that walked during the scroll.
-			auto previous_layers=input.previous;
-			std::vector<std::vector<int32_t>> rebased_previous;
-			if(translated&&!suppress)
-				{
-				rebased_previous.resize(input.previous.size());
-				for(size_t layer=0;layer<input.previous.size();++layer)
-					{
-					if(!visual_layer_tracks_own_movement(
-						static_cast<viewport_visual_layer>(layer)))continue;
-					rebased_previous[layer].assign(
-						size_t(input.dim_x)*size_t(input.dim_y),0);
-					for(int32_t x=0;x<input.dim_x;++x)
-						{
-						const int32_t sx=x+landed_shift[0];
-						if(sx<0||sx>=input.dim_x)continue;
-						for(int32_t y=0;y<input.dim_y;++y)
-							{
-							const int32_t sy=y+landed_shift[1];
-							if(sy<0||sy>=input.dim_y)continue;
-							rebased_previous[layer][x*input.dim_y+y]=
-								input.previous[layer][sx*input.dim_y+sy];
-							}
-						}
-					previous_layers[layer]=rebased_previous[layer].data();
-					}
-				}
+			const bool suppress=!buffers_advanced||crossed_views||state.scroll.suppresses();
+			if(buffers_advanced)state.scroll.spend_settle_frame();
 			if(!suppress)
 				{
-				const int32_t tile_count=input.dim_x*input.dim_y;
-				std::vector<uint8_t> claimed_sources(tile_count);
-				const size_t existing_movement_count=state.movements.size();
-				// A chained movement's source may already have been rewritten this frame.
-				const std::vector<int8_t> facing_at_frame_start=state.facing;
-				// Source clears are deferred until every movement this frame is registered.
-				// A source can be another movement's target in the same frame -- a chain.
-				std::vector<uint8_t> facing_target_written;
-				std::vector<int32_t> pending_facing_source_clears;
-				if(state.facing.size()==size_t(input.dim_x)*size_t(input.dim_y))
-					facing_target_written.assign(state.facing.size(),0);
-				for(size_t layer=0;layer<input.current.size();++layer)
-					{
-					if(!visual_layer_tracks_own_movement(
-						static_cast<viewport_visual_layer>(layer)))continue;
-					std::fill(claimed_sources.begin(),claimed_sources.end(),0);
-					const int32_t *current=input.current[layer];
-					const int32_t *previous=previous_layers[layer];
-					const auto shared_delta=
-						static_cast<viewport_visual_layer>(layer)==viewport_visual_layer::center?
-						shared_movement_delta(
-							current,previous,input.dim_x,input.dim_y):
-						std::array<int32_t,2>{};
-					for(int32_t x=0;x<input.dim_x;++x)
-						{
-						for(int32_t y=0;y<input.dim_y;++y)
-							{
-							const int32_t target=x*input.dim_y+y;
-							const int32_t texpos=current[target];
-							if(texpos==0)continue;
-							if(static_cast<viewport_visual_layer>(layer)==
-								viewport_visual_layer::item&&
-								previous_layers[static_cast<size_t>(
-									viewport_visual_layer::center)][target]!=0)continue;
-
-							int32_t source=-1;
-							int32_t candidate_count=0;
-							if(shared_delta[0]!=0||shared_delta[1]!=0)
-								{
-								const int32_t source_x=x+shared_delta[0];
-								const int32_t source_y=y+shared_delta[1];
-								if(source_x>=0&&source_x<input.dim_x&&
-									source_y>=0&&source_y<input.dim_y)
-									{
-									const int32_t candidate=source_x*input.dim_y+source_y;
-									if(!claimed_sources[candidate]&&previous[target]!=texpos&&
-										previous[candidate]==texpos)
-										{
-										source=candidate;
-										candidate_count=1;
-										}
-									}
-								}
-							// Otherwise require a unique same-sprite move between empty cells.
-							if(candidate_count==0&&previous[target]==0)
-								{
-								for(int32_t dx=-1;dx<=1;++dx)
-									{
-									for(int32_t dy=-1;dy<=1;++dy)
-										{
-										if(dx==0&&dy==0)continue;
-										const int32_t source_x=x+dx;
-										const int32_t source_y=y+dy;
-										if(source_x<0||source_x>=input.dim_x||
-											source_y<0||source_y>=input.dim_y)continue;
-										const int32_t candidate=source_x*input.dim_y+source_y;
-										if(!claimed_sources[candidate]&&
-											visual_layer_matches(
-												static_cast<viewport_visual_layer>(layer),
-												texpos,
-												previous[candidate])&&
-											current[candidate]==0)
-											{
-											source=candidate;
-											++candidate_count;
-											}
-										}
-									}
-								}
-							if(candidate_count!=1)continue;
-
-							claimed_sources[source]=1;
-							float visual_source_x=float(source/input.dim_y);
-							float visual_source_y=float(source%input.dim_y);
-							const uint32_t duration_ms=movement_duration_ms;
-							for(size_t i=0;i<existing_movement_count;++i)
-								{
-								const movementst &movement=state.movements[i];
-								if(movement.layer!=
-										static_cast<viewport_visual_layer>(layer)||
-									movement.target_x!=visual_source_x||
-									movement.target_y!=visual_source_y)continue;
-								const float progress=movement_progress(movement);
-								visual_source_x=movement.source_x+
-									(movement.target_x-movement.source_x)*progress;
-								visual_source_y=movement.source_y+
-									(movement.target_y-movement.source_y)*progress;
-								break;
-								}
-							state.movements.push_back(
-								{
-								static_cast<viewport_visual_layer>(layer),
-								texpos,
-								visual_source_x,
-								visual_source_y,
-								x,
-								y,
-								frame_time_ms,
-								duration_ms
-								});
-							if(static_cast<viewport_visual_layer>(layer)==
-									viewport_visual_layer::center&&
-								state.facing.size()==
-									size_t(input.dim_x)*size_t(input.dim_y)&&
-								!facing_at_frame_start.empty()&&
-								facing_at_frame_start.size()==state.facing.size())
-								{
-								const int32_t source_tile_x=source/input.dim_y;
-								const int32_t target_index=x*input.dim_y+y;
-								state.facing[target_index]=int8_t(
-									facing_after_move(
-										x-source_tile_x,
-										static_cast<visual_facingst>(
-											facing_at_frame_start[source])));
-								facing_target_written[size_t(target_index)]=1;
-								pending_facing_source_clears.push_back(source);
-								}
-							}
-						}
-						}
-				// A source vacates its tile only if no movement this frame claimed it as a target.
-				if(!facing_target_written.empty())
-					{
-					for(int32_t pending_source:pending_facing_source_clears)
-						{
-						if(!facing_target_written[size_t(pending_source)])
-							state.facing[size_t(pending_source)]=
-								int8_t(native_sprite_facing);
-						}
-					}
+				const bool landed=scroll.outcome==scroll_trackerst::outcomest::landed;
+				detector.detect(
+					grid,
+					input.current,
+					landed?rebase_previous(input,scroll.shift):input.previous,
+					state.movements,
+					state.facing,
+					frame_time_ms,
+					movement_duration_ms);
 				}
-			state.movements.erase(
-				std::remove_if(
-					state.movements.begin(),
-					state.movements.end(),
-					[&](const movementst &movement)
-						{
-						const size_t layer=static_cast<size_t>(movement.layer);
-						const int32_t target=movement.target_x*input.dim_y+movement.target_y;
-						const int32_t current=input.current[layer][target];
-						return frame_time_ms-movement.start_time_ms>=movement.duration_ms||
-							current==0||
-							!visual_layer_matches(movement.layer,current,movement.texpos);
-						}),
-				state.movements.end());
-			rebuild_movement_index(state);
-			// has_mirrored is recomputed here rather than maintained at every write site.
-			if(state.facing.size()==size_t(input.dim_x)*size_t(input.dim_y))
-				{
-				const int32_t *center_current=
-					input.current[static_cast<size_t>(
-						viewport_visual_layer::center)];
-				bool any_mirrored=false;
-				for(size_t i=0;i<state.facing.size();++i)
-					{
-					if(center_current[i]==0)
-						state.facing[i]=int8_t(native_sprite_facing);
-					else if(state.facing[i]!=int8_t(native_sprite_facing))
-						any_mirrored=true;
-					}
-				state.has_mirrored=any_mirrored;
-				}
+			expire_movements(state,input);
+			state.facing.settle(
+				input.current[static_cast<size_t>(viewport_visual_layer::center)]);
 			if(!state.movements.empty())force_full_redraw=true;
 			}
 
@@ -978,9 +300,7 @@ class visual_animation_managerst
 					[](const viewport_animationst &state){return !state.seen;}),
 				viewports.end());
 			for(const viewport_animationst &state:viewports)
-				{
 				if(!state.movements.empty())force_full_redraw=true;
-				}
 			}
 
 		uint32_t get_frame_time_ms() const
@@ -993,30 +313,17 @@ class visual_animation_managerst
 			return frame_delta_ms;
 			}
 
-		visual_facingst get_facing(
-			const void *viewport,
-			int32_t x,
-			int32_t y) const
+		visual_facingst get_facing(const void *viewport,int32_t x,int32_t y) const
 			{
-			for(const viewport_animationst &state:viewports)
-				{
-				if(state.viewport!=viewport)continue;
-				if(x<0||x>=state.dim_x||y<0||y>=state.dim_y)break;
-				const size_t index=size_t(x)*size_t(state.dim_y)+size_t(y);
-				if(index>=state.facing.size())break;
-				return static_cast<visual_facingst>(state.facing[index]);
-				}
-			return native_sprite_facing;
+			const viewport_animationst *state=find_viewport(viewport);
+			if(state==nullptr||!state->grid.contains(x,y))return native_sprite_facing;
+			return state->facing.at(size_t(state->grid.index(x,y)));
 			}
 
 		bool has_mirrored_facing(const void *viewport) const
 			{
-			for(const viewport_animationst &state:viewports)
-				{
-				if(state.viewport!=viewport)continue;
-				return state.has_mirrored;
-				}
-			return false;
+			const viewport_animationst *state=find_viewport(viewport);
+			return state!=nullptr&&state->facing.has_mirrored();
 			}
 
 		bool requires_full_redraw() const
@@ -1025,50 +332,20 @@ class visual_animation_managerst
 			}
 
 		// Tiles that can carry a moving proxy this frame, as x*dim_y+y indices, ascending and
-		// unique: every movement target, plus the 3x3 around each centre target, since an icon,
-		// fragment or item inherits the motion of a centre next to it (see get_movement).
-		// The renderer visits only these instead of sweeping the whole grid.
+		// unique. The renderer visits only these instead of sweeping the whole grid.
 		void movement_candidate_tiles(const void *viewport,std::vector<int32_t> &tiles) const
 			{
 			tiles.clear();
-			for(const viewport_animationst &state:viewports)
-				{
-				if(state.viewport!=viewport)continue;
-				for(const movementst &movement:state.movements)
-					{
-					const int32_t spread=
-						movement.layer==viewport_visual_layer::center?1:0;
-					for(int32_t dx=-spread;dx<=spread;++dx)
-						{
-						const int32_t x=movement.target_x+dx;
-						if(x<0||x>=state.dim_x)continue;
-						for(int32_t dy=-spread;dy<=spread;++dy)
-							{
-							const int32_t y=movement.target_y+dy;
-							if(y<0||y>=state.dim_y)continue;
-							tiles.push_back(x*state.dim_y+y);
-							}
-						}
-					}
-				break;
-				}
-			std::sort(tiles.begin(),tiles.end());
-			tiles.erase(std::unique(tiles.begin(),tiles.end()),tiles.end());
+			if(const viewport_animationst *state=find_viewport(viewport))
+				state->movements.candidate_tiles(state->grid,tiles);
 			}
 
 		// Tiles whose creature faces away from the sprite's native side, ascending indices.
 		void mirrored_tiles(const void *viewport,std::vector<int32_t> &tiles) const
 			{
 			tiles.clear();
-			for(const viewport_animationst &state:viewports)
-				{
-				if(state.viewport!=viewport)continue;
-				if(!state.has_mirrored)break;
-				for(size_t i=0;i<state.facing.size();++i)
-					if(state.facing[i]!=int8_t(native_sprite_facing))
-						tiles.push_back(int32_t(i));
-				break;
-				}
+			if(const viewport_animationst *state=find_viewport(viewport))
+				state->facing.mirrored_tiles(tiles);
 			}
 
 		visual_movement_renderst get_movement(
@@ -1077,56 +354,47 @@ class visual_animation_managerst
 			int32_t target_x,
 			int32_t target_y) const
 			{
-			for(const viewport_animationst &state:viewports)
+			const viewport_animationst *state=find_viewport(viewport);
+			if(state==nullptr)return {};
+			if(const visual_movementst *movement=
+				state->movements.find(layer,target_x,target_y))
 				{
-				if(state.viewport!=viewport)continue;
-				if(const movementst *movement=find_movement(state,layer,target_x,target_y))
-					{
-					return {
-						true,
-						movement->source_x,
-						movement->source_y,
-						movement_progress(*movement)
-						};
-					}
-				if(layer==viewport_visual_layer::vehicle||
-					layer==viewport_visual_layer::center)break;
-				// An icon, fragment or item inherits the motion of a centre within one tile,
-				// unless two such centres disagree on the step.
-				const movementst *companion=nullptr;
-				bool ambiguous=false;
-				for(int32_t dx=-1;dx<=1&&!ambiguous;++dx)
-					{
-					for(int32_t dy=-1;dy<=1;++dy)
-						{
-						const movementst *movement=find_movement(
-							state,viewport_visual_layer::center,target_x+dx,target_y+dy);
-						if(movement==nullptr)continue;
-						if(companion!=nullptr&&
-							(companion->source_x-companion->target_x!=
-								movement->source_x-movement->target_x||
-							companion->source_y-companion->target_y!=
-								movement->source_y-movement->target_y||
-							companion->start_time_ms!=movement->start_time_ms))
-							{
-							ambiguous=true;
-							break;
-							}
-						if(companion==nullptr)companion=movement;
-						}
-					}
-				if(ambiguous)return {};
-				if(companion!=nullptr)
-					return {
-						true,
-						target_x+companion->source_x-companion->target_x,
-						target_y+companion->source_y-companion->target_y,
-						movement_progress(*companion),
-						true
-						};
-				break;
+				return {
+					true,
+					movement->source_x,
+					movement->source_y,
+					movement->progress(frame_time_ms)
+					};
 				}
-			return {};
+			if(layer==viewport_visual_layer::vehicle||
+				layer==viewport_visual_layer::center)return {};
+			// An icon, fragment or item inherits the motion of a centre within one tile,
+			// unless two such centres disagree on the step.
+			const visual_movementst *companion=nullptr;
+			for(int32_t dx=-1;dx<=1;++dx)
+				{
+				for(int32_t dy=-1;dy<=1;++dy)
+					{
+					const visual_movementst *movement=state->movements.find(
+						viewport_visual_layer::center,target_x+dx,target_y+dy);
+					if(movement==nullptr)continue;
+					if(companion!=nullptr&&
+						(companion->source_x-companion->target_x!=
+							movement->source_x-movement->target_x||
+						companion->source_y-companion->target_y!=
+							movement->source_y-movement->target_y||
+						companion->start_time_ms!=movement->start_time_ms))return {};
+					if(companion==nullptr)companion=movement;
+					}
+				}
+			if(companion==nullptr)return {};
+			return {
+				true,
+				target_x+companion->source_x-companion->target_x,
+				target_y+companion->source_y-companion->target_y,
+				companion->progress(frame_time_ms),
+				true
+				};
 			}
 };
 
