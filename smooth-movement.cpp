@@ -462,6 +462,8 @@ class sdl_canvasst
 {
 	df::renderer_2d_base *renderer;
 	SDL_Renderer *sdl;
+	bool filling=false;
+	Uint8 saved_r=0,saved_g=0,saved_b=0,saved_a=255;
 
 	public:
 		explicit sdl_canvasst(df::renderer_2d_base *renderer):
@@ -469,6 +471,14 @@ class sdl_canvasst
 			sdl(static_cast<SDL_Renderer *>(renderer->sdl_renderer))
 			{
 			}
+
+		~sdl_canvasst()
+			{
+			if(filling)set_render_draw_color(sdl,saved_r,saved_g,saved_b,saved_a);
+			}
+
+		sdl_canvasst(const sdl_canvasst &)=delete;
+		sdl_canvasst &operator=(const sdl_canvasst &)=delete;
 
 		int32_t origin_x() const
 			{
@@ -513,14 +523,18 @@ class sdl_canvasst
 			else render_copy_f(sdl,sdl_texture,nullptr,&destination);
 			}
 
+		// The draw colour is switched to black on the first fill and put back when the
+		// frame's canvas goes away, not around every tile.
 		void fill_black(const pixel_rectst &rect)
 			{
+			if(!filling)
+				{
+				get_render_draw_color(sdl,&saved_r,&saved_g,&saved_b,&saved_a);
+				set_render_draw_color(sdl,0,0,0,255);
+				filling=true;
+				}
 			const SDL_Rect sdl_rect={rect.x,rect.y,rect.w,rect.h};
-			Uint8 r=0,g=0,b=0,a=255;
-			get_render_draw_color(sdl,&r,&g,&b,&a);
-			set_render_draw_color(sdl,0,0,0,255);
 			render_fill_rect(sdl,&sdl_rect);
-			set_render_draw_color(sdl,r,g,b,a);
 			}
 
 		void set_clip(const pixel_rectst &rect)

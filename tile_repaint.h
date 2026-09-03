@@ -115,14 +115,6 @@ struct viewport_layer_tablest
 		return nullptr;
 		}
 
-	static std::array<int32_t *,visual_layer_count> current(Viewport *vp)
-		{
-		std::array<int32_t *,visual_layer_count> layers{};
-		for(const bufferst &buffer:buffers)
-			layers[static_cast<size_t>(buffer.layer)]=vp->*buffer.current;
-		return layers;
-		}
-
 	static visual_layer_pointerst current(const Viewport *vp)
 		{
 		visual_layer_pointerst layers{};

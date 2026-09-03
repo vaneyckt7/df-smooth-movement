@@ -78,11 +78,6 @@ struct sprite_proxyst
 			int32_t(std::ceil(std::max(source_y,float(target_y))))};
 		}
 
-	// The row the bob lifts the sprite into.
-	int32_t bob_row() const
-		{
-		return path().y0-1;
-		}
 
 	// Every tile this proxy may paint over: its path, the mirrored path when flipped, and
 	// the bob row above both when bobbing. Tiles may repeat; callers mark, not count.
