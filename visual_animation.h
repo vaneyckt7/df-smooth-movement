@@ -935,6 +935,53 @@ class visual_animation_managerst
 			return force_full_redraw;
 			}
 
+		// Tiles that can carry a moving proxy this frame, as x*dim_y+y indices, ascending and
+		// unique: every movement target, plus the 3x3 around each centre target, since an icon,
+		// fragment or item inherits the motion of a centre next to it (see get_movement).
+		// The renderer visits only these instead of sweeping the whole grid.
+		void movement_candidate_tiles(const void *viewport,std::vector<int32_t> &tiles) const
+			{
+			tiles.clear();
+			for(const viewport_animationst &state:viewports)
+				{
+				if(state.viewport!=viewport)continue;
+				for(const movementst &movement:state.movements)
+					{
+					const int32_t spread=
+						movement.layer==viewport_visual_layer::center?1:0;
+					for(int32_t dx=-spread;dx<=spread;++dx)
+						{
+						const int32_t x=movement.target_x+dx;
+						if(x<0||x>=state.dim_x)continue;
+						for(int32_t dy=-spread;dy<=spread;++dy)
+							{
+							const int32_t y=movement.target_y+dy;
+							if(y<0||y>=state.dim_y)continue;
+							tiles.push_back(x*state.dim_y+y);
+							}
+						}
+					}
+				break;
+				}
+			std::sort(tiles.begin(),tiles.end());
+			tiles.erase(std::unique(tiles.begin(),tiles.end()),tiles.end());
+			}
+
+		// Tiles whose creature faces away from the sprite's native side, ascending indices.
+		void mirrored_tiles(const void *viewport,std::vector<int32_t> &tiles) const
+			{
+			tiles.clear();
+			for(const viewport_animationst &state:viewports)
+				{
+				if(state.viewport!=viewport)continue;
+				if(!state.has_mirrored)break;
+				for(size_t i=0;i<state.facing.size();++i)
+					if(state.facing[i]!=int8_t(native_sprite_facing))
+						tiles.push_back(int32_t(i));
+				break;
+				}
+			}
+
 		visual_movement_renderst get_movement(
 			const void *viewport,
 			viewport_visual_layer layer,

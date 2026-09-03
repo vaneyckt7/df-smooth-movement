@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
 #include <array>
 #ifdef NDEBUG
 #undef NDEBUG
@@ -7,6 +8,7 @@
 #include <cassert>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 #include "visual_animation.h"
 
@@ -852,4 +854,58 @@ int main()
 	assert(walk_bob_direction(0.6f,4.4f,2,4)==D::horizontal);
 	assert(walk_bob_direction(0.4f,5.0f,1,5)==D::horizontal);
 	}
+
+	// Candidate tiles: every tile with an active movement (own or inherited) must be listed,
+	// and the list must be ascending and unique. Exercise it with centre and item moves.
+	{
+	constexpr int32_t n=6;
+	std::array<int32_t,n*n> empty{};
+	std::array<int32_t,n*n> center_previous{};
+	std::array<int32_t,n*n> center_current{};
+	std::array<int32_t,n*n> item_previous{};
+	std::array<int32_t,n*n> item_current{};
+	center_previous[1*n+1]=7; center_current[2*n+2]=7;   // centre (1,1) -> (2,2)
+	center_previous[5*n+0]=9; center_current[5*n+1]=9;   // centre (5,0) -> (5,1), edge of grid
+	item_previous[0*n+4]=11;  item_current[0*n+5]=11;    // lone item (0,4) -> (0,5)
+	visual_animation_managerst candidates_manager;
+	const int candidates_viewport=0;
+	auto input=make_input(&candidates_viewport,n,empty.data());
+	set_layer(input,viewport_visual_layer::center,center_previous.data(),center_previous.data());
+	set_layer(input,viewport_visual_layer::item,item_previous.data(),item_previous.data());
+	run_frame(candidates_manager,input,5000);
+	set_layer(input,viewport_visual_layer::center,center_current.data(),center_previous.data());
+	set_layer(input,viewport_visual_layer::item,item_current.data(),item_previous.data());
+	run_frame(candidates_manager,input,5016);
+	std::vector<int32_t> tiles;
+	candidates_manager.movement_candidate_tiles(&candidates_viewport,tiles);
+	for(size_t i=1;i<tiles.size();++i)assert(tiles[i-1]<tiles[i]);
+	int listed=0;
+	for(int32_t x=0;x<n;++x)
+		for(int32_t y=0;y<n;++y)
+			{
+			bool active=false;
+			for(size_t layer=0;layer<static_cast<size_t>(viewport_visual_layer::count);++layer)
+				active|=candidates_manager.get_movement(&candidates_viewport,
+					static_cast<viewport_visual_layer>(layer),x,y).active;
+			const bool candidate=std::find(tiles.begin(),tiles.end(),x*n+y)!=tiles.end();
+			if(active)assert(candidate);
+			listed+=candidate;
+			}
+	// 3x3 around (2,2) = 9, 3x3 around (5,1) clipped to the grid = 6, item target = 1.
+	assert(listed==16);
+	assert(tiles.size()==16);
+	std::vector<int32_t> none;
+	candidates_manager.movement_candidate_tiles(&listed,none);
+	assert(none.empty());
+	// Mirrored tiles: the centre that stepped east now faces east; the one that stepped
+	// south keeps its native facing, and the item has none.
+	std::vector<int32_t> mirrored;
+	candidates_manager.mirrored_tiles(&candidates_viewport,mirrored);
+	assert(mirrored.size()==1&&mirrored[0]==2*n+2);
+	assert(candidates_manager.get_facing(&candidates_viewport,2,2)!=native_sprite_facing);
+	candidates_manager.mirrored_tiles(&listed,mirrored);
+	assert(mirrored.empty());
+	}
+
+	return 0;
 }

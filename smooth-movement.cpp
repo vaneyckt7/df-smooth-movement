@@ -896,15 +896,27 @@ std::vector<render_proxyst> collect_proxies(
 	std::vector<render_proxyst> proxies;
 	auto layers=visual_layers(vp);
 	auto previous_layers=visual_layers(vp,true);
+	// Only tiles near a movement can hold a moving proxy, so visit those rather than the grid.
+	// Scratch vectors persist across frames to avoid reallocating; the render hook is serial.
+	static std::vector<int32_t> candidates;
+	animation_manager.movement_candidate_tiles(vp,candidates);
+	// Same visiting order as the former grid sweep: row by row, left to right. Anchor lookups
+	// below rely on a centre proxy preceding the tiles that ride on it.
+	const int32_t dim_y=vp->dim_y;
+	std::sort(candidates.begin(),candidates.end(),
+		[dim_y](int32_t a,int32_t b)
+			{
+			return std::make_pair(a%dim_y,a/dim_y)<std::make_pair(b%dim_y,b/dim_y);
+			});
 	for(uint8_t draw_order=0;draw_order<visual_layer_count;++draw_order)
 		{
 		const viewport_visual_layer visual_layer=visual_layer_at_draw_order(draw_order);
 		const size_t layer=static_cast<size_t>(visual_layer);
-		for(int32_t y=0;y<vp->dim_y;++y)
+		for(const int32_t index:candidates)
 			{
-			for(int32_t x=0;x<vp->dim_x;++x)
 				{
-				const int32_t index=x*vp->dim_y+y;
+				const int32_t x=index/dim_y;
+				const int32_t y=index%dim_y;
 				const int32_t texpos=layers[layer][index];
 				if(texpos==0)continue;
 				const auto movement=animation_manager.get_movement(
@@ -1144,12 +1156,13 @@ std::vector<render_proxyst> collect_proxies(
 	// A fragment's tile is its anchor minus the layer's centre offset, inverting the moving path.
 	if(flip_enabled)
 		{
-		for(int32_t anchor_x=0;anchor_x<vp->dim_x;++anchor_x)
+		static std::vector<int32_t> mirrored;
+		animation_manager.mirrored_tiles(vp,mirrored);
+		for(const int32_t anchor_index:mirrored)
 			{
-			for(int32_t anchor_y=0;anchor_y<vp->dim_y;++anchor_y)
 				{
-				if(animation_manager.get_facing(vp,anchor_x,anchor_y)==
-					native_sprite_facing)continue;
+				const int32_t anchor_x=anchor_index/vp->dim_y;
+				const int32_t anchor_y=anchor_index%vp->dim_y;
 				for(uint8_t draw_order=0;draw_order<visual_layer_count;++draw_order)
 					{
 					const viewport_visual_layer visual_layer=
