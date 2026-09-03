@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The render pass is rebuilt on components independent of the game: sprite
+  collection, tile coverage, staged repaints and the frame pass live in their
+  own headers, reuse their scratch across frames and allocate nothing per
+  frame. Collecting the sprites and their coverage for a 120x70 view with 40
+  moving creatures takes about 12 µs instead of 41 µs, and 87 µs instead of
+  496 µs with 300 creatures in a 200x110 view. The painted output is unchanged
+  except that a mirrored stationary sprite no longer blocks on fire in the
+  tiles between its own tile and the one it is drawn on.
 - Lower per-frame CPU cost: proxy collection visits only tiles near a
   movement instead of sweeping every layer of every viewport, the buffer
   signature covers only the current buffers and hashes them two tiles at a
