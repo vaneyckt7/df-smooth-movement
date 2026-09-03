@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <cstdlib>
 #include <vector>
 
@@ -285,6 +286,9 @@ class visual_animation_managerst
 		bool has_context=false;
 		bool seen=false;
 		std::vector<movementst> movements;
+		// (layer, target tile) -> index into movements, sorted; rebuilt whenever movements
+		// change so lookups are a binary search rather than a scan of every movement.
+		std::vector<std::pair<uint64_t,int32_t>> movement_index;
 		// One facing per tile, not per unit: the viewport exposes one creature texpos per tile.
 		std::vector<int8_t> facing;
 		// Stationary mirrored creatures are repainted every frame; this is the cheap pre-check.
@@ -328,9 +332,47 @@ class visual_animation_managerst
 		state.pending_age=0;
 		}
 
+	static uint64_t movement_key(viewport_visual_layer layer,int32_t target_x,int32_t target_y)
+		{
+		// Targets are viewport tile coordinates, so both fit in 16 bits with room to spare.
+		return (uint64_t(static_cast<uint8_t>(layer))<<32)|
+			(uint64_t(uint16_t(target_x))<<16)|uint64_t(uint16_t(target_y));
+		}
+
+	static void rebuild_movement_index(viewport_animationst &state)
+		{
+		state.movement_index.clear();
+		state.movement_index.reserve(state.movements.size());
+		for(size_t i=0;i<state.movements.size();++i)
+			{
+			const movementst &movement=state.movements[i];
+			state.movement_index.emplace_back(
+				movement_key(movement.layer,movement.target_x,movement.target_y),int32_t(i));
+			}
+		// Ordered by position within movements for equal keys, so the first registered wins,
+		// exactly as the scan it replaces did.
+		std::sort(state.movement_index.begin(),state.movement_index.end());
+		}
+
+	static const movementst *find_movement(
+		const viewport_animationst &state,
+		viewport_visual_layer layer,
+		int32_t target_x,
+		int32_t target_y)
+		{
+		const uint64_t key=movement_key(layer,target_x,target_y);
+		const auto it=std::lower_bound(
+			state.movement_index.begin(),
+			state.movement_index.end(),
+			std::make_pair(key,int32_t(-1)));
+		if(it==state.movement_index.end()||it->first!=key)return nullptr;
+		return &state.movements[size_t(it->second)];
+		}
+
 	static void abandon_pending(viewport_animationst &state)
 		{
 		state.movements.clear();
+		rebuild_movement_index(state);
 		clear_pending(state);
 		}
 
@@ -352,35 +394,41 @@ class visual_animation_managerst
 	// Identifies the buffer contents this frame, to tell a redrawn viewport from a repeated one.
 	static uint64_t compute_buffer_signature(const viewport_visual_animation_inputst &input)
 		{
-		// FNV-1a. Only ever compared against the previous frame's value, never stored.
+		// FNV-1a over the current buffers only: if nothing on screen changed, no sprite moved,
+		// and the previous buffers add nothing the comparison needs. Only ever compared against
+		// the previous frame's value, never stored. Two tiles per step and four independent
+		// lanes, since one chain is a serial multiply per element over every tracked buffer of
+		// every viewport each frame. The lanes are folded at the end.
 		constexpr uint64_t fnv_offset_basis=0xcbf29ce484222325ULL;
 		constexpr uint64_t fnv_prime=0x100000001b3ULL;
-		// Four independent lanes: one FNV chain is a serial multiply per element, and this runs
-		// over every tracked buffer of every viewport each frame. The lanes are folded at the end.
 		constexpr size_t lanes=4;
 		std::array<uint64_t,lanes> hash;
 		for(size_t lane=0;lane<lanes;++lane)hash[lane]=fnv_offset_basis+lane;
-		const int32_t tile_count=input.dim_x*input.dim_y;
+		const size_t tile_count=size_t(input.dim_x)*size_t(input.dim_y);
+		const size_t word_count=tile_count/2;
 		for(size_t layer=0;layer<input.current.size();++layer)
 			{
 			if(!visual_layer_tracks_own_movement(
 				static_cast<viewport_visual_layer>(layer)))continue;
 			const int32_t *current=input.current[layer];
-			const int32_t *previous=input.previous[layer];
-			int32_t i=0;
-			for(;i+int32_t(lanes)<=tile_count;i+=int32_t(lanes))
+			size_t word=0;
+			for(;word+lanes<=word_count;word+=lanes)
 				{
 				for(size_t lane=0;lane<lanes;++lane)
 					{
-					hash[lane]=(hash[lane]^uint64_t(uint32_t(current[i+int32_t(lane)])))*fnv_prime;
-					hash[lane]=(hash[lane]^uint64_t(uint32_t(previous[i+int32_t(lane)])))*fnv_prime;
+					uint64_t value;
+					std::memcpy(&value,current+2*(word+lane),sizeof value);
+					hash[lane]=(hash[lane]^value)*fnv_prime;
 					}
 				}
-			for(;i<tile_count;++i)
+			for(;word<word_count;++word)
 				{
-				hash[0]=(hash[0]^uint64_t(uint32_t(current[i])))*fnv_prime;
-				hash[0]=(hash[0]^uint64_t(uint32_t(previous[i])))*fnv_prime;
+				uint64_t value;
+				std::memcpy(&value,current+2*word,sizeof value);
+				hash[0]=(hash[0]^value)*fnv_prime;
 				}
+			if(tile_count%2)
+				hash[0]=(hash[0]^uint64_t(uint32_t(current[tile_count-1])))*fnv_prime;
 			}
 		uint64_t folded=fnv_offset_basis;
 		for(const uint64_t lane:hash)folded=(folded^lane)*fnv_prime;
@@ -641,6 +689,7 @@ class visual_animation_managerst
 									movement.target_y<0||movement.target_y>=input.dim_y;
 								}),
 						state.movements.end());
+					rebuild_movement_index(state);
 					// Facing describes creatures still on screen, so translate it rather than drop it.
 					if(state.facing.size()==
 						size_t(input.dim_x)*size_t(input.dim_y))
@@ -878,6 +927,7 @@ class visual_animation_managerst
 							!visual_layer_matches(movement.layer,current,movement.texpos);
 						}),
 				state.movements.end());
+			rebuild_movement_index(state);
 			// has_mirrored is recomputed here rather than maintained at every write site.
 			if(state.facing.size()==size_t(input.dim_x)*size_t(input.dim_y))
 				{
@@ -1008,34 +1058,40 @@ class visual_animation_managerst
 			for(const viewport_animationst &state:viewports)
 				{
 				if(state.viewport!=viewport)continue;
+				if(const movementst *movement=find_movement(state,layer,target_x,target_y))
+					{
+					return {
+						true,
+						movement->source_x,
+						movement->source_y,
+						movement_progress(*movement)
+						};
+					}
+				if(layer==viewport_visual_layer::vehicle||
+					layer==viewport_visual_layer::center)break;
+				// An icon, fragment or item inherits the motion of a centre within one tile,
+				// unless two such centres disagree on the step.
 				const movementst *companion=nullptr;
 				bool ambiguous=false;
-				for(const movementst &movement:state.movements)
+				for(int32_t dx=-1;dx<=1&&!ambiguous;++dx)
 					{
-					if(movement.layer==layer&&movement.target_x==target_x&&
-						movement.target_y==target_y)
+					for(int32_t dy=-1;dy<=1;++dy)
 						{
-						return {
-							true,
-							movement.source_x,
-							movement.source_y,
-							movement_progress(movement)
-							};
+						const movementst *movement=find_movement(
+							state,viewport_visual_layer::center,target_x+dx,target_y+dy);
+						if(movement==nullptr)continue;
+						if(companion!=nullptr&&
+							(companion->source_x-companion->target_x!=
+								movement->source_x-movement->target_x||
+							companion->source_y-companion->target_y!=
+								movement->source_y-movement->target_y||
+							companion->start_time_ms!=movement->start_time_ms))
+							{
+							ambiguous=true;
+							break;
+							}
+						if(companion==nullptr)companion=movement;
 						}
-					if(layer==viewport_visual_layer::vehicle||
-						layer==viewport_visual_layer::center||
-						movement.layer!=viewport_visual_layer::center||
-						std::abs(movement.target_x-target_x)>1||
-						std::abs(movement.target_y-target_y)>1)continue;
-					if(companion!=nullptr&&
-						(companion->source_x-companion->target_x!=
-							movement.source_x-movement.target_x||
-						companion->source_y-companion->target_y!=
-							movement.source_y-movement.target_y||
-						companion->start_time_ms!=movement.start_time_ms))
-						ambiguous=true;
-					else if(companion==nullptr)
-						companion=&movement;
 					}
 				if(ambiguous)return {};
 				if(companion!=nullptr)

@@ -283,8 +283,15 @@ int main()
 
 	at_one[1*pan_dim+1]=77;
 	at_two[2*pan_dim+1]=77;   // steps east, x 1 -> 2, so it faces east
-	unmatched_a[2*pan_dim+1]=78;
-	unmatched_b[2*pan_dim+1]=79;
+	// The mover's tile is untouched so its movement (and facing) survives; two other tiles
+	// change every frame so the buffers keep advancing, as they do when the game renders,
+	// and the zero-shift match stays below half.
+	unmatched_a[2*pan_dim+1]=77;
+	unmatched_a[0]=78;
+	unmatched_a[1]=88;
+	unmatched_b[2*pan_dim+1]=77;
+	unmatched_b[0]=79;
+	unmatched_b[1]=89;
 
 	// LANDED: the shift is recognized, so facing follows the buffers.
 	{
@@ -326,19 +333,22 @@ int main()
 	assert(abandoned.get_facing(pan_viewport,2,1)==visual_facingst::east);
 
 	// Changed buffers keep the failed majority-match test running every frame.
-	// It tolerates four before giving up on the fifth.
+	// It tolerates four before giving up on the fifth. Only the current buffer's content
+	// decides whether a frame counts; the previous buffer is the last frame's current.
 	input.pan_x=1;
+	const int32_t *previous=at_two;
 	for(int32_t frame=0;frame<4;++frame)
 		{
-		set_layer(input,viewport_visual_layer::center,at_two,
-			frame%2==0?unmatched_a:unmatched_b);
+		const int32_t *current=frame%2==0?unmatched_a:unmatched_b;
+		set_layer(input,viewport_visual_layer::center,current,previous);
+		previous=current;
 		run_frame(abandoned,input,2032+uint32_t(frame)*16);
 		// Still pending, so the facing survives.
 		// The assertion after the giving-up frame therefore tests the reset, not an empty grid.
 		assert(abandoned.get_facing(pan_viewport,2,1)==visual_facingst::east);
 		assert(abandoned.has_mirrored_facing(pan_viewport));
 		}
-	set_layer(input,viewport_visual_layer::center,at_two,unmatched_a);
+	set_layer(input,viewport_visual_layer::center,unmatched_a,previous);
 	run_frame(abandoned,input,2096);
 	assert(abandoned.get_facing(pan_viewport,2,1)==native_sprite_facing);
 	assert(!abandoned.has_mirrored_facing(pan_viewport));
