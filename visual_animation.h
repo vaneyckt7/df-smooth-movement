@@ -355,19 +355,36 @@ class visual_animation_managerst
 		// FNV-1a. Only ever compared against the previous frame's value, never stored.
 		constexpr uint64_t fnv_offset_basis=0xcbf29ce484222325ULL;
 		constexpr uint64_t fnv_prime=0x100000001b3ULL;
-		uint64_t hash=fnv_offset_basis;
+		// Four independent lanes: one FNV chain is a serial multiply per element, and this runs
+		// over every tracked buffer of every viewport each frame. The lanes are folded at the end.
+		constexpr size_t lanes=4;
+		std::array<uint64_t,lanes> hash;
+		for(size_t lane=0;lane<lanes;++lane)hash[lane]=fnv_offset_basis+lane;
 		const int32_t tile_count=input.dim_x*input.dim_y;
 		for(size_t layer=0;layer<input.current.size();++layer)
 			{
 			if(!visual_layer_tracks_own_movement(
 				static_cast<viewport_visual_layer>(layer)))continue;
-			for(int32_t i=0;i<tile_count;++i)
+			const int32_t *current=input.current[layer];
+			const int32_t *previous=input.previous[layer];
+			int32_t i=0;
+			for(;i+int32_t(lanes)<=tile_count;i+=int32_t(lanes))
 				{
-				hash=(hash^uint64_t(uint32_t(input.current[layer][i])))*fnv_prime;
-				hash=(hash^uint64_t(uint32_t(input.previous[layer][i])))*fnv_prime;
+				for(size_t lane=0;lane<lanes;++lane)
+					{
+					hash[lane]=(hash[lane]^uint64_t(uint32_t(current[i+int32_t(lane)])))*fnv_prime;
+					hash[lane]=(hash[lane]^uint64_t(uint32_t(previous[i+int32_t(lane)])))*fnv_prime;
+					}
+				}
+			for(;i<tile_count;++i)
+				{
+				hash[0]=(hash[0]^uint64_t(uint32_t(current[i])))*fnv_prime;
+				hash[0]=(hash[0]^uint64_t(uint32_t(previous[i])))*fnv_prime;
 				}
 			}
-		return hash;
+		uint64_t folded=fnv_offset_basis;
+		for(const uint64_t lane:hash)folded=(folded^lane)*fnv_prime;
+		return folded;
 		}
 
 	// Fraction of tracked sprites consistent with a buffer shift: current[x]==previous[x+dwx].
