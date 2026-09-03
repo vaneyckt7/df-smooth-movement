@@ -8,7 +8,10 @@
   time in four independent lanes, and movements are indexed by tile so lookups
   no longer scan every movement. In a 75x50 view with eight lower z-level
   viewports the plugin's frame work dropped from about 1.24 ms to 0.08 ms;
-  rendering is unchanged.
+  rendering is unchanged. A frame the game hands back with identical content
+  no longer counts toward the scroll-landing tolerance or the settle window
+  after a scroll is abandoned, so both are now independent of render frame
+  rate.
 - Optional walk bob (`smooth-movement bob on`, off by default): creature sprites
   hop twice per tile step while they glide, with `bob <amount>` for the height,
   `bobmult <horizontal> <diagonal> <vertical>` for per-direction multipliers and

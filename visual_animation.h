@@ -308,6 +308,9 @@ class visual_animation_managerst
 		// Buffer contents last seen, to recognize a repeat of them.
 		uint64_t buffer_signature=0;
 		bool has_buffer_signature=false;
+		// Signature of the previous buffers, kept only while previous_view_stale: the
+		// crossing shows there when the current buffers already held the new view.
+		uint64_t previous_buffer_signature=0;
 		// Set while the previous buffer still belongs to a view that has been left behind.
 		bool previous_view_stale=false;
 	};
@@ -392,7 +395,9 @@ class visual_animation_managerst
 		}
 
 	// Identifies the buffer contents this frame, to tell a redrawn viewport from a repeated one.
-	static uint64_t compute_buffer_signature(const viewport_visual_animation_inputst &input)
+	static uint64_t compute_buffer_signature(
+		const viewport_visual_animation_inputst &input,
+		const std::array<const int32_t *,static_cast<size_t>(viewport_visual_layer::count)> &buffers)
 		{
 		// FNV-1a over the current buffers only: if nothing on screen changed, no sprite moved,
 		// and the previous buffers add nothing the comparison needs. Only ever compared against
@@ -406,11 +411,11 @@ class visual_animation_managerst
 		for(size_t lane=0;lane<lanes;++lane)hash[lane]=fnv_offset_basis+lane;
 		const size_t tile_count=size_t(input.dim_x)*size_t(input.dim_y);
 		const size_t word_count=tile_count/2;
-		for(size_t layer=0;layer<input.current.size();++layer)
+		for(size_t layer=0;layer<buffers.size();++layer)
 			{
 			if(!visual_layer_tracks_own_movement(
 				static_cast<viewport_visual_layer>(layer)))continue;
-			const int32_t *current=input.current[layer];
+			const int32_t *current=buffers[layer];
 			size_t word=0;
 			for(;word+lanes<=word_count;word+=lanes)
 				{
@@ -610,11 +615,23 @@ class visual_animation_managerst
 				}
 			// This hook runs per frame; the viewport is recomputed only when it changes, and while
 			// paused hardly at all. Re-reading a landed scroll steps every sprite by a tile.
-			const uint64_t signature=compute_buffer_signature(input);
-			const bool buffers_advanced=!state.has_buffer_signature||
+			const uint64_t signature=compute_buffer_signature(input,input.current);
+			bool buffers_advanced=!state.has_buffer_signature||
 				state.buffer_signature!=signature;
 			state.buffer_signature=signature;
 			state.has_buffer_signature=true;
+			// After a view switch the buffers may already show the new view on the input frame,
+			// so the crossing is visible only in `previous` catching up a frame later. Hash it
+			// for just that window; the rest of the time it is the last frame's current and
+			// adds nothing.
+			if(state.previous_view_stale)
+				{
+				const uint64_t previous_signature=
+					compute_buffer_signature(input,input.previous);
+				buffers_advanced=buffers_advanced||
+					state.previous_buffer_signature!=previous_signature;
+				state.previous_buffer_signature=previous_signature;
+				}
 
 			if(context_changed)
 				{
@@ -623,7 +640,12 @@ class visual_animation_managerst
 				reset_tracking(state);
 				// window_z, zoom and resize change at input time; the buffers cross later.
 				// This reset covers only the input frame, not the crossing itself.
-				if(view_switched)state.previous_view_stale=true;
+				if(view_switched)
+					{
+					state.previous_view_stale=true;
+					state.previous_buffer_signature=
+						compute_buffer_signature(input,input.previous);
+					}
 				return;
 				}
 

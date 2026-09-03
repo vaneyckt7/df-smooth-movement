@@ -353,6 +353,63 @@ int main()
 	assert(abandoned.get_facing(pan_viewport,2,1)==native_sprite_facing);
 	assert(!abandoned.has_mirrored_facing(pan_viewport));
 	}
+
+	// ECHOED: the same as ABANDONED, but the game hands back each frame twice, the second
+	// time with `previous` caught up to `current`. Such an echo carries no new content and
+	// must not count: the give-up still lands on the fifth changed frame. Counting the
+	// echo (a signature that also covers `previous`) would read it as a zero-shift match
+	// and restart the tolerance every time.
+	{
+	visual_animation_managerst echoed;
+	echoed.set_base_duration_ms(100);
+	auto input=make_input(pan_viewport,pan_dim,pan_empty);
+	set_layer(input,viewport_visual_layer::center,at_one,pan_empty);
+	run_frame(echoed,input,2000);
+	set_layer(input,viewport_visual_layer::center,at_two,at_one);
+	run_frame(echoed,input,2016);
+	assert(echoed.get_facing(pan_viewport,2,1)==visual_facingst::east);
+	input.pan_x=1;
+	const int32_t *previous=at_two;
+	uint32_t time=2032;
+	for(int32_t frame=0;frame<4;++frame)
+		{
+		const int32_t *current=frame%2==0?unmatched_a:unmatched_b;
+		set_layer(input,viewport_visual_layer::center,current,previous);
+		run_frame(echoed,input,time+=16);
+		set_layer(input,viewport_visual_layer::center,current,current);
+		run_frame(echoed,input,time+=16);
+		previous=current;
+		assert(echoed.get_facing(pan_viewport,2,1)==visual_facingst::east);
+		}
+	set_layer(input,viewport_visual_layer::center,unmatched_a,previous);
+	run_frame(echoed,input,time+=16);
+	assert(echoed.get_facing(pan_viewport,2,1)==native_sprite_facing);
+	assert(!echoed.has_mirrored_facing(pan_viewport));
+	}
+
+	// SWITCHED, BUFFERS ALREADY CROSSED: the revision bumps on a frame whose buffers show
+	// the new view; only `previous` catches up a frame later. The crossing must still be
+	// consumed there, so the first real step in the new view animates instead of being
+	// read as the crossing.
+	{
+	visual_animation_managerst switched;
+	switched.set_base_duration_ms(100);
+	auto input=make_input(pan_viewport,pan_dim,pan_empty);
+	set_layer(input,viewport_visual_layer::center,at_one,pan_empty);
+	run_frame(switched,input,3000);
+	// Bump frame: current already the new view (at_two), previous the old one.
+	input.context_revision+=1;
+	set_layer(input,viewport_visual_layer::center,at_two,at_one);
+	run_frame(switched,input,3016);
+	// Echo: previous catches up.
+	set_layer(input,viewport_visual_layer::center,at_two,at_two);
+	run_frame(switched,input,3032);
+	assert(!switched.get_movement(pan_viewport,viewport_visual_layer::center,2,1).active);
+	// First real step in the new view.
+	set_layer(input,viewport_visual_layer::center,at_one,at_two);
+	run_frame(switched,input,3048);
+	assert(switched.get_movement(pan_viewport,viewport_visual_layer::center,1,1).active);
+	}
 	}
 
 	// Regression: A and B move in the same frame, chained -- A's target tile is B's source tile.
