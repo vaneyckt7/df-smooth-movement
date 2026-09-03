@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Lower per-frame CPU cost: proxy collection visits only tiles near a
+  movement instead of sweeping every layer of every viewport, and the buffer
+  signature hashes in four independent lanes. In a 75x50 view with eight lower
+  z-level viewports the plugin's frame work dropped from about 1.24 ms to
+  0.30 ms; rendering is unchanged.
 - Optional walk bob (`smooth-movement bob on`, off by default): creature sprites
   hop twice per tile step while they glide, with `bob <amount>` for the height,
   `bobmult <horizontal> <diagonal> <vertical>` for per-direction multipliers and
