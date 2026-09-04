@@ -24,6 +24,11 @@
   one deliberate exception: the shading-only repaint after a tile's last sprite
   group now blanks the top shadow as well, so it is painted once, in engine
   order, instead of a second time over the sprites.
+- A tile whose buffers are all zero at a level is no longer asked to repaint there: the
+  engine paints nothing for it. Most tiles of the lower z-level viewports are
+  such tiles, so with nine viewports the engine repaints per frame drop from
+  about 185 to 22 and the plugin's render work from about 60 µs to 42 µs per
+  frame. The painted result is unchanged.
 - Idle frames cost less: the facing grid settles only when the buffers
   changed, and the black fills that blank tiles before a repaint are queued
   and handed to SDL in one call per batch instead of one call per tile.

@@ -299,6 +299,40 @@ void repaint_interface_only(Viewport *vp,int32_t x,int32_t y,const Repaint &repa
 		vp->screentexpos_signpost[index]);
 }
 
+// Whether a repaint of the tile would paint anything: the engine draws only the buffers that
+// hold a texture or flag, so a tile whose buffers are all zero (as most tiles of a lower level
+// are) paints nothing and need not be asked for. Read with the layers hidden for the repaint.
+template<typename Viewport>
+bool tile_paints_nothing(const Viewport *vp,int32_t index)
+{
+	const auto zero=[index](const auto *buffer){return buffer==nullptr||buffer[index]==0;};
+	return zero(vp->screentexpos_background)&&
+		zero(vp->screentexpos_floor_flag)&&
+		zero(vp->screentexpos_background_two)&&
+		zero(vp->screentexpos_liquid_flag)&&
+		zero(vp->screentexpos_spatter_flag)&&
+		zero(vp->screentexpos_spatter)&&
+		zero(vp->screentexpos_ramp_flag)&&
+		zero(vp->screentexpos_shadow_flag)&&
+		zero(vp->screentexpos_building_one)&&
+		zero(vp->screentexpos_item)&&
+		zero(vp->screentexpos_vehicle)&&
+		zero(vp->screentexpos_vermin)&&
+		zero(vp->screentexpos_left_creature)&&
+		zero(vp->screentexpos)&&
+		zero(vp->screentexpos_right_creature)&&
+		zero(vp->screentexpos_building_two)&&
+		zero(vp->screentexpos_projectile)&&
+		zero(vp->screentexpos_high_flow)&&
+		zero(vp->screentexpos_top_shadow)&&
+		zero(vp->screentexpos_signpost)&&
+		zero(vp->screentexpos_upleft_creature)&&
+		zero(vp->screentexpos_up_creature)&&
+		zero(vp->screentexpos_upright_creature)&&
+		zero(vp->screentexpos_designation)&&
+		zero(vp->screentexpos_interface);
+}
+
 // Whether the engine repainted a tile this frame. The engine repaints a tile when any of its
 // buffers changed, and copies the buffers to their `_old` twins only after the frame, so at
 // hook time a difference between a buffer and its twin is exactly a repainted tile.

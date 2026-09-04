@@ -129,11 +129,15 @@ class frame_rendererst
 	// repainted whole; a tile with sprites is repainted beneath them first, with the shading
 	// (the interface layer) held back until the repaint above its last sprite group, so it
 	// covers the sprites instead of lying beneath. Every staged tile is repainted at every
-	// level: a level shades everything drawn beneath it.
+	// level whose buffers hold anything there: a level shades everything drawn beneath it.
 	template<typename Canvas>
 	void draw_levels(Canvas &canvas,const tile_coveragest &tiles) const
 		{
-		const auto repaint=[&](Viewport *vp,int32_t tx,int32_t ty){canvas.repaint(vp,tx,ty);};
+		const auto repaint=[&](Viewport *vp,int32_t tx,int32_t ty)
+			{
+			if(tile_paints_nothing(vp,tx*vp->dim_y+ty))return;
+			canvas.repaint(vp,tx,ty);
+			};
 		for(size_t i=0;i<render_count;++i)
 			{
 			const viewport_renderst<Viewport> &render=renders[i];
