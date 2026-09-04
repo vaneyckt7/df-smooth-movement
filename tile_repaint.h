@@ -214,7 +214,8 @@ void repaint_staged(
 	else with_zeroed_values(stage,vp->screentexpos_interface[index]);
 }
 
-// Repaints only what sits above `group`, after that group's sprites were drawn.
+// Repaints only what sits above `group`, after that group's sprites were drawn. The interface
+// layer sits above every group, so it is painted once, with the tile's last group.
 template<typename Viewport,typename Repaint>
 void repaint_above(
 	Viewport *vp,
@@ -222,6 +223,7 @@ void repaint_above(
 	int32_t y,
 	visual_render_groupst group,
 	uint16_t hidden_layers,
+	bool with_interface,
 	const Repaint &repaint)
 {
 	const int32_t index=x*vp->dim_y+y;
@@ -233,9 +235,7 @@ void repaint_above(
 				vp,index,uint16_t(hidden_layers|visual_layers_through_group(group)),
 				[&]{repaint(vp,x,y);});
 			};
-		// The interface layer sits above every group, so each group's redraw would paint it
-		// again; repaint_interface_only places it once, after the sprites.
-		if(vp->screentexpos_interface==nullptr)stage();
+		if(with_interface||vp->screentexpos_interface==nullptr)stage();
 		else with_zeroed_values(stage,vp->screentexpos_interface[index]);
 		};
 	if(group==visual_render_groupst::item||group==visual_render_groupst::vehicle)

@@ -125,67 +125,47 @@ class frame_rendererst
 		canvas.draw_sprite(proxy.texture,base_x,base_y,tile_size,proxy.mirrored);
 		}
 
-	// Repaints a tile through every viewport that shows it, lowest first. A tile with
-	// sprites stops at the first: the stage pass repaints what lies above them afterwards.
+	// One frame's paint order, level by level from the lowest: the level's tiles, then each
+	// sprite group with a repaint of what lies above it. A tile with no sprite on a level is
+	// repainted whole; a tile with sprites is repainted beneath them first, with the shading
+	// (the interface layer) held back until the repaint above its last sprite group, so it
+	// covers the sprites instead of lying beneath. Every staged tile is repainted at every
+	// level: a level shades everything drawn beneath it.
 	template<typename Canvas>
-	void repaint_world_tile(Canvas &canvas,int32_t x,int32_t y) const
-		{
-		const bool staged=coverage.covers(x,y);
-		const auto repaint=[&](Viewport *vp,int32_t tx,int32_t ty){canvas.repaint(vp,tx,ty);};
-		for(size_t i=0;i<render_count;++i)
-			{
-			const viewport_renderst<Viewport> &render=renders[i];
-			if(render.view.inside_clip(x,y))
-				repaint_staged(
-					render.viewport,x,y,
-					render.coverage.proxied_layers(render.view.grid.index(x,y)),
-					staged,repaint);
-			if(staged)break;
-			}
-		}
-
-	// Sprites, group by group, each group followed by a repaint of what sits above it.
-	template<typename Canvas>
-	void draw_stages(Canvas &canvas) const
+	void draw_levels(Canvas &canvas,const tile_coveragest &tiles) const
 		{
 		const auto repaint=[&](Viewport *vp,int32_t tx,int32_t ty){canvas.repaint(vp,tx,ty);};
 		for(size_t i=0;i<render_count;++i)
 			{
 			const viewport_renderst<Viewport> &render=renders[i];
 			Viewport *vp=render.viewport;
-			// A lower level's sprite must be covered by the next level's fog and terrain, so
-			// that level is reapplied before its own sprites, in the engine's draw order.
-			if(i>0)
+			const tile_coveragest &level=render.coverage;
+			tiles.for_each([&](int32_t x,int32_t y)
 				{
-				coverage.for_each([&](int32_t x,int32_t y)
-					{
-					if(!render.view.inside_clip(x,y))return;
-					repaint_staged(
-						vp,x,y,
-						render.coverage.proxied_layers(render.view.grid.index(x,y)),
-						true,repaint);
-					});
-				}
+				if(!render.view.inside_clip(x,y))return;
+				const int32_t index=render.view.grid.index(x,y);
+				repaint_staged(
+					vp,x,y,level.proxied_layers(index),level.groups_at(index)!=0,repaint);
+				});
 			for(uint8_t g=0;g<static_cast<uint8_t>(visual_render_groupst::count);++g)
 				{
 				const auto group=static_cast<visual_render_groupst>(g);
 				for(const sprite_proxyst &proxy:render.proxies)
 					if(visual_render_group(proxy.layer)==group)draw_proxy(canvas,proxy);
-				if(group==visual_render_groupst::designation)continue;
-				render.coverage.for_each_in_group(group,[&](int32_t x,int32_t y)
+				const uint8_t higher_groups=uint8_t(~((tile_coveragest::group_flag(group)<<1)-1));
+				level.for_each_in_group(group,[&](int32_t x,int32_t y)
 					{
-					repaint_above(
-						vp,x,y,group,
-						render.coverage.proxied_layers(render.view.grid.index(x,y)),
-						repaint);
+					const int32_t index=render.view.grid.index(x,y);
+					const bool last_group=(level.groups_at(index)&higher_groups)==0;
+					if(group==visual_render_groupst::designation)
+						{
+						if(last_group)repaint_interface_only(vp,x,y,repaint);
+						}
+					else
+						repaint_above(
+							vp,x,y,group,level.proxied_layers(index),last_group,repaint);
 					});
 				}
-			// A level shades everything drawn beneath it, so this covers every staged tile,
-			// not only the ones this level has sprites on.
-			coverage.for_each([&](int32_t x,int32_t y)
-				{
-				if(render.view.inside_clip(x,y))repaint_interface_only(vp,x,y,repaint);
-				});
 			}
 		}
 
@@ -294,10 +274,11 @@ class frame_rendererst
 				canvas.set_clip(map_rect);
 				canvas.fill_black(map_rect);
 				canvas.offset_origin(glide_x,glide_y);
+				redraw_coverage.reset(main_grid);
 				for(int32_t x=main_view.clip_x0;x<=main_view.clip_x1;++x)
 					for(int32_t y=main_view.clip_y0;y<=main_view.clip_y1;++y)
-						repaint_world_tile(canvas,x,y);
-				draw_stages(canvas);
+						redraw_coverage.mark(x,y);
+				draw_levels(canvas,redraw_coverage);
 				canvas.offset_origin(-glide_x,-glide_y);
 				canvas.clear_clip();
 				// Everything was repainted; per-tile bookkeeping restarts after the glide.
@@ -318,11 +299,7 @@ class frame_rendererst
 					tile_size,
 					tile_size});
 				});
-			redraw_coverage.for_each([&](int32_t x,int32_t y)
-				{
-				if(main_view.inside_clip(x,y))repaint_world_tile(canvas,x,y);
-				});
-			draw_stages(canvas);
+			draw_levels(canvas,redraw_coverage);
 			std::swap(coverage,previous_coverage);
 			}
 };

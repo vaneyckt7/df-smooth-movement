@@ -15,6 +15,12 @@
   tile within the sprite's reach differs from its previous-frame twin), or
   after a full engine redraw. Before, every frame with a mirrored creature on
   screen was painted in full.
+- The staged repaint takes about half as many engine repaints per tile. Each
+  level repaints a covered tile once, beneath its sprites where it has any,
+  and the shading (the interface layer) is painted with the repaint above the
+  tile's last sprite group instead of in a pass of its own; a level without
+  sprites on a tile repaints it whole. A paint-operation oracle keyed by pixel
+  cell confirms the painted result is unchanged over 9258 random frames.
 - Lower per-frame CPU cost: proxy collection visits only tiles near a
   movement instead of sweeping every layer of every viewport, the buffer
   signature covers only the current buffers and hashes them two tiles at a

@@ -115,6 +115,17 @@ class tile_coveragest
 			return proxied[size_t(index)];
 			}
 
+		// The render groups with a proxy on a tile, one bit per group, lowest group first.
+		uint8_t groups_at(int32_t index) const
+			{
+			return uint8_t(marks[size_t(index)]>>1);
+			}
+
+		static constexpr uint8_t group_flag(visual_render_groupst group)
+			{
+			return uint8_t(1U<<static_cast<uint8_t>(group));
+			}
+
 		// Every marked tile of another coverage, wherever the two grids overlap.
 		void merge(const tile_coveragest &other)
 			{

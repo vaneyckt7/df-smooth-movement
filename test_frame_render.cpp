@@ -527,14 +527,15 @@ void test_lower_level_sprite_is_shaded_by_the_main_level()
 	scene.render();
 	assert(scene.canvas.count(canvas_eventst::sprite)==1);
 	// The lower level's tile is repainted with the creature hidden, then the sprite is
-	// drawn, then the main level is repainted over it, ending with its shading alone.
+	// drawn, then the main level is repainted whole over it, shading included.
 	const auto lower_repaints=scene.canvas.repaints_of(&lower,2,3);
 	const auto main_repaints=scene.canvas.repaints_of(&scene.vp,2,3);
 	assert(!lower_repaints.empty());
 	assert(!main_repaints.empty());
 	for(const canvas_eventst &e:lower_repaints)assert(e.center==0);
+	assert(main_repaints.size()==1);
 	assert(main_repaints.back().interface==3);
-	assert(main_repaints.back().background==0);
+	assert(main_repaints.back().background==7);
 	size_t sprite_at=0;
 	size_t last_main=0;
 	for(size_t i=0;i<scene.canvas.events.size();++i)
