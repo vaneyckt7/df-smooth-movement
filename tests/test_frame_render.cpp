@@ -204,7 +204,7 @@ struct recording_canvasst
 		return texpos==0?nullptr:reinterpret_cast<const void *>(intptr_t(texpos));
 		}
 
-	void repaint(test_viewportst *vp,int32_t x,int32_t y)
+	void repaint(test_viewportst *vp,int32_t x,int32_t y,repaint_passst)
 		{
 		canvas_eventst e{canvas_eventst::repaint};
 		e.viewport=vp;

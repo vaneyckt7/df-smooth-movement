@@ -123,7 +123,7 @@ class sdl_canvasst
 			renderer->origin_y+=dy;
 			}
 
-		void repaint(Viewport *vp,int32_t x,int32_t y)
+		void repaint(Viewport *vp,int32_t x,int32_t y,repaint_passst)
 			{
 			flush_fills();
 			note_call();

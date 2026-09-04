@@ -193,6 +193,15 @@ void with_upper_hidden(Viewport *vp,int32_t index,const Callback &callback)
 		});
 }
 
+// Which repaint of a tile the canvas is handed, so a recording canvas can check a repaint
+// against the pass it belongs to instead of inferring the pass from paint order.
+struct repaint_passst
+{
+	enum kindst : uint8_t {staged,above_group,interface_only};
+	kindst kind=staged;
+	visual_render_groupst group=visual_render_groupst::item;   // above_group: the group just drawn
+};
+
 // A full engine repaint of the tile with the proxied layers blank. The interface layer is
 // the shading for levels below the camera; a staged tile has sprites drawn over it
 // afterwards, so `defer_interface` leaves the shading to repaint_interface_only.
@@ -208,7 +217,7 @@ void repaint_staged(
 	const int32_t index=x*vp->dim_y+y;
 	const auto stage=[&]
 		{
-		with_hidden_visual_layers(vp,index,hidden_layers,[&]{repaint(vp,x,y);});
+		with_hidden_visual_layers(vp,index,hidden_layers,[&]{repaint(vp,x,y,repaint_passst{});});
 		};
 	if(!defer_interface||vp->screentexpos_interface==nullptr)stage();
 	else with_zeroed_values(stage,vp->screentexpos_interface[index]);
@@ -233,7 +242,7 @@ void repaint_above(
 			{
 			with_hidden_visual_layers(
 				vp,index,uint16_t(hidden_layers|visual_layers_through_group(group)),
-				[&]{repaint(vp,x,y);});
+				[&]{repaint(vp,x,y,repaint_passst{repaint_passst::above_group,group});});
 			};
 		if(with_interface||vp->screentexpos_interface==nullptr)stage();
 		else with_zeroed_values(stage,vp->screentexpos_interface[index]);
@@ -278,7 +287,8 @@ void repaint_interface_only(Viewport *vp,int32_t x,int32_t y,const Repaint &repa
 	const auto without_visuals=[&]
 		{
 		with_hidden_visual_layers(
-			vp,index,all_visual_layers_mask,[&]{repaint(vp,x,y);});
+			vp,index,all_visual_layers_mask,
+			[&]{repaint(vp,x,y,repaint_passst{repaint_passst::interface_only,visual_render_groupst::designation});});
 		};
 	with_zeroed_values(
 		without_visuals,

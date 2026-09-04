@@ -10,6 +10,22 @@
   `tests/render_fuzz.cpp`, which checks every painted random frame against the properties
   the pass owes the engine instead of against an older implementation; see the README.
   It found the zoom drift above. `tests/oracle/` is gone.
+- Console commands no longer write the render thread's state while a frame is running.
+  Every setting change (camera, time step, flipping, walk bob) is posted to a mailbox the
+  render hook drains at the top of the next frame; with the plugin disabled it is applied on
+  the spot. `disable` waits (up to 200 ms) for a frame already inside the hook to finish
+  before the state is reset, and says so if it has to give up waiting. The console keeps its
+  own copy of the settings, validates against it (so two commands in one frame, as from an
+  init file, see each other), and seeds every reset with it: settings now survive
+  `disable`/`enable`, and the camera stays on across them (its offset does not).
+- Fixed: `camera <x> <y>` with the camera off landed a whole tile from what was asked and
+  swallowed the next scroll. Enabling clears the camera's window baseline, and the
+  normalization write went out before a baseline existed, so its landing was never observed.
+  A normalization asked before the first update now waits for it.
+- The render pass tells the canvas which repaint of a tile it asks for (the staging pass
+  beneath the sprites, the pass above a sprite group, or the shading alone), so the property
+  fuzzer checks each repaint against the pass the renderer named instead of inferring the
+  pass from paint order.
 - The plugin file's globals are one `plugin_statest`, sectioned by owner: bound at enable,
   console-set and render-read, the simulation-to-render draw handshake, and the render
   thread's own state, which is replaced whole when the plugin is reset. The snapshot

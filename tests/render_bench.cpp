@@ -14,7 +14,7 @@ struct noop_canvasst
 	int32_t zoom() const {return zoom_;}
 	void offset_origin(int32_t dx,int32_t dy){ox+=dx;oy+=dy;}
 	const void *texture(int32_t t) const {return t?reinterpret_cast<const void*>(intptr_t(t)):nullptr;}
-	void repaint(fake_viewportst *vp,int32_t x,int32_t y){asm volatile(""::"r"(vp),"r"(x),"r"(y):"memory");++repaints;}
+	void repaint(fake_viewportst *vp,int32_t x,int32_t y,repaint_passst){asm volatile(""::"r"(vp),"r"(x),"r"(y):"memory");++repaints;}
 	void draw_sprite(const void *,int32_t,int32_t,int32_t,bool){++sprites;}
 	void fill_black(pixel_rectst){++fills;}
 	void set_clip(pixel_rectst){}

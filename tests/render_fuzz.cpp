@@ -30,6 +30,7 @@ struct paint_opst
 	size_t level=0;                       // repaint: index into the viewport list
 	int32_t x=0,y=0,w=0,h=0;              // repaint: tile; fill/clip: pixel rect
 	int32_t origin_x=0,origin_y=0;        // the origin the engine would paint with
+	repaint_passst pass{};                // repaint: the pass the renderer said it was
 	// repaint: the buffers as the engine would read them, visual layers by layer index.
 	std::array<int32_t,visual_layer_count> visual{};
 	int64_t base=0;                       // sum of the terrain buffers beneath every group
@@ -57,11 +58,11 @@ struct recording_canvasst
 		{
 		return texpos%7==0?nullptr:reinterpret_cast<const void *>(intptr_t(texpos));
 		}
-	void repaint(fake_viewportst *vp,int32_t x,int32_t y)
+	void repaint(fake_viewportst *vp,int32_t x,int32_t y,repaint_passst pass)
 		{
 		paint_opst op{paint_opst::repaint};
 		op.level=size_t(std::find(viewports->begin(),viewports->end(),vp)-viewports->begin());
-		op.x=x;op.y=y;op.origin_x=ox;op.origin_y=oy;
+		op.x=x;op.y=y;op.origin_x=ox;op.origin_y=oy;op.pass=pass;
 		const size_t i=size_t(x)*size_t(vp->dim_y)+size_t(y);
 		const visual_layer_pointerst layers=table::current(vp);
 		for(size_t l=0;l<visual_layer_count;++l)op.visual[l]=layers[l][i];
@@ -256,10 +257,10 @@ struct frame_checkst
 		if(failures)return;
 
 		// Per level and tile: the first repaint stages the tile beneath its sprites, with the
-		// layers that have a proxy targeting it hidden; every repaint after a sprite over the
-		// tile hides the terrain beneath every group and the layers through the sprite's group;
-		// the shading (interface) is never painted beneath a sprite and comes back exactly once
-		// after the tile's last sprite.
+		// layers that have a proxy targeting it hidden; every later repaint is a pass above the
+		// group of the sprite drawn last at that level, and hides the terrain beneath every
+		// group and the layers through that group; the shading (interface) is never painted
+		// beneath a sprite and comes back exactly once after the tile's last sprite.
 		for(size_t level=0;level<viewports.size();++level)
 			{
 			const fake_viewportst *vp=viewports[level];
@@ -288,6 +289,7 @@ struct frame_checkst
 					if(!tile_repaints.empty())
 						{
 						const paint_opst &staged=ops[tile_repaints.front()];
+						check(staged.pass.kind==repaint_passst::staged,"a tile's first repaint is not the staging pass",tile_repaints.front());
 						for(size_t l=0;l<visual_layer_count;++l)
 							{
 							if(proxied&(1U<<l))check(staged.visual[l]==0,"staged repaint shows a proxied layer",tile_repaints.front());
@@ -303,36 +305,41 @@ struct frame_checkst
 					for(const size_t r:tile_repaints)
 						{
 						const paint_opst &op=ops[r];
-						// Repaints after a level's sprites are the pass above the group drawn
-						// last: they add what sits above it, with that group's own layers and
-						// the proxied ones hidden, and leave the rest as the buffers hold it.
-						bool after_sprite=false;
-						visual_render_groupst group=visual_render_groupst::item;
-						for(const size_t s:sprites[level])
-							if(s<r)
+						// A repaint after a level's sprites is the pass above the group drawn
+						// last (the renderer names it; the sprite drawn last confirms it): it
+						// adds what sits above that group, with the group's own layers and the
+						// proxied ones hidden, and leaves the rest as the buffers hold it.
+						const size_t *last_sprite=nullptr;
+						for(const size_t &s:sprites[level])
+							if(s<r)last_sprite=&s;
+						if(last_sprite==nullptr)
+							check(r==tile_repaints.front(),"a repaint before any sprite that is not the staging pass",r);
+						else
+							{
+							visual_render_groupst group=visual_render_groupst::item;
+							for(const sprite_proxyst &proxy:proxies[level])
+								if(proxy.texture==ops[*last_sprite].texture)group=visual_render_group(proxy.layer);
+							check(op.pass.group==group,"a repaint above a group other than the one drawn last",r);
+							if(group==visual_render_groupst::designation)
 								{
-								after_sprite=true;
-								// The sprite's layer is the collected proxy with its texture.
-								for(const sprite_proxyst &proxy:proxies[level])
-									if(proxy.texture==ops[s].texture)group=visual_render_group(proxy.layer);
+								// Above the designations only the shading is left to paint.
+								check(op.pass.kind==repaint_passst::interface_only,"the pass over a designation is not shading only",r);
+								check(op.base==0&&op.vermin==0&&op.upper==0,"a buffer repainted over a designation",r);
+								for(size_t l=0;l<visual_layer_count;++l)
+									check(op.visual[l]==0,"a layer repainted over a designation",r);
 								}
-						if(after_sprite&&group==visual_render_groupst::designation)
-							{
-							// Above the designations only the shading is left to paint.
-							check(op.base==0&&op.vermin==0&&op.upper==0,"a buffer repainted over a designation",r);
-							for(size_t l=0;l<visual_layer_count;++l)
-								check(op.visual[l]==0,"a layer repainted over a designation",r);
-							}
-						if(after_sprite&&group!=visual_render_groupst::designation)
-							{
-							const uint16_t hidden=uint16_t(proxied|visual_layers_through_group(group));
-							check(op.base==0,"terrain repainted over a sprite",r);
-							if(group>=visual_render_groupst::main)check(op.vermin==0,"vermin repainted over a creature",r);
-							if(group>=visual_render_groupst::upper)check(op.upper==0,"an upper buffer repainted over an upper sprite",r);
-							for(size_t l=0;l<visual_layer_count;++l)
+							else
 								{
-								if(hidden&(1U<<l))check(op.visual[l]==0,"a layer repainted over a sprite of its own group",r);
-								else check(op.visual[l]==layers[l][vp_index],"a repaint over a sprite hides a layer above it",r);
+								check(op.pass.kind==repaint_passst::above_group,"the pass over a sprite is not the pass above its group",r);
+								const uint16_t hidden=uint16_t(proxied|visual_layers_through_group(group));
+								check(op.base==0,"terrain repainted over a sprite",r);
+								if(group>=visual_render_groupst::main)check(op.vermin==0,"vermin repainted over a creature",r);
+								if(group>=visual_render_groupst::upper)check(op.upper==0,"an upper buffer repainted over an upper sprite",r);
+								for(size_t l=0;l<visual_layer_count;++l)
+									{
+									if(hidden&(1U<<l))check(op.visual[l]==0,"a layer repainted over a sprite of its own group",r);
+									else check(op.visual[l]==layers[l][vp_index],"a repaint over a sprite hides a layer above it",r);
+									}
 								}
 							}
 						if(op.has_interface&&op.interface!=0)

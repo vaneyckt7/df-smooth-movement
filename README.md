@@ -69,7 +69,8 @@ viewport histories and checks every painted frame against the properties it owes
 each covered tile blanked once before anything else, repaints only on covered tiles inside the
 clip and only where they paint something, every covered tile a level shows repainted, levels
 painted lowest first, a tile staged beneath its sprites with exactly the proxied layers hidden,
-repaints after a group's sprites adding only what sits above that group, the level shading
+each repaint after a group's sprites named by the pass as the one above the group drawn last
+and adding only what sits above that group, the level shading
 painted exactly once after a tile's last sprite, sprites on the engine's tile positions over
 covered tiles only, and every viewport buffer left as it was found. The properties encode the
 engine's draw order as understood from its output, not as checked against its code.

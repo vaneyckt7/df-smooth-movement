@@ -160,7 +160,7 @@ void test_fills_batch_before_the_next_paint()
 	canvas.fill_black({0,0,32,32});
 	canvas.fill_black({32,0,32,32});
 	expect({"getcolor","setcolor 0,0,0,255"});
-	canvas.repaint(&vp,1,0);
+	canvas.repaint(&vp,1,0,repaint_passst{});
 	expect({"fill [0,0 32x32] [32,0 32x32]","repaint 1,0"});
 	canvas.fill_black({0,32,32,32});
 	canvas.draw_sprite(canvas.texture(2),5.0f,6.0f,32.0f,false);
@@ -231,10 +231,10 @@ void test_stats_counters()
 	lower.screentexpos=lower_center;
 	{
 	canvasst canvas(&renderer,api,&main,stats,scratch);
-	canvas.repaint(&main,0,0);   // main, paints something
-	canvas.repaint(&main,1,0);   // main, blank
-	canvas.repaint(&lower,0,0);  // lower, under an opaque main tile
-	canvas.repaint(&lower,1,0);  // lower, blank, main above it blank too
+	canvas.repaint(&main,0,0,repaint_passst{});   // main, paints something
+	canvas.repaint(&main,1,0,repaint_passst{});   // main, blank
+	canvas.repaint(&lower,0,0,repaint_passst{});  // lower, under an opaque main tile
+	canvas.repaint(&lower,1,0,repaint_passst{});  // lower, blank, main above it blank too
 	canvas.draw_sprite(canvas.texture(1),0,0,32,false);
 	canvas.draw_sprite(canvas.texture(1),0,0,32,true);
 	canvas.fill_black({0,0,1,1});
@@ -263,7 +263,7 @@ void test_disabled_stats_count_nothing()
 	vp.dim_y=1;
 	{
 	canvasst canvas(&renderer,api,&vp,stats,scratch);
-	canvas.repaint(&vp,0,0);
+	canvas.repaint(&vp,0,0,repaint_passst{});
 	canvas.draw_sprite(canvas.texture(1),0,0,32,false);
 	canvas.fill_black({0,0,1,1});
 	}

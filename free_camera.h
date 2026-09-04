@@ -58,6 +58,7 @@ class free_camerast
 	int32_t prev_wx=0;           // window-scroll observation baseline
 	int32_t prev_wy=0;
 	bool has_prev=false;
+	bool normalize_pending=false;   // normalize_rest asked before a baseline existed
 
 	void clear_pending()
 		{
@@ -267,9 +268,17 @@ class free_camerast
 		// Fold whole tiles of rest into the window position so |rest| <= 0.5 (minimal edge
 		// strip). The visual position is unchanged: the window write is attributed via
 		// self_scroll when it lands. scroll_window(dx,dy) returns which axes it applied.
+		// The write is only attributable once a window baseline has been observed (the
+		// landing shows as a delta against it), so before the first update it waits.
 		template<typename ScrollWindow>
 		void normalize_rest(const ScrollWindow &scroll_window)
 			{
+			if(!has_prev)
+				{
+				normalize_pending=true;
+				return;
+				}
+			normalize_pending=false;
 			const int32_t kx=int32_t(-std::llround(rest_x));
 			const int32_t ky=int32_t(-std::llround(rest_y));
 			if(kx==0&&ky==0)return;
@@ -305,6 +314,7 @@ class free_camerast
 			prev_wx=frame.window_x;
 			prev_wy=frame.window_y;
 			has_prev=true;
+			if(normalize_pending)normalize_rest(scroll_window);
 			settle_pending(match_ratio,frame.tile);
 			drive_drag(frame,scroll_window);
 			decay_transient(frame.delta_ms);

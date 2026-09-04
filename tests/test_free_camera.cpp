@@ -184,6 +184,33 @@ void test_normalize_folds_whole_tiles_into_the_window()
 	assert(camera.glide_x(32.0)==int32_t(std::lround(-0.3*32)));   // rest does not decay
 }
 
+// Enabling clears the window baseline; a normalization asked before the next update waits
+// for it, or the write would land unobserved and leave a whole tile of rest behind.
+void test_normalize_before_a_baseline_waits_for_it()
+{
+	free_camerast camera;
+	enginest engine;
+	camera.set_enabled(true);
+	camera.set_rest(-0.5,0.0);   // half a tile east of window 20
+	camera.normalize_rest([&](int32_t dx,int32_t dy){return engine.scroll_window(dx,dy);});
+	assert(engine.scroll_writes.empty()&&engine.window_x==20);
+	step(camera,engine,engine.frame());   // baseline observed, then the write goes out
+	assert(engine.scroll_writes.size()==1&&engine.window_x==21);
+	step(camera,engine,engine.frame());   // the window change is observed, pending
+	engine.landed_dx=1;
+	step(camera,engine,engine.frame());   // lands as our own write: view unchanged
+	assert(std::fabs(camera.rest_offset_x()-0.5)<1e-9);
+	assert(camera.glide_x(32.0)==16);
+	// A real scroll afterwards glides instead of being swallowed by stale self_scroll.
+	engine.landed_dx=0;
+	engine.window_x+=1;
+	step(camera,engine,engine.frame());
+	engine.landed_dx=1;
+	step(camera,engine,engine.frame());
+	assert(std::fabs(camera.rest_offset_x()-0.5)<1e-9);
+	assert(camera.glide_x(32.0)!=16);   // the transient carries the glide
+}
+
 void test_normalize_respects_a_refused_write()
 {
 	free_camerast camera;
@@ -362,6 +389,7 @@ int main()
 	test_empty_background_drops_pending();
 	test_normalize_folds_whole_tiles_into_the_window();
 	test_normalize_respects_a_refused_write();
+	test_normalize_before_a_baseline_waits_for_it();
 	test_drag_follows_the_mouse_and_rests();
 	test_disable_clears_the_offset();
 	test_fast_scroll_lands_piecemeal();

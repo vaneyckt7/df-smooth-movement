@@ -19,7 +19,7 @@
 //
 //   canvas.origin_x(), origin_y(), zoom()   the engine's map origin in pixels and zoom factor
 //   canvas.offset_origin(dx,dy)             shifts the origin the engine repaints with
-//   canvas.repaint(vp,x,y)                  the engine's own tile repaint
+//   canvas.repaint(vp,x,y,pass)             the engine's own tile repaint (repaint_passst)
 //   canvas.draw_sprite(texture,x,y,size,mirrored)
 //   canvas.fill_black(rect)
 //   canvas.set_clip(rect) / clear_clip()
@@ -156,10 +156,10 @@ class frame_rendererst
 	template<typename Canvas>
 	void draw_levels(Canvas &canvas,const tile_coveragest &tiles) const
 		{
-		const auto repaint=[&](Viewport *vp,int32_t tx,int32_t ty)
+		const auto repaint=[&](Viewport *vp,int32_t tx,int32_t ty,repaint_passst pass)
 			{
 			if(tile_paints_nothing(vp,tx*vp->dim_y+ty))return;
-			canvas.repaint(vp,tx,ty);
+			canvas.repaint(vp,tx,ty,pass);
 			};
 		for(size_t i=0;i<render_count;++i)
 			{

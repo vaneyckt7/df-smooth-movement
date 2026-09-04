@@ -35,10 +35,14 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <functional>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -145,9 +149,9 @@ struct buffer_drawst
 };
 
 // The render thread's state, advanced by the update_all hook every frame and replaced whole
-// by reset_state. Console commands adjust settings inside it from the core thread while the
-// hook keeps running (the camera's, the animation time step, the render settings); those
-// writes are unsynchronised, so a frame may see a half-applied change, never a freed one.
+// by reset_state. Console commands never write it while the hook runs: they post to the
+// mailbox below and the hook applies them at the top of the next frame. The console's status
+// reads are unsynchronised single-field reads, worth at most a frame of staleness.
 struct render_statest
 {
 	visual_animation_managerst animation_manager;
@@ -174,6 +178,53 @@ struct render_statest
 
 // The plugin's state, by owner. Console commands run on the core thread, which suspends the
 // simulation thread but not the render thread.
+// The console's copy of every setting it can change: validated and reported here, pushed
+// whole to the render thread through the mailbox, and the seed of every reset render state,
+// so settings outlive disable/enable. The camera's position stays with the render thread.
+struct console_settingst
+{
+	render_settingst render;
+	uint32_t time_step_ms=visual_animation_managerst().base_duration_ms();
+	bool camera=false;
+
+	void apply_to(render_statest &r) const
+		{
+		r.frame_renderer.get_settings()=render;
+		r.animation_manager.set_base_duration_ms(time_step_ms);
+		if(r.camera.is_enabled()!=camera)r.camera.set_enabled(camera);
+		}
+};
+
+// Console-to-render handoff: the core thread posts a change, the render thread applies it
+// before painting. With the hooks off (and the last frame waited out) there is no render
+// thread in the state, so the change is applied on the spot instead.
+struct command_mailboxst
+{
+	using commandt=std::function<void(render_statest &)>;
+	std::mutex lock;
+	std::vector<commandt> pending;
+
+	void post(commandt command,bool hooks_running,render_statest &render)
+		{
+		if(!hooks_running)
+			{
+			command(render);
+			return;
+			}
+		std::lock_guard<std::mutex> guard(lock);
+		pending.push_back(std::move(command));
+		}
+	void drain(render_statest &render)
+		{
+		std::vector<commandt> commands;
+			{
+			std::lock_guard<std::mutex> guard(lock);
+			commands.swap(pending);
+			}
+		for(const commandt &command:commands)command(render);
+		}
+};
+
 struct plugin_statest
 {
 	// Bound at enable time before the hooks go in; read by the render thread after.
@@ -183,9 +234,14 @@ struct plugin_statest
 	// Console-armed, render-served.
 	snapshot_requestst snapshot;
 	int32_t trace_budget=0;   // console-set; movements left to log before the trace stops
+	console_settingst settings;   // console's own
 	// Simulation thread writes, render thread reads.
 	buffer_drawst draws;
-	// Render thread's own; see above for what the console reaches into.
+	// Console posts, render thread applies; survives reset_state so nothing posted is lost.
+	command_mailboxst mailbox;
+	// Frames of the update_all hook in flight, so disable can wait for the last one.
+	std::atomic<int32_t> hooks_in_flight{0};
+	// Render thread's own while the hooks run.
 	render_statest render;
 };
 
@@ -349,6 +405,7 @@ void save_snapshot(df::renderer_2d_base *renderer)
 void render_interpolated_world(df::renderer_2d_base *renderer)
 {
 	render_statest &r=state.render;
+	state.mailbox.drain(r);
 	frame_statisticst &stats=state.stats;
 	df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
 	const std::vector<df::graphic_viewportst *> viewports=active_viewports();
@@ -457,6 +514,11 @@ IMPLEMENT_VMETHOD_INTERPOSE(renderer_hook,update_all);
 
 void renderer_hook::interpose_fn_update_all()
 {
+	struct in_flightst
+	{
+		in_flightst(){state.hooks_in_flight.fetch_add(1,std::memory_order_acq_rel);}
+		~in_flightst(){state.hooks_in_flight.fetch_sub(1,std::memory_order_acq_rel);}
+	} in_flight;
 	// update_all is the existing UI stage, so world correction must run first.
 	render_interpolated_world(this);
 	INTERPOSE_NEXT(update_all)();
@@ -528,24 +590,52 @@ bool load_sdl(color_ostream &out)
 	return true;
 }
 
-// Called with the hooks off. Removing a hook does not wait for a hook body already running
-// on the render thread, so on disable the reset can race with at most that last frame.
+// Called with the hooks off, after wait_for_last_frame. Commands posted before the reset
+// land in the fresh state, not in the discarded one.
 void reset_state()
 {
 	state.render=render_statest();
+	state.settings.apply_to(state.render);
 	state.render.painted_draw_serial=state.draws.drawn_serial();
 	state.snapshot.armed=false;
 	state.trace_budget=0;
+	state.mailbox.drain(state.render);
+}
+
+// Removing a hook does not wait for a hook body already running on the render thread. Waits
+// for it, boundedly: the render thread may be blocked on the simulation thread this command
+// suspended, in which case the reset races with that last frame as it did before. The count
+// is taken inside the hook body, so a render thread already past the vtable load but not
+// yet counted is the one window this does not close.
+bool wait_for_last_frame()
+{
+	const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(200);
+	while(state.hooks_in_flight.load(std::memory_order_acquire)!=0)
+		{
+		if(std::chrono::steady_clock::now()>=deadline)return false;
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+	return true;
 }
 
 command_result status_command(
 	color_ostream &out,
 	std::vector<std::string> &parameters)
 {
-	visual_animation_managerst &animation_manager=state.render.animation_manager;
-	free_camerast &camera=state.render.camera;
 	// Sprite flipping and walk bob, both off by default: `flip on`, `bob on`.
-	render_settingst &settings=state.render.frame_renderer.get_settings();
+	console_settingst &console=state.settings;
+	render_settingst &settings=console.render;
+	// The camera's offset is read from the render thread's state for display only.
+	const free_camerast &camera=state.render.camera;
+	const auto apply=[](command_mailboxst::commandt command)
+		{
+		state.mailbox.post(std::move(command),is_enabled,state.render);
+		};
+	// Pushes the console's settings to the render thread.
+	const auto push_settings=[&]
+		{
+		apply([settings=console](render_statest &r){settings.apply_to(r);});
+		};
 	if(parameters.empty())
 		{
 		out.print(
@@ -553,10 +643,10 @@ command_result status_command(
 			plugin_version,
 			is_enabled?"enabled":"disabled");
 		out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
-			camera.is_enabled()?"on":"off",-camera.rest_offset_x(),-camera.rest_offset_y());
+			console.camera?"on":"off",-camera.rest_offset_x(),-camera.rest_offset_y());
 		out.print("sprite flipping: {}\n",
 			settings.flip?"on":"off");
-		out.print("time step: {} ms\n",animation_manager.base_duration_ms());
+		out.print("time step: {} ms\n",console.time_step_ms);
 		out.print("walk bob: {}\n",
 			settings.bob.enabled?"on":"off");
 		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
@@ -569,22 +659,24 @@ command_result status_command(
 		if(parameters.size()==1)
 			{
 			out.print("free camera: {}, offset {:.3f} {:.3f}\n",
-				camera.is_enabled()?"on":"off",-camera.rest_offset_x(),-camera.rest_offset_y());
+				console.camera?"on":"off",-camera.rest_offset_x(),-camera.rest_offset_y());
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="on")
 			{
-			camera.set_enabled(true);
+			console.camera=true;
+			push_settings();
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="off")
 			{
-			camera.set_enabled(false);
+			console.camera=false;
+			push_settings();
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="reset")
 			{
-			camera.set_rest(0.0,0.0);
+			apply([](render_statest &r){r.camera.set_rest(0.0,0.0);});
 			return CR_OK;
 			}
 		if(parameters.size()==3)
@@ -599,9 +691,13 @@ command_result status_command(
 					return CR_FAILURE;
 					}
 				// User-facing: positive = view sits east/south of the grid position.
-				camera.set_enabled(true);
-				camera.set_rest(-fx,-fy);
-				camera.normalize_rest(scroll_window);
+				console.camera=true;
+				push_settings();
+				apply([fx,fy](render_statest &r)
+					{
+					r.camera.set_rest(-fx,-fy);
+					r.camera.normalize_rest(scroll_window);
+					});
 				return CR_OK;
 				}
 			catch(...)
@@ -699,12 +795,14 @@ command_result status_command(
 		if(parameters.size()==2&&parameters[1]=="on")
 			{
 			settings.flip=true;
+			push_settings();
 			out.print("smooth-movement: sprite flipping enabled\n");
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="off")
 			{
 			settings.flip=false;
+			push_settings();
 			out.print("smooth-movement: sprite flipping disabled\n");
 			return CR_OK;
 			}
@@ -714,7 +812,7 @@ command_result status_command(
 		{
 		if(parameters.size()==1)
 			{
-			out.print("time step: {} ms\n",animation_manager.base_duration_ms());
+			out.print("time step: {} ms\n",console.time_step_ms);
 			return CR_OK;
 			}
 		if(parameters.size()==2)
@@ -723,7 +821,8 @@ command_result status_command(
 				{
 				const int32_t ms=std::stoi(parameters[1]);
 				if(ms<20||ms>2000)return CR_WRONG_USAGE;
-				animation_manager.set_base_duration_ms(uint32_t(ms));
+				console.time_step_ms=uint32_t(ms);
+				push_settings();
 				out.print("smooth-movement: time step {} ms\n",ms);
 				return CR_OK;
 				}
@@ -741,6 +840,7 @@ command_result status_command(
 		if(parameters.size()==2&&(parameters[1]=="1"||parameters[1]=="2"))
 			{
 			settings.bob.hops=parameters[1]=="1"?1:2;
+			push_settings();
 			out.print("smooth-movement: hops per step {}\n",settings.bob.hops);
 			return CR_OK;
 			}
@@ -776,6 +876,7 @@ command_result status_command(
 			settings.bob.horizontal_mult=horizontal;
 			settings.bob.diagonal_mult=diagonal;
 			settings.bob.vertical_mult=vertical;
+			push_settings();
 			out.print("smooth-movement: bob multipliers horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
 				settings.bob.horizontal_mult,settings.bob.diagonal_mult,settings.bob.vertical_mult);
 			return CR_OK;
@@ -804,6 +905,7 @@ command_result status_command(
 					return CR_FAILURE;
 					}
 				settings.bob.amplitude=amount;
+				push_settings();
 				out.print("smooth-movement: bob amount {:.2f}\n",settings.bob.amplitude);
 				return CR_OK;
 				}
@@ -812,6 +914,7 @@ command_result status_command(
 		if(parameters.size()==2&&(parameters[1]=="on"||parameters[1]=="off"))
 			{
 			settings.bob.enabled=parameters[1]=="on";
+			push_settings();
 			out.print("smooth-movement: walk bob {}\n",settings.bob.enabled?"enabled":"disabled");
 			return CR_OK;
 			}
@@ -860,6 +963,8 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 		INTERPOSE_HOOK(renderer_hook,update_all).remove();
 		INTERPOSE_HOOK(dwarfmode_hook,render).remove();
 		INTERPOSE_HOOK(dungeonmode_hook,render).remove();
+		if(!wait_for_last_frame())
+			out.printerr("smooth-movement: the render thread is still in the last frame; resetting anyway\n");
 		reset_state();
 		clear_sdl_bindings();
 		}
