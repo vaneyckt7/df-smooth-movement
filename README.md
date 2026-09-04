@@ -39,6 +39,7 @@ smooth-movement bob 0.15    # bob height as a fraction of a tile (default 0.10);
 smooth-movement bobmult 1 2.4 2.7  # bob multipliers for horizontal, diagonal, vertical steps
 smooth-movement hops 1      # one hop per step instead of two
 smooth-movement stats on    # count and time the plugin's frame work (stats to print, stats reset)
+smooth-movement snapshot    # save the next painted frame as a BMP in the game folder
 ```
 
 ### Walk bob
@@ -55,11 +56,24 @@ is disabled.
 
 ## Development
 
-`tests/run.sh` builds and runs the unit tests, the paint-op oracle fuzzer (the pre-redesign
-render code, ported onto a canvas, must paint every frame identically) and a render benchmark. It
-needs only a C++17 compiler. In game, `smooth-movement stats on` followed by `stats` after a
-while prints per-frame timings; `stats detail on` adds timers around every engine repaint and
-SDL call at some cost of its own.
+The behaviour lives in headers that compile without DFHack or SDL, so it can be tested on any
+machine: `visual_animation.h` (movement detection), `frame_render.h` (the paint pass),
+`free_camera.h`, `view_context.h` (what resets the animation context) and `sdl_canvas.h` (the
+batching in front of SDL). `smooth-movement.cpp` only binds them to the engine and parses the
+console commands.
+
+`tests/run.sh` builds and runs the unit tests, the paint-op oracle fuzzer and a render benchmark
+with any C++17 compiler. The oracle under `tests/oracle/` is a regression fixture: the render
+pass from before the redesign, ported onto the canvas interface, which the fuzzer requires to
+paint every random frame identically to the current pass. It shows the redesign changed nothing
+about what is painted; it does not check either pass against the engine's own draw order.
+
+In game, `smooth-movement stats on` followed by `stats` after a while prints per-frame timings;
+`stats detail on` adds timers around every engine repaint and SDL call at some cost of its own.
+`smooth-movement snapshot [file]` saves the next frame the plugin paints, before the interface
+is drawn over it, as a BMP, to check the result without a screen capture. The path is relative
+to the game's working directory, an existing file is overwritten, and the request stays armed
+until a frame with a readable map viewport comes along.
 
 ## Compatibility
 

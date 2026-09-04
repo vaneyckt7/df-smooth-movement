@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT
 
+// Plugin glue: binds the engine (DF globals, the 2D renderer hook, SDL entry points) to the
+// headers that hold the behaviour, and parses the console commands. Nothing here decides what
+// to paint; see frame_render.h, visual_animation.h, free_camera.h, view_context.h, sdl_canvas.h.
+
 #include "Core.h"
 #include "MemAccess.h"
 #include "PluginManager.h"
@@ -15,9 +19,14 @@
 
 #include "frame_render.h"
 #include "frame_stats.h"
+#include "free_camera.h"
+#include "sdl_canvas.h"
+#include "view_context.h"
 #include "visual_animation.h"
 
 #include <SDL_render.h>
+#include <SDL_rwops.h>
+#include <SDL_surface.h>
 
 #include <algorithm>
 #include <array>
@@ -42,69 +51,73 @@ namespace {
 
 constexpr const char *plugin_version="0.3.0";
 
-// Runtime harness for the engine-owned visual state; gameplay data is never read.
-decltype(&SDL_RenderCopyF) render_copy_f=nullptr;
-decltype(&SDL_RenderCopyExF) render_copy_ex_f=nullptr;
-decltype(&SDL_RenderFillRects) render_fill_rects=nullptr;
-decltype(&SDL_RenderSetClipRect) render_set_clip_rect=nullptr;
-decltype(&SDL_GetRenderDrawColor) get_render_draw_color=nullptr;
-decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
+// The SDL2 entry points, looked up in the game's own SDL at enable time. Only the engine-owned
+// visual state is touched; gameplay data is never read.
+struct sdl_apist
+{
+	using renderer_type=SDL_Renderer;
+	using texture_type=SDL_Texture;
+	using rect_type=SDL_Rect;
+	using frect_type=SDL_FRect;
+	using color_type=Uint8;
+	static constexpr SDL_RendererFlip flip_horizontal=SDL_FLIP_HORIZONTAL;
 
-visual_animation_managerst animation_manager;
+	decltype(&SDL_RenderCopyF) render_copy_f=nullptr;
+	decltype(&SDL_RenderCopyExF) render_copy_ex_f=nullptr;
+	decltype(&SDL_RenderFillRects) render_fill_rects=nullptr;
+	decltype(&SDL_RenderSetClipRect) render_set_clip_rect=nullptr;
+	decltype(&SDL_GetRenderDrawColor) get_render_draw_color=nullptr;
+	decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
+	// Frame capture (the `snapshot` command); optional, the pass runs without them.
+	decltype(&SDL_GetRendererOutputSize) get_renderer_output_size=nullptr;
+	decltype(&SDL_CreateRGBSurfaceWithFormat) create_rgb_surface_with_format=nullptr;
+	decltype(&SDL_RenderReadPixels) render_read_pixels=nullptr;
+	decltype(&SDL_RWFromFile) rw_from_file=nullptr;
+	decltype(&SDL_SaveBMP_RW) save_bmp_rw=nullptr;
+	decltype(&SDL_FreeSurface) free_surface=nullptr;
+
+	static SDL_Texture *texture_of(
+		df::renderer_2d_base *renderer,
+		int32_t texpos,
+		bool transparent_background=true)
+		{
+		if(texpos==0)return nullptr;
+		df::texture_fullid texture_id;
+		texture_id.texpos=texpos;
+		texture_id.r=texture_id.g=texture_id.b=1.0f;
+		texture_id.br=texture_id.bg=texture_id.bb=0.0f;
+		texture_id.flag=transparent_background?
+			df::texture_fullid_flag::mask_transparent_background:
+			0;
+		const auto texture=renderer->tile_cache.tile_cache.find(texture_id);
+		return texture==renderer->tile_cache.tile_cache.end()?
+			nullptr:
+			static_cast<SDL_Texture *>(texture->second);
+		}
+
+	bool can_snapshot() const
+		{
+		return get_renderer_output_size&&create_rgb_surface_with_format&&render_read_pixels&&
+			rw_from_file&&save_bmp_rw&&free_surface;
+		}
+};
+
+sdl_apist sdl;
 std::vector<SDL_Rect> fill_scratch;
 
+visual_animation_managerst animation_manager;
 frame_statisticst frame_stats;
 frame_rendererst<df::graphic_viewportst> frame_renderer;
 // Sprite flipping and walk bob, both off by default: `flip on`, `bob on`.
 render_settingst &render_settings=frame_renderer.get_settings();
-uint64_t visual_context_revision=0;
-const void *previous_viewport=nullptr;
-std::array<int32_t,12> previous_view_signature{};
-bool has_view_signature=false;
-// Map scroll (window_x/window_y) is tracked separately from the reset signature: a pure pan is
-// followed (movements are translated) instead of triggering a full reset, so it must NOT bump the
-// context revision. It only invalidates the viewport-space blackout coverage from the prior frame.
-int32_t previous_pan_x=0;
-int32_t previous_pan_y=0;
-bool has_pan_context=false;
+view_context_trackerst view_context;
+full_redraw_gatest full_redraw_gate;
+free_camerast camera;
 
-// --- free camera -------------------------------------------------------------------------------
-// The camera is visually unbound from the tile grid. Two layered offsets:
-//   rest      -- a PERSISTENT sub-tile offset in tiles: the free camera. Set by pixel-perfect
-//                middle-mouse drag panning (the view rests wherever released, mid-tile or not)
-//                and by the `smooth-movement camera <fx> <fy>` console command. Survives zoom
-//                and z-level changes. Kept in [-0.5,0.5] by normalization: whole-tile parts are
-//                folded into window_x/window_y (a plain UI scroll write -- NEVER the viewport
-//                dims, which crash DF; the sub-tile strip this leaves at one screen edge has no
-//                buffer data and stays black).
-//   transient -- the decaying scroll glide from before, in pixels, layered on top.
-// Render offset = transient + rest*tile. window_x/window_y remain the game's own tile camera.
-bool camera_enabled=false;                    // OFF by default: plain `enable smooth-movement`
-                                              // keeps upstream behavior (creature interpolation
-                                              // only); `smooth-movement camera on` opts in.
-constexpr int32_t camera_max_glide_tiles=3;   // per-jump: farther than this snaps instantly
-constexpr double camera_tau_ms=35.0;          // transient catch-up (~95% done after 100ms)
-double transient_x=0.0;                       // decaying glide offset, pixels
-double transient_y=0.0;
-double rest_x=0.0;                            // persistent free-camera offset, tiles
-double rest_y=0.0;                            // (positive = view sits WEST/NORTH of window)
-int32_t camera_pending_dx=0;                  // scroll delta announced but not yet in the buffers
-int32_t camera_pending_dy=0;
-int32_t camera_pending_frames=0;
-int32_t self_scroll_x=0;                      // window deltas WE wrote: visual no-ops when landing
-int32_t self_scroll_y=0;
-bool drag_active=false;
-double drag_anchor_vx=0.0;                    // visual camera at drag start, tiles
-double drag_anchor_vy=0.0;
-int32_t drag_anchor_mx=0;                     // precise mouse at drag start, pixels
-int32_t drag_anchor_my=0;
-bool camera_was_offset=false;                 // edge-detects offset->0 for one cleanup redraw
-int16_t full_display_count_seen=0;            // gps->force_full_display_count last frame
-bool has_full_display_count=false;
-int32_t full_redraw_frames=0;                 // frames still to paint after a full engine redraw
-int32_t camera_prev_wx=0;                     // window-scroll observation baseline
-int32_t camera_prev_wy=0;
-bool camera_has_prev=false;
+bool snapshot_requested=false;
+std::string snapshot_path;
+
+using canvasst=sdl_canvasst<df::renderer_2d_base,df::graphic_viewportst,sdl_apist>;
 
 double tile_px(const df::renderer_2d_base *renderer)
 {
@@ -136,244 +149,28 @@ double background_match_ratio(const df::graphic_viewportst *vp,int32_t dwx,int32
 	return double(matches)/double(considered);
 }
 
-// Cancel everything except the persistent rest offset (the camera keeps its sub-tile position
-// across zoom/z/resize; only the in-flight animation state is unfollowable).
-void clear_camera_pending()
+// The camera's window writes: a plain UI scroll, never below zero.
+std::array<bool,2> scroll_window(int32_t dx,int32_t dy)
 {
-	camera_pending_dx=0;
-	camera_pending_dy=0;
-	camera_pending_frames=0;
-	self_scroll_x=0;
-	self_scroll_y=0;
+	std::array<bool,2> applied{false,false};
+	if(dx!=0&&window_x!=nullptr&&*window_x+dx>=0)
+		{
+		*window_x+=dx;
+		applied[0]=true;
+		}
+	if(dy!=0&&window_y!=nullptr&&*window_y+dy>=0)
+		{
+		*window_y+=dy;
+		applied[1]=true;
+		}
+	return applied;
 }
 
-void cancel_camera_transients()
-{
-	transient_x=0.0;
-	transient_y=0.0;
-	clear_camera_pending();
-	drag_active=false;
-}
-
-void set_camera_enabled(bool enable)
-{
-	if(camera_enabled==enable)return;
-	camera_enabled=enable;
-	cancel_camera_transients();
-	rest_x=0.0;
-	rest_y=0.0;
-	camera_has_prev=false;   // fresh observation baseline; no phantom scroll on re-enable
-	// camera_was_offset stays: the render path issues one cleanup redraw if we were mid-offset.
-}
-
-// Fold whole tiles of rest into window_x/window_y so |rest| <= 0.5 (minimal edge strip). The
-// visual position is unchanged: the window write is attributed via self_scroll when it lands.
-void normalize_rest()
-{
-	const int32_t kx=int32_t(-std::llround(rest_x));
-	const int32_t ky=int32_t(-std::llround(rest_y));
-	if(kx!=0&&window_x!=nullptr&&*window_x+kx>=0)
-		{
-		*window_x+=kx;
-		self_scroll_x+=kx;
-		}
-	if(ky!=0&&window_y!=nullptr&&*window_y+ky>=0)
-		{
-		*window_y+=ky;
-		self_scroll_y+=ky;
-		}
-}
-
-// A scroll of (ax,ay) tiles has landed in the buffers: our own normalization writes are visual
-// no-ops (they move into rest); the remainder is a real scroll and glides -- unless a drag is
-// driving the position directly, in which case it folds into rest wholesale.
-void attribute_landed(int32_t ax,int32_t ay,double tile)
-{
-	int32_t sx=0;
-	if(self_scroll_x!=0&&(self_scroll_x>0)==(ax>0)&&ax!=0)
-		sx=(std::abs(self_scroll_x)<=std::abs(ax))?self_scroll_x:ax;
-	int32_t sy=0;
-	if(self_scroll_y!=0&&(self_scroll_y>0)==(ay>0)&&ay!=0)
-		sy=(std::abs(self_scroll_y)<=std::abs(ay))?self_scroll_y:ay;
-	self_scroll_x-=sx;
-	self_scroll_y-=sy;
-	rest_x+=sx;
-	rest_y+=sy;
-	const int32_t gx=ax-sx;
-	const int32_t gy=ay-sy;
-	if(drag_active)
-		{
-		rest_x+=gx;
-		rest_y+=gy;
-		}
-	else
-		{
-		transient_x+=gx*tile;
-		transient_y+=gy*tile;
-		const double cap=tile*(camera_max_glide_tiles+0.5);
-		transient_x=std::clamp(transient_x,-cap,cap);
-		transient_y=std::clamp(transient_y,-cap,cap);
-		}
-}
-
-// Per-frame camera bookkeeping: observe window scrolls, attribute them when the buffers apply
-// them (glide vs our own normalization writes), drive the drag, decay the transient.
-void update_camera(
-	df::renderer_2d_base *renderer,
-	const df::graphic_viewportst *vp,
-	uint32_t delta_ms)
-{
-	if(!camera_enabled)return;
-	const double tile=tile_px(renderer);
-	const int32_t wx=window_x?*window_x:0;
-	const int32_t wy=window_y?*window_y:0;
-	if(camera_has_prev&&(wx!=camera_prev_wx||wy!=camera_prev_wy))
-		{
-		const int32_t dx=wx-camera_prev_wx;
-		const int32_t dy=wy-camera_prev_wy;
-		if((std::abs(dx)>camera_max_glide_tiles||std::abs(dy)>camera_max_glide_tiles)&&
-			!drag_active)
-			cancel_camera_transients();   // teleport-like jump (recenter/minimap): snap
-		else
-			{
-			camera_pending_dx+=dx;
-			camera_pending_dy+=dy;
-			camera_pending_frames=0;
-			}
-		}
-	camera_prev_wx=wx;
-	camera_prev_wy=wy;
-	camera_has_prev=true;
-
-	if(camera_pending_dx!=0||camera_pending_dy!=0)
-		{
-		if(std::abs(camera_pending_dx)>6||std::abs(camera_pending_dy)>6)
-			{
-			// Scrolling far outran detection: snap (keep rest, drop the animation debt).
-			transient_x=0.0;
-			transient_y=0.0;
-			clear_camera_pending();
-			}
-		else
-			{
-			// Fast scrolling applies the pending delta PIECEMEAL: the buffers may hold +1 of a
-			// pending +3 this frame. Testing only the total made landings miss, time out, and
-			// snap -- the fast-scroll jitter. Instead, find the LARGEST applied prefix of the
-			// pending scroll and attribute just that; the rest keeps pending. Ties between
-			// qualifying shifts only happen on uniform terrain, where mistiming is invisible.
-			const int32_t stepx=(camera_pending_dx>0)-(camera_pending_dx<0);
-			const int32_t stepy=(camera_pending_dy>0)-(camera_pending_dy<0);
-			int32_t best_ax=0,best_ay=0,best_mag=-1;
-			double best_score=-1.0;
-			bool no_data=false;
-			for(int32_t ix=0;ix<=std::abs(camera_pending_dx);++ix)
-				{
-				for(int32_t iy=0;iy<=std::abs(camera_pending_dy);++iy)
-					{
-					const double score=background_match_ratio(vp,ix*stepx,iy*stepy);
-					if(score<0.0){no_data=true;break;}
-					const int32_t mag=ix+iy;
-					if(score>=0.6&&(mag>best_mag||(mag==best_mag&&score>best_score)))
-						{
-						best_mag=mag;
-						best_score=score;
-						best_ax=ix*stepx;
-						best_ay=iy*stepy;
-						}
-					}
-				if(no_data)break;
-				}
-			if(no_data)
-				{
-				// Nothing to compare against (empty background): give up on attribution.
-				clear_camera_pending();
-				}
-			else if(best_mag>0)
-				{
-				attribute_landed(best_ax,best_ay,tile);
-				camera_pending_dx-=best_ax;
-				camera_pending_dy-=best_ay;
-				camera_pending_frames=0;
-				}
-			else if(best_mag==0)
-				{
-				// Content demonstrably hasn't moved yet: keep waiting, no timeout pressure.
-				camera_pending_frames=0;
-				}
-			else if(++camera_pending_frames>4)
-				{
-				// Neither static nor any prefix recognizable (heavy simultaneous change):
-				// drop the debt without touching the in-flight glide.
-				clear_camera_pending();
-				}
-			}
-		}
-
-	// --- pixel-perfect middle-mouse drag: the view follows the mouse 1:1 and rests where
-	// released. DF's own drag still moves window in tile steps; rest carries the remainder.
-	// Positions are tracked against the CONTENT window (window minus unlanded jumps) so the
-	// buffer lag never causes a visible stutter.
-	const bool mbut=enabler!=nullptr&&enabler->mouse_mbut;
-	const double content_wx=double(wx-camera_pending_dx);
-	const double content_wy=double(wy-camera_pending_dy);
-	if(mbut&&!drag_active&&gps!=nullptr)
-		{
-		drag_active=true;
-		drag_anchor_vx=content_wx-rest_x-transient_x/tile;
-		drag_anchor_vy=content_wy-rest_y-transient_y/tile;
-		drag_anchor_mx=gps->precise_mouse_x;
-		drag_anchor_my=gps->precise_mouse_y;
-		transient_x=0.0;
-		transient_y=0.0;
-		}
-	if(drag_active)
-		{
-		if(!mbut)
-			{
-			drag_active=false;
-			normalize_rest();
-			}
-		else if(gps!=nullptr)
-			{
-			double vx=drag_anchor_vx-double(gps->precise_mouse_x-drag_anchor_mx)/tile;
-			double vy=drag_anchor_vy-double(gps->precise_mouse_y-drag_anchor_my)/tile;
-			rest_x=content_wx-vx;
-			rest_y=content_wy-vy;
-			// If DF's own drag disagrees by more than a tile and a half, rebase on its view.
-			const double lim=1.5;
-			if(rest_x<-lim||rest_x>lim||rest_y<-lim||rest_y>lim)
-				{
-				rest_x=std::clamp(rest_x,-lim,lim);
-				rest_y=std::clamp(rest_y,-lim,lim);
-				drag_anchor_vx=content_wx-rest_x+
-					double(gps->precise_mouse_x-drag_anchor_mx)/tile;
-				drag_anchor_vy=content_wy-rest_y+
-					double(gps->precise_mouse_y-drag_anchor_my)/tile;
-				}
-			}
-		}
-
-	if(transient_x!=0.0||transient_y!=0.0)
-		{
-		const double k=std::exp(-double(delta_ms)/camera_tau_ms);
-		transient_x*=k;
-		transient_y*=k;
-		if(std::abs(transient_x)<0.5&&std::abs(transient_y)<0.5)
-			{
-			transient_x=0.0;
-			transient_y=0.0;
-			}
-		}
-}
-
-void update_visual_context(
+view_signaturest view_signature(
 	const df::renderer_2d_base *renderer,
 	const df::graphic_viewportst *vp)
 {
-	// window_x/window_y are deliberately excluded: a horizontal/vertical scroll is followed, not
-	// reset. window_z (z-level) stays, since a z change is not followable.
-	const std::array<int32_t,12> signature=
-		{
+	return {
 		window_z?*window_z:0,
 		vp->dim_x,
 		vp->dim_y,
@@ -387,27 +184,6 @@ void update_visual_context(
 		gps->dimx,
 		gps->dimy
 		};
-	const bool changed=!has_view_signature||previous_viewport!=vp||
-		previous_view_signature!=signature;
-	if(changed)
-		{
-		++visual_context_revision;
-		frame_renderer.forget_coverage();
-		cancel_camera_transients();
-		}
-	previous_viewport=vp;
-	previous_view_signature=signature;
-	has_view_signature=true;
-
-	// On a pure pan the reset signature is unchanged, but last frame's blackout coverage is in the
-	// old viewport frame, so discard it (the engine repaints the whole scrolled viewport anyway).
-	const int32_t pan_x=window_x?*window_x:0;
-	const int32_t pan_y=window_y?*window_y:0;
-	if(!has_pan_context||previous_pan_x!=pan_x||previous_pan_y!=pan_y)
-		frame_renderer.forget_coverage();
-	previous_pan_x=pan_x;
-	previous_pan_y=pan_y;
-	has_pan_context=true;
 }
 
 viewport_visual_animation_inputst animation_input(const df::graphic_viewportst *vp)
@@ -417,7 +193,7 @@ viewport_visual_animation_inputst animation_input(const df::graphic_viewportst *
 		vp,
 		vp->dim_x,
 		vp->dim_y,
-		visual_context_revision,
+		view_context.revision(),
 		table::current(vp),
 		table::previous(vp),
 		window_x?*window_x:0,
@@ -445,166 +221,36 @@ std::vector<df::graphic_viewportst *> active_viewports()
 	return viewports;
 }
 
-SDL_Texture *cached_texture(
-	df::renderer_2d_base *renderer,
-	int32_t texpos,
-	bool transparent_background=true)
+// Save what the renderer holds right now (the map and this pass's sprites, before the UI is
+// drawn over them) as a BMP next to the game. Reading the GPU back is slow; it runs once.
+void save_snapshot(df::renderer_2d_base *renderer)
 {
-	if(texpos==0)return nullptr;
-	df::texture_fullid texture_id;
-	texture_id.texpos=texpos;
-	texture_id.r=texture_id.g=texture_id.b=1.0f;
-	texture_id.br=texture_id.bg=texture_id.bb=0.0f;
-	texture_id.flag=transparent_background?
-		df::texture_fullid_flag::mask_transparent_background:
-		0;
-	const auto texture=renderer->tile_cache.tile_cache.find(texture_id);
-	return texture==renderer->tile_cache.tile_cache.end()?
-		nullptr:
-		static_cast<SDL_Texture *>(texture->second);
+	snapshot_requested=false;
+	if(!sdl.can_snapshot())return;
+	SDL_Renderer *sdl_renderer=static_cast<SDL_Renderer *>(renderer->sdl_renderer);
+	int w=0,h=0;
+	if(sdl.get_renderer_output_size(sdl_renderer,&w,&h)!=0||w<=0||h<=0)
+		{
+		Core::printerr("smooth-movement: snapshot: no renderer output size\n");
+		return;
+		}
+	SDL_Surface *surface=sdl.create_rgb_surface_with_format(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
+	if(surface==nullptr)
+		{
+		Core::printerr("smooth-movement: snapshot: surface allocation failed\n");
+		return;
+		}
+	bool ok=sdl.render_read_pixels(
+		sdl_renderer,nullptr,surface->format->format,surface->pixels,surface->pitch)==0;
+	if(ok)
+		{
+		SDL_RWops *file=sdl.rw_from_file(snapshot_path.c_str(),"wb");
+		ok=file!=nullptr&&sdl.save_bmp_rw(surface,file,1)==0;
+		}
+	sdl.free_surface(surface);
+	if(ok)Core::print("smooth-movement: snapshot saved to {} ({}x{})\n",snapshot_path,w,h);
+	else Core::printerr("smooth-movement: snapshot failed\n");
 }
-
-// The engine's renderer as the canvas frame_rendererst paints on.
-class sdl_canvasst
-{
-	df::renderer_2d_base *renderer;
-	SDL_Renderer *sdl;
-	bool filling=false;
-	Uint8 saved_r=0,saved_g=0,saved_b=0,saved_a=255;
-	// The frame's black fills, issued as one SDL call before anything paints over them.
-	std::vector<SDL_Rect> &fills=fill_scratch;
-
-	void flush_fills()
-		{
-		if(fills.empty())return;
-		const uint64_t t=frame_stats.detail_clock();
-		render_fill_rects(sdl,fills.data(),int(fills.size()));
-		if(t)frame_stats.add(frame_stats.fill_us,frame_stats.now_us()-t);
-		fills.clear();
-		}
-	// Time from construction to the first canvas call is the sprite collection.
-	uint64_t start_us=frame_stats.clock();
-	bool first_call=true;
-	void note_call()
-		{
-		if(!first_call)return;
-		first_call=false;
-		if(start_us)frame_stats.add(frame_stats.collect_us,frame_stats.now_us()-start_us);
-		}
-
-	public:
-		explicit sdl_canvasst(df::renderer_2d_base *renderer):
-			renderer(renderer),
-			sdl(static_cast<SDL_Renderer *>(renderer->sdl_renderer))
-			{
-			}
-
-		~sdl_canvasst()
-			{
-			flush_fills();
-			if(filling)set_render_draw_color(sdl,saved_r,saved_g,saved_b,saved_a);
-			}
-
-		sdl_canvasst(const sdl_canvasst &)=delete;
-		sdl_canvasst &operator=(const sdl_canvasst &)=delete;
-
-		int32_t origin_x() const
-			{
-			return renderer->origin_x;
-			}
-
-		int32_t origin_y() const
-			{
-			return renderer->origin_y;
-			}
-
-		int32_t zoom() const
-			{
-			return renderer->viewport_zoom_factor;
-			}
-
-		void offset_origin(int32_t dx,int32_t dy)
-			{
-			renderer->origin_x+=dx;
-			renderer->origin_y+=dy;
-			}
-
-		void repaint(df::graphic_viewportst *vp,int32_t x,int32_t y)
-			{
-			flush_fills();
-			note_call();
-			if(frame_stats.enabled)classify_repaint(vp,x,y);
-			const uint64_t t=frame_stats.detail_clock();
-			renderer->update_viewport_tile(vp,x,y);
-			if(t)frame_stats.add(frame_stats.engine_us,frame_stats.now_us()-t);
-			}
-
-		// Where the repaints land: the ones the pass could in principle avoid are counted.
-		static void classify_repaint(const df::graphic_viewportst *vp,int32_t x,int32_t y)
-			{
-			frame_stats.add(frame_stats.tile_repaints);
-			const int32_t index=x*vp->dim_y+y;
-			if(tile_paints_nothing(vp,index))frame_stats.add(frame_stats.blank_repaints);
-			const df::graphic_viewportst *main=gps?gps->main_viewport:nullptr;
-			if(vp==main)frame_stats.add(frame_stats.main_repaints);
-			else if(main&&main->dim_x==vp->dim_x&&main->dim_y==vp->dim_y&&
-				main->screentexpos_background&&main->screentexpos_background[index]!=0)
-				frame_stats.add(frame_stats.occluded_repaints);
-			}
-
-		const void *texture(int32_t texpos) const
-			{
-			return cached_texture(renderer,texpos);
-			}
-
-		// The render_copy_ex_f null check is defensive only, not a graceful-degradation path:
-		// `bind` aborts load_sdl on any missing symbol and plugin_enable then refuses the hook.
-		void draw_sprite(const void *texture,float x,float y,float size,bool mirrored)
-			{
-			flush_fills();
-			note_call();
-			frame_stats.add(frame_stats.sprites);
-			const uint64_t t=frame_stats.detail_clock();
-			SDL_Texture *sdl_texture=static_cast<SDL_Texture *>(const_cast<void *>(texture));
-			const SDL_FRect destination={x,y,size,size};
-			if(mirrored&&render_copy_ex_f!=nullptr)
-				render_copy_ex_f(
-					sdl,sdl_texture,nullptr,&destination,0.0,nullptr,SDL_FLIP_HORIZONTAL);
-			else render_copy_f(sdl,sdl_texture,nullptr,&destination);
-			if(t)frame_stats.add(frame_stats.sprite_us,frame_stats.now_us()-t);
-			}
-
-		// The draw colour is switched to black on the first fill and put back when the
-		// frame's canvas goes away, not around every tile. Fills are collected and issued
-		// together: the frame pass fills before it paints anything over them.
-		void fill_black(const pixel_rectst &rect)
-			{
-			note_call();
-			frame_stats.add(frame_stats.fills);
-			if(!filling)
-				{
-				get_render_draw_color(sdl,&saved_r,&saved_g,&saved_b,&saved_a);
-				set_render_draw_color(sdl,0,0,0,255);
-				filling=true;
-				}
-			fills.push_back({rect.x,rect.y,rect.w,rect.h});
-			}
-
-		void set_clip(const pixel_rectst &rect)
-			{
-			flush_fills();
-			note_call();
-			frame_stats.add(frame_stats.glides);
-			const SDL_Rect sdl_rect={rect.x,rect.y,rect.w,rect.h};
-			render_set_clip_rect(sdl,&sdl_rect);
-			}
-
-		void clear_clip()
-			{
-			flush_fills();
-			render_set_clip_rect(sdl,nullptr);
-			}
-};
 
 void render_interpolated_world(df::renderer_2d_base *renderer)
 {
@@ -624,7 +270,14 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 			}
 	} timer{t0};
 
-	if(vp!=nullptr)update_visual_context(renderer,vp);
+	if(vp!=nullptr)
+		{
+		const view_context_changest change=view_context.observe(
+			vp,view_signature(renderer,vp),window_x?*window_x:0,window_y?*window_y:0);
+		// The engine repaints the whole scrolled viewport anyway.
+		if(change.coverage_stale())frame_renderer.forget_coverage();
+		if(change.reset)camera.cancel_transients();
+		}
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
 	animation_manager.begin_frame(now_ms);
 	for(const df::graphic_viewportst *viewport:viewports)
@@ -634,40 +287,42 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 
 	if(!viewport_readable(vp)||renderer->sdl_renderer==nullptr)
 		return;
-	update_camera(renderer,vp,animation_manager.get_frame_delta_ms());
 	const double cam_tile=tile_px(renderer);
-	const int32_t glide_x=int32_t(std::lround(transient_x+rest_x*cam_tile));
-	const int32_t glide_y=int32_t(std::lround(transient_y+rest_y*cam_tile));
+	camera_framest camera_frame;
+	camera_frame.window_x=window_x?*window_x:0;
+	camera_frame.window_y=window_y?*window_y:0;
+	camera_frame.middle_button=enabler!=nullptr&&enabler->mouse_mbut;
+	camera_frame.mouse_x=gps->precise_mouse_x;
+	camera_frame.mouse_y=gps->precise_mouse_y;
+	camera_frame.tile=cam_tile;
+	camera_frame.delta_ms=animation_manager.get_frame_delta_ms();
+	camera.update(
+		camera_frame,
+		[vp](int32_t dx,int32_t dy){return background_match_ratio(vp,dx,dy);},
+		scroll_window);
+	const int32_t glide_x=camera.glide_x(cam_tile);
+	const int32_t glide_y=camera.glide_y(cam_tile);
 	const bool glide=glide_x!=0||glide_y!=0;
-	if(!glide&&camera_was_offset)
-		{
-		// The camera just re-joined the grid: one engine redraw replaces the last shifted frame.
-		camera_was_offset=false;
-		if(gps!=nullptr)++gps->force_full_display_count;
-		}
-	if(glide)camera_was_offset=true;
-	// A full engine redraw wipes the resting mirrored sprites; whether the engine acts on the
-	// counter before or after this hook, painting this frame and the next covers it.
-	const int16_t full_display_count=gps!=nullptr?gps->force_full_display_count:0;
-	if(!has_full_display_count||full_display_count!=full_display_count_seen)full_redraw_frames=2;
-	full_display_count_seen=full_display_count;
-	has_full_display_count=true;
-	const bool after_full_redraw=full_redraw_frames>0;
-	if(after_full_redraw)--full_redraw_frames;
+	// The camera just re-joined the grid: one engine redraw replaces the last shifted frame.
+	if(camera.rejoined_grid(glide))++gps->force_full_display_count;
+	const bool after_full_redraw=full_redraw_gate.observe(gps->force_full_display_count);
 	const bool moving=animation_manager.requires_full_redraw();
 	const bool disturbed=!glide&&!after_full_redraw&&!moving&&
 		frame_renderer.resting_sprites_disturbed(viewports,animation_manager);
 	if(moving)frame_stats.add(frame_stats.moving);
 	if(disturbed)frame_stats.add(frame_stats.disturbed);
-	if(!glide&&!after_full_redraw&&!moving&&!disturbed)return;
-
-	frame_stats.add(frame_stats.rendered);
-	const uint64_t t1=frame_stats.clock();
-	{
-	sdl_canvasst canvas(renderer);
-	frame_renderer.render(canvas,viewports,vp,animation_manager,glide_x,glide_y);
-	}
-	if(t1)frame_stats.add(frame_stats.render_us,frame_stats.now_us()-t1);
+	const bool paint=glide||after_full_redraw||moving||disturbed;
+	if(paint)
+		{
+		frame_stats.add(frame_stats.rendered);
+		const uint64_t t1=frame_stats.clock();
+		{
+		canvasst canvas(renderer,sdl,vp,frame_stats,fill_scratch);
+		frame_renderer.render(canvas,viewports,vp,animation_manager,glide_x,glide_y);
+		}
+		if(t1)frame_stats.add(frame_stats.render_us,frame_stats.now_us()-t1);
+		}
+	if(snapshot_requested)save_snapshot(renderer);
 }
 
 struct renderer_hook : df::renderer_2d_base
@@ -687,12 +342,7 @@ void renderer_hook::interpose_fn_update_all()
 
 void clear_sdl_bindings()
 {
-	render_copy_f=nullptr;
-	render_copy_ex_f=nullptr;
-	render_fill_rects=nullptr;
-	render_set_clip_rect=nullptr;
-	get_render_draw_color=nullptr;
-	set_render_draw_color=nullptr;
+	sdl=sdl_apist();
 }
 
 bool load_sdl(color_ostream &out)
@@ -700,18 +350,27 @@ bool load_sdl(color_ostream &out)
 	clear_sdl_bindings();
 	DFLibrary *sdl_handle=DFSDL::obtain_library_handle();
 	#define bind(name,target) \
-		target=reinterpret_cast<decltype(target)>(LookupPlugin(sdl_handle,#name)); \
-		if(target==nullptr) { \
+		sdl.target=reinterpret_cast<decltype(sdl.target)>(LookupPlugin(sdl_handle,#name)); \
+		if(sdl.target==nullptr) { \
 			out.printerr("smooth-movement: SDL2 function unavailable: " #name "\n"); \
 			clear_sdl_bindings(); \
 			return false; \
 		}
+	#define bind_optional(name,target) \
+		sdl.target=reinterpret_cast<decltype(sdl.target)>(LookupPlugin(sdl_handle,#name));
 	bind(SDL_RenderCopyF,render_copy_f);
 	bind(SDL_RenderCopyExF,render_copy_ex_f);
 	bind(SDL_RenderFillRects,render_fill_rects);
 	bind(SDL_RenderSetClipRect,render_set_clip_rect);
 	bind(SDL_GetRenderDrawColor,get_render_draw_color);
 	bind(SDL_SetRenderDrawColor,set_render_draw_color);
+	bind_optional(SDL_GetRendererOutputSize,get_renderer_output_size);
+	bind_optional(SDL_CreateRGBSurfaceWithFormat,create_rgb_surface_with_format);
+	bind_optional(SDL_RenderReadPixels,render_read_pixels);
+	bind_optional(SDL_RWFromFile,rw_from_file);
+	bind_optional(SDL_SaveBMP_RW,save_bmp_rw);
+	bind_optional(SDL_FreeSurface,free_surface);
+	#undef bind_optional
 	#undef bind
 	return true;
 }
@@ -720,21 +379,10 @@ void reset_state()
 {
 	animation_manager=visual_animation_managerst();
 	frame_renderer=frame_rendererst<df::graphic_viewportst>();
-	visual_context_revision=0;
-	previous_viewport=nullptr;
-	previous_view_signature={};
-	has_view_signature=false;
-	previous_pan_x=0;
-	previous_pan_y=0;
-	has_pan_context=false;
-	cancel_camera_transients();
-	rest_x=0.0;
-	rest_y=0.0;
-	camera_enabled=false;
-	camera_has_prev=false;
-	camera_was_offset=false;
-	has_full_display_count=false;
-	full_redraw_frames=0;
+	view_context=view_context_trackerst();
+	full_redraw_gate=full_redraw_gatest();
+	camera=free_camerast();
+	snapshot_requested=false;
 }
 
 command_result status_command(
@@ -748,7 +396,7 @@ command_result status_command(
 			plugin_version,
 			is_enabled?"enabled":"disabled");
 		out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
-			camera_enabled?"on":"off",-rest_x,-rest_y);
+			camera.is_enabled()?"on":"off",-camera.rest_offset_x(),-camera.rest_offset_y());
 		out.print("sprite flipping: {}\n",
 			render_settings.flip?"on":"off");
 		out.print("time step: {} ms\n",animation_manager.base_duration_ms());
@@ -764,23 +412,22 @@ command_result status_command(
 		if(parameters.size()==1)
 			{
 			out.print("free camera: {}, offset {:.3f} {:.3f}\n",
-				camera_enabled?"on":"off",-rest_x,-rest_y);
+				camera.is_enabled()?"on":"off",-camera.rest_offset_x(),-camera.rest_offset_y());
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="on")
 			{
-			set_camera_enabled(true);
+			camera.set_enabled(true);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="off")
 			{
-			set_camera_enabled(false);
+			camera.set_enabled(false);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="reset")
 			{
-			rest_x=0.0;
-			rest_y=0.0;
+			camera.set_rest(0.0,0.0);
 			return CR_OK;
 			}
 		if(parameters.size()==3)
@@ -795,10 +442,9 @@ command_result status_command(
 					return CR_FAILURE;
 					}
 				// User-facing: positive = view sits east/south of the grid position.
-				set_camera_enabled(true);
-				rest_x=-fx;
-				rest_y=-fy;
-				normalize_rest();
+				camera.set_enabled(true);
+				camera.set_rest(-fx,-fy);
+				camera.normalize_rest(scroll_window);
 				return CR_OK;
 				}
 			catch(...)
@@ -807,6 +453,25 @@ command_result status_command(
 				}
 			}
 		return CR_WRONG_USAGE;
+		}
+	if(parameters[0]=="snapshot")
+		{
+		// snapshot [file]: save the next frame this hook paints, before the UI goes on top.
+		if(parameters.size()>2)return CR_WRONG_USAGE;
+		if(!is_enabled)
+			{
+			out.printerr("smooth-movement: enable the plugin first\n");
+			return CR_FAILURE;
+			}
+		if(!sdl.can_snapshot())
+			{
+			out.printerr("smooth-movement: frame capture needs SDL functions this SDL lacks\n");
+			return CR_FAILURE;
+			}
+		snapshot_path=parameters.size()==2?parameters[1]:"smooth-movement-snapshot.bmp";
+		snapshot_requested=true;
+		out.print("smooth-movement: saving the next frame to {}\n",snapshot_path);
+		return CR_OK;
 		}
 	if(parameters[0]=="stats")
 		{
@@ -980,7 +645,8 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 		"Smooth movement status; time step: timestep <ms>; free camera: camera on|off|reset|<fx> <fy>; "
 		"sprite flipping: flip on|off; "
 		"walk bob: bob on|off|<amount>; bob multipliers: bobmult <horizontal> <diagonal> <vertical>; "
-		"hops per step: hops 1|2; profiling: stats [on|off|reset|detail on|off].",
+		"hops per step: hops 1|2; profiling: stats [on|off|reset|detail on|off]; "
+		"frame capture: snapshot [file].",
 		status_command);
 	return CR_OK;
 }

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The plugin file is glue only. The free camera (`free_camera.h`), the view-context tracker and
+  full-redraw gate (`view_context.h`) and the SDL canvas with its fill batching (`sdl_canvas.h`)
+  are their own headers with unit tests, driven against scripted engines. The layers whose
+  contents are followed between frames are a named list (`movement_tracked_layers`) checked
+  against the layer descriptors at compile time.
+- `smooth-movement snapshot [file]` saves the next painted frame, before the interface goes on
+  top, as a BMP in the game folder.
 - Profiling is built in behind a runtime switch (`smooth-movement stats on|off|reset`,
   `stats detail on|off`); off, it costs one branch per counter.
 - The test tooling lives in `tests/`: unit tests, the paint-op oracle fuzzer that checks the

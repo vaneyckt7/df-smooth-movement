@@ -105,12 +105,38 @@ constexpr bool visual_layer_moves_independently(viewport_visual_layer layer)
 	return visual_layer_descriptor(layer).moves_independently;
 }
 
+// The layers whose contents are followed from frame to frame: the ones whose sprite can leave
+// a tile on its own (creature centre, vehicle, item) plus designations, whose engine repaint
+// is tracked because it can carry a creature away. The other creature-body layers ride on the
+// centre tile. This list is what the buffer signature hashes and the scroll detector votes with.
+constexpr std::array movement_tracked_layers=
+	{
+	viewport_visual_layer::center,
+	viewport_visual_layer::vehicle,
+	viewport_visual_layer::item,
+	viewport_visual_layer::designation
+	};
+
 constexpr bool visual_layer_tracks_own_movement(viewport_visual_layer layer)
 {
-	const auto &descriptor=visual_layer_descriptor(layer);
-	return descriptor.moves_independently||
-		descriptor.render_group==visual_render_groupst::designation;
+	for(const viewport_visual_layer tracked:movement_tracked_layers)
+		if(tracked==layer)return true;
+	return false;
 }
+
+// The named list must agree with the descriptor flags it summarizes.
+constexpr bool movement_tracked_layers_match_descriptors()
+{
+	for(const auto &descriptor:visual_layer_descriptors)
+		{
+		const bool by_flags=descriptor.moves_independently||
+			descriptor.render_group==visual_render_groupst::designation;
+		if(by_flags!=visual_layer_tracks_own_movement(descriptor.layer))return false;
+		}
+	return true;
+}
+
+static_assert(movement_tracked_layers_match_descriptors());
 
 constexpr bool visual_layer_matches(
 	viewport_visual_layer layer,
