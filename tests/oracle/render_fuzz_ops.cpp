@@ -221,8 +221,7 @@ int main(int argc,char **argv)
 				}
 			if(scrolled){pan_x+=sdx;pan_y+=sdy;}
 			else if(chance(30)){pan_x+=1;}   // a scroll that has not landed yet
-			bool context_changed=false;
-			if(chance(40)){++revision;context_changed=true;}
+			if(chance(40))++revision;
 			manager.begin_frame(now);
 			for(size_t v=0;v<vp_count;++v)
 				{
@@ -232,13 +231,9 @@ int main(int argc,char **argv)
 					table::current(vp),table::previous(vp),pan_x,pan_y});
 				}
 			manager.end_frame();
-			static int32_t last_pan_x=-99999,last_pan_y=-99999;
-			if(context_changed||last_pan_x!=pan_x||last_pan_y!=pan_y)
-				{
-				old_previous.clear();
-				renderer.forget_coverage();
-				}
-			last_pan_x=pan_x;last_pan_y=pan_y;
+			// The engine redraws the whole map every frame, so the pass paints only this
+			// frame's coverage; the old pass is given no previous frame to match.
+			old_previous.clear();
 			const int32_t glide_x=chance(8)?int32_t(rng()%21)-10:0;
 			const int32_t glide_y=chance(8)?int32_t(rng()%21)-10:0;
 			bool mirrored=false;

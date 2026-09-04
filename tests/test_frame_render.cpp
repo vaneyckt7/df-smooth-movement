@@ -351,33 +351,20 @@ void test_step_repaints_the_path_with_the_creature_hidden()
 	assert(scene.vp.screentexpos_background[scene.vp.index(2,3)]==7);
 }
 
-void test_last_frames_tiles_are_repainted_once_more()
+void test_a_frame_with_nothing_in_flight_paints_nothing()
 {
 	scenest scene(8,6);
 	scene.step(2,3,3,3);
 	scene.sync(1150);
 	scene.render();
-	// A new redraw: the creature is gone. Its previous frame's tiles still show the
-	// interpolated sprite, so this frame blanks and repaints them, and nothing else.
+	assert(!scene.canvas.events.empty());
+	// A new redraw: the creature is gone. The engine draws the whole map afresh every frame,
+	// so last frame's sprite is already off the screen and nothing is owed for it.
 	scene.vp.redraw();
 	scene.sync(1250);
-	scene.render();
-	assert(scene.canvas.count(canvas_eventst::sprite)==0);
-	assert(scene.canvas.filled(2*32,3*32));
-	assert(scene.canvas.filled(3*32,3*32));
-	assert(scene.canvas.count(canvas_eventst::fill)==2);
-	assert(scene.canvas.count(canvas_eventst::repaint)==2);
-	// And once that is done, the next frame has nothing left to do.
-	scene.sync(1300);
 	scene.render();
 	assert(scene.canvas.events.empty());
-	// Unless the frame was forgotten (a pan or a context change): then nothing is owed.
-	scene.step(4,1,5,1);
-	scene.sync(1150);
-	scene.render();
-	scene.renderer.forget_coverage();
-	scene.vp.redraw();
-	scene.sync(1250);
+	scene.sync(1300);
 	scene.render();
 	assert(scene.canvas.events.empty());
 }
@@ -428,11 +415,11 @@ void test_flip_mirrors_an_eastbound_creature_and_keeps_it_mirrored()
 			assert(e.mirrored);
 			assert(e.px==3*32&&e.py==3*32);
 			}
-		// The tile it left last frame is repainted once more; its own tile has it hidden.
+		// Only its own tile is touched, with the native sprite hidden.
 		if(e.kind==canvas_eventst::repaint)
 			{
-			assert(e.y==3&&(e.x==2||e.x==3));
-			if(e.x==3)assert(e.center==0);
+			assert(e.x==3&&e.y==3);
+			assert(e.center==0);
 			}
 		}
 	// Walking back west restores the native facing: nothing to draw once it lands.
@@ -498,7 +485,7 @@ void test_glide_repaints_the_whole_clip_at_the_shifted_origin()
 		if(e.kind==canvas_eventst::sprite)assert(e.px==15+2*32+16.0f&&e.py==17+3*32);
 		}
 	assert(scene.canvas.ox==10&&scene.canvas.oy==20);
-	// The glide repainted everything, so the next frame owes nothing for it.
+	// A frame with nothing in flight after the glide paints nothing.
 	scene.vp.redraw();
 	scene.sync(1250);
 	scene.render();
@@ -555,31 +542,41 @@ void test_lower_level_sprite_is_shaded_by_the_main_level()
 
 } // namespace
 
-void test_resting_mirrored_sprite_needs_a_frame_only_when_the_engine_repaints_under_it()
+void test_resting_mirrored_sprite_is_painted_every_frame()
 {
 	scenest scene(8,6);
 	scene.renderer.get_settings().flip=true;
+	assert(!scene.renderer.has_resting_sprites(scene.viewports,scene.manager));
 	scene.step(2,3,3,3);
 	scene.sync(1150);
 	scene.render();
-	// At rest, facing east, with every buffer settled: nothing on screen changed.
+	// At rest, facing east, with every buffer settled: the engine's native draw comes back
+	// every frame, so the mirrored sprite is painted over it every frame.
 	scene.vp.redraw();
 	scene.vp.screentexpos[scene.vp.index(3,3)]=50;
 	scene.sync(1300);
 	assert(scene.manager.has_mirrored_facing(&scene.vp));
-	assert(!scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
-	// A repaint far from the creature leaves the sprite on screen.
-	scene.vp.screentexpos_background[scene.vp.index(7,0)]=8;
-	assert(!scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
-	// Any buffer changing within reach of the sprite calls for a frame.
-	scene.vp.screentexpos_interface[scene.vp.index(4,3)]=4;
-	assert(scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
-	scene.vp.screentexpos_interface[scene.vp.index(4,3)]=3;
-	scene.vp.screentexpos_liquid_flag[scene.vp.index(3,2)]=1;
-	assert(scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
-	// Without flipping there is no resting sprite to protect.
+	assert(scene.renderer.has_resting_sprites(scene.viewports,scene.manager));
+	for(const uint32_t t:{1300u,1350u,1400u})
+		{
+		scene.sync(t);
+		assert(scene.renderer.has_resting_sprites(scene.viewports,scene.manager));
+		scene.render();
+		assert(scene.canvas.count(canvas_eventst::sprite)==1);
+		assert(scene.canvas.count(canvas_eventst::fill)==1);
+		assert(scene.canvas.filled(3*32,3*32));
+		for(const canvas_eventst &e:scene.canvas.events)
+			if(e.kind==canvas_eventst::sprite)assert(e.mirrored&&e.px==3*32&&e.py==3*32);
+		}
+	// A level with another grid is asked too, and one without a mirrored facing adds nothing.
+	test_viewportst lower(8,6);
+	std::vector<test_viewportst *> levels{&lower,&scene.vp};
+	assert(scene.renderer.has_resting_sprites(levels,scene.manager));
+	std::vector<test_viewportst *> alone{&lower};
+	assert(!scene.renderer.has_resting_sprites(alone,scene.manager));
+	// Without flipping there is no resting sprite to paint.
 	scene.renderer.get_settings().flip=false;
-	assert(!scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
+	assert(!scene.renderer.has_resting_sprites(scene.viewports,scene.manager));
 }
 
 // Repaints of one tile at one level whose shading (interface) is painted, in order.
@@ -665,33 +662,6 @@ void test_designation_as_last_group_paints_the_shading_alone()
 	assert(scene.vp.screentexpos_top_shadow[scene.vp.index(3,3)]==5);
 }
 
-void test_resting_sprite_is_disturbed_by_a_repaint_on_another_level_with_the_same_grid()
-{
-	scenest scene(8,6);
-	scene.renderer.get_settings().flip=true;
-	scene.step(2,3,3,3);
-	scene.sync(1150);
-	scene.render();
-	scene.vp.redraw();
-	scene.vp.screentexpos[scene.vp.index(3,3)]=50;
-	scene.sync(1300);
-	assert(scene.manager.has_mirrored_facing(&scene.vp));
-	test_viewportst lower(8,6);
-	std::vector<test_viewportst *> levels{&lower,&scene.vp};
-	assert(!scene.renderer.resting_sprites_disturbed(levels,scene.manager));
-	lower.screentexpos_background[lower.index(4,4)]=8;
-	assert(scene.renderer.resting_sprites_disturbed(levels,scene.manager));
-	// A level with another grid cannot be compared tile for tile and is left alone, even
-	// where the anchor grid's flat index of a reach tile lands inside it: (4,4) on 8x6 is
-	// index 28, which on 8x5 is (5,3).
-	test_viewportst other(8,5);
-	std::vector<test_viewportst *> mismatched{&other,&scene.vp};
-	other.screentexpos_background[28]=8;
-	assert(!scene.renderer.resting_sprites_disturbed(mismatched,scene.manager));
-	other.screentexpos_background[other.index(4,4)]=8;
-	assert(!scene.renderer.resting_sprites_disturbed(mismatched,scene.manager));
-}
-
 void test_blank_level_tiles_are_not_repainted()
 {
 	scenest scene(8,6);
@@ -751,10 +721,9 @@ int main()
 	test_blank_level_tiles_are_not_repainted();
 	test_two_sprite_groups_on_a_tile_fold_the_shading_once_after_the_last();
 	test_designation_as_last_group_paints_the_shading_alone();
-	test_resting_sprite_is_disturbed_by_a_repaint_on_another_level_with_the_same_grid();
-	test_resting_mirrored_sprite_needs_a_frame_only_when_the_engine_repaints_under_it();
+	test_resting_mirrored_sprite_is_painted_every_frame();
 	test_step_repaints_the_path_with_the_creature_hidden();
-	test_last_frames_tiles_are_repainted_once_more();
+	test_a_frame_with_nothing_in_flight_paints_nothing();
 	test_fire_on_the_path_drops_the_sprite();
 	test_clip_edges_drop_the_sprite();
 	test_flip_mirrors_an_eastbound_creature_and_keeps_it_mirrored();

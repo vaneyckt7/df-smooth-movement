@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -118,10 +119,15 @@ frame_rendererst<df::graphic_viewportst> frame_renderer;
 // Sprite flipping and walk bob, both off by default: `flip on`, `bob on`.
 render_settingst &render_settings=frame_renderer.get_settings();
 view_context_trackerst view_context;
-full_redraw_gatest full_redraw_gate;
 free_camerast camera;
 
-bool snapshot_requested=false;
+// The console thread arms a capture; the render thread saves and disarms it. The console
+// refuses a new request while one is armed, so the path is never written while it is read.
+std::atomic<bool> snapshot_requested{false};
+int32_t snapshot_frames_left=0;
+int32_t snapshot_frame_index=0;
+// Diagnostics: capture after the engine's UI stage instead of before it.
+bool snapshot_after_ui=false;
 // Diagnostics: movements left to print before the trace switches itself off.
 int32_t trace_budget=0;
 
@@ -258,11 +264,24 @@ std::vector<df::graphic_viewportst *> active_viewports()
 	return viewports;
 }
 
-// Save what the renderer holds right now (the map and this pass's sprites, before the UI is
-// drawn over them) as a BMP next to the game. Reading the GPU back is slow; it runs once.
+// Save what the renderer holds right now as a BMP next to the game: the map and this pass's
+// sprites, before or after the UI is drawn over them. Reading the GPU back is slow; it runs
+// on request only. Consecutive captures are numbered file-1, file-2, ...
 void save_snapshot(df::renderer_2d_base *renderer)
 {
-	snapshot_requested=false;
+	const bool last=--snapshot_frames_left<=0;
+	++snapshot_frame_index;
+	std::string path=snapshot_path;
+	if(snapshot_frame_index>1||!last)
+		{
+		// Number the file name, not a directory: the last dot after the last separator.
+		const size_t dot=path.rfind('.');
+		const size_t sep=path.find_last_of("/\\");
+		const size_t at=dot==std::string::npos||(sep!=std::string::npos&&dot<sep)?path.size():dot;
+		path.insert(at,"-"+std::to_string(snapshot_frame_index));
+		}
+	// Disarmed only once the path has been read: the console may then write a new one.
+	struct disarmst{bool last;~disarmst(){if(last)snapshot_requested=false;}} disarm{last};
 	if(!sdl.can_snapshot())return;
 	SDL_Renderer *sdl_renderer=static_cast<SDL_Renderer *>(renderer->sdl_renderer);
 	int w=0,h=0;
@@ -281,11 +300,11 @@ void save_snapshot(df::renderer_2d_base *renderer)
 		sdl_renderer,nullptr,surface->format->format,surface->pixels,surface->pitch)==0;
 	if(ok)
 		{
-		SDL_RWops *file=sdl.rw_from_file(snapshot_path.c_str(),"wb");
+		SDL_RWops *file=sdl.rw_from_file(path.c_str(),"wb");
 		ok=file!=nullptr&&sdl.save_bmp_rw(surface,file,1)==0;
 		}
 	sdl.free_surface(surface);
-	if(ok)Core::print("smooth-movement: snapshot saved to {} ({}x{})\n",snapshot_path,w,h);
+	if(ok)Core::print("smooth-movement: snapshot saved to {} ({}x{})\n",path,w,h);
 	else Core::printerr("smooth-movement: snapshot failed\n");
 }
 
@@ -311,8 +330,6 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		{
 		const view_context_changest change=view_context.observe(
 			vp,view_signature(renderer,vp),window_x?*window_x:0,window_y?*window_y:0);
-		// The engine repaints the whole scrolled viewport anyway.
-		if(change.coverage_stale())frame_renderer.forget_coverage();
 		if(change.reset)camera.cancel_transients();
 		}
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
@@ -360,15 +377,15 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	const int32_t glide_x=camera.glide_x(cam_tile);
 	const int32_t glide_y=camera.glide_y(cam_tile);
 	const bool glide=glide_x!=0||glide_y!=0;
-	// The camera just re-joined the grid: one engine redraw replaces the last shifted frame.
-	if(camera.rejoined_grid(glide))++gps->force_full_display_count;
-	const bool after_full_redraw=full_redraw_gate.observe(gps->force_full_display_count);
+	// The engine redraws every map tile every frame before this hook runs (measured: one
+	// update_viewport_tile call per tile per frame with nothing changed), so nothing painted
+	// here outlives its frame. A frame is painted when there is something to show on it:
+	// a camera glide, a movement in flight, or a creature resting mirrored.
 	const bool moving=animation_manager.requires_full_redraw();
-	const bool disturbed=!glide&&!after_full_redraw&&!moving&&
-		frame_renderer.resting_sprites_disturbed(viewports,animation_manager);
+	const bool resting=!moving&&frame_renderer.has_resting_sprites(viewports,animation_manager);
 	if(moving)frame_stats.add(frame_stats.moving);
-	if(disturbed)frame_stats.add(frame_stats.disturbed);
-	const bool paint=glide||after_full_redraw||moving||disturbed;
+	if(resting)frame_stats.add(frame_stats.resting);
+	const bool paint=glide||moving||resting;
 	if(paint)
 		{
 		frame_stats.add(frame_stats.rendered);
@@ -379,7 +396,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		}
 		if(t1)frame_stats.add(frame_stats.render_us,frame_stats.now_us()-t1);
 		}
-	if(snapshot_requested)save_snapshot(renderer);
+	if(snapshot_requested&&!snapshot_after_ui)save_snapshot(renderer);
 }
 
 struct renderer_hook : df::renderer_2d_base
@@ -395,6 +412,9 @@ void renderer_hook::interpose_fn_update_all()
 	// update_all is the existing UI stage, so world correction must run first.
 	render_interpolated_world(this);
 	INTERPOSE_NEXT(update_all)();
+	// After the UI stage, only once the same readability check the pre-UI capture passed.
+	if(snapshot_requested&&snapshot_after_ui&&viewport_readable(gps?gps->main_viewport:nullptr))
+		save_snapshot(this);
 }
 
 // Both map screens draw the viewports; the interpose records the tick they drew.
@@ -461,9 +481,9 @@ void reset_state()
 	animation_manager=visual_animation_managerst();
 	frame_renderer=frame_rendererst<df::graphic_viewportst>();
 	view_context=view_context_trackerst();
-	full_redraw_gate=full_redraw_gatest();
 	camera=free_camerast();
 	snapshot_requested=false;
+	snapshot_frames_left=0;
 	trace_budget=0;
 	painted_draw_serial=uint32_t(drawn_buffers.load(std::memory_order_acquire)>>32);
 	frame_simulation_tick=-1;
@@ -540,8 +560,29 @@ command_result status_command(
 		}
 	if(parameters[0]=="snapshot")
 		{
-		// snapshot [file]: save the next frame this hook paints, before the UI goes on top.
-		if(parameters.size()>2)return CR_WRONG_USAGE;
+		// snapshot [after] [count] [file]: save the next frame (or `count` consecutive frames,
+		// numbered file-1, file-2, ...) before the UI goes on top, or after the engine's UI stage.
+		std::vector<std::string> args(parameters.begin()+1,parameters.end());
+		const bool after=!args.empty()&&args[0]=="after";
+		if(after)args.erase(args.begin());
+		int32_t count=1;
+		const auto all_digits=[](const std::string &s)
+			{
+			return !s.empty()&&std::all_of(s.begin(),s.end(),
+				[](char c){return std::isdigit(static_cast<unsigned char>(c))!=0;});
+			};
+		if(!args.empty()&&all_digits(args[0]))
+			{
+			try{count=std::stoi(args[0]);}catch(...){return CR_WRONG_USAGE;}
+			if(count<1||count>1000)return CR_WRONG_USAGE;
+			args.erase(args.begin());
+			}
+		if(args.size()>1)return CR_WRONG_USAGE;
+		if(snapshot_requested)
+			{
+			out.printerr("smooth-movement: a capture is still armed; wait for it to finish\n");
+			return CR_FAILURE;
+			}
 		if(!is_enabled)
 			{
 			out.printerr("smooth-movement: enable the plugin first\n");
@@ -552,9 +593,12 @@ command_result status_command(
 			out.printerr("smooth-movement: frame capture needs SDL functions this SDL lacks\n");
 			return CR_FAILURE;
 			}
-		snapshot_path=parameters.size()==2?parameters[1]:"smooth-movement-snapshot.bmp";
+		snapshot_path=args.size()==1?args[0]:"smooth-movement-snapshot.bmp";
+		snapshot_after_ui=after;
+		snapshot_frames_left=count;
+		snapshot_frame_index=0;
 		snapshot_requested=true;
-		out.print("smooth-movement: saving the next frame to {}\n",snapshot_path);
+		out.print("smooth-movement: saving the next {} frame(s) to {}\n",count,snapshot_path);
 		return CR_OK;
 		}
 	if(parameters[0]=="trace")
@@ -600,21 +644,15 @@ command_result status_command(
 				render_settings.flip?"on":"off");
 			return CR_OK;
 			}
-		// A toggle changes the screen without changing anything DF knows, so DF will not repaint.
-		// OFF matters most: the render path stops touching tiles it painted every frame.
-		// The last mirrored frame would persist.
-		// Same flush plugin_enable(false) uses.
 		if(parameters.size()==2&&parameters[1]=="on")
 			{
 			render_settings.flip=true;
-			if(gps!=nullptr)++gps->force_full_display_count;
 			out.print("smooth-movement: sprite flipping enabled\n");
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="off")
 			{
 			render_settings.flip=false;
-			if(gps!=nullptr)++gps->force_full_display_count;
 			out.print("smooth-movement: sprite flipping disabled\n");
 			return CR_OK;
 			}
@@ -714,7 +752,6 @@ command_result status_command(
 					return CR_FAILURE;
 					}
 				render_settings.bob.amplitude=amount;
-				if(gps!=nullptr)++gps->force_full_display_count;
 				out.print("smooth-movement: bob amount {:.2f}\n",render_settings.bob.amplitude);
 				return CR_OK;
 				}
@@ -723,7 +760,6 @@ command_result status_command(
 		if(parameters.size()==2&&(parameters[1]=="on"||parameters[1]=="off"))
 			{
 			render_settings.bob.enabled=parameters[1]=="on";
-			if(gps!=nullptr)++gps->force_full_display_count;
 			out.print("smooth-movement: walk bob {}\n",render_settings.bob.enabled?"enabled":"disabled");
 			return CR_OK;
 			}
@@ -743,7 +779,7 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 		"sprite flipping: flip on|off; "
 		"walk bob: bob on|off|<amount>; bob multipliers: bobmult <horizontal> <diagonal> <vertical>; "
 		"hops per step: hops 1|2; profiling: stats [on|off|reset|detail on|off]; "
-		"frame capture: snapshot [file]; movement log: trace [count].",
+		"frame capture: snapshot [after] [count] [file]; movement log: trace [count].",
 		status_command);
 	return CR_OK;
 }
@@ -774,7 +810,6 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 		INTERPOSE_HOOK(dungeonmode_hook,render).remove();
 		reset_state();
 		clear_sdl_bindings();
-		if(gps!=nullptr)++gps->force_full_display_count;
 		}
 	is_enabled=enable;
 	out.print("smooth-movement: {}\n",enable?"enabled":"disabled");

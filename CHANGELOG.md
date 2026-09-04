@@ -2,8 +2,16 @@
 
 ## Unreleased
 
-- The plugin file is glue only. The free camera (`free_camera.h`), the view-context tracker and
-  full-redraw gate (`view_context.h`) and the SDL canvas with its fill batching (`sdl_canvas.h`)
+- Fixed: a creature resting mirrored no longer flickers between its mirrored and native
+  sprite while the game is paused. The engine redraws every map tile every frame before the
+  plugin's pass runs (measured in game: one `update_viewport_tile` call per tile per frame with
+  nothing changed), so nothing the plugin paints outlives its frame. Resting mirrored sprites
+  are now painted every frame they exist; the bookkeeping that assumed painted sprites stayed
+  on screen (the disturbed-rest check, last frame's coverage, the full-redraw gate and the
+  forced full redraws on setting changes) is gone. With flipping on, a still frame with
+  mirrored creatures costs one fill and one repaint per covered tile, a few microseconds.
+- The plugin file is glue only. The free camera (`free_camera.h`), the view-context tracker
+  (`view_context.h`) and the SDL canvas with its fill batching (`sdl_canvas.h`)
   are their own headers with unit tests, driven against scripted engines. The layers whose
   contents are followed between frames are a named list (`movement_tracked_layers`) checked
   against the layer descriptors at compile time.
@@ -11,8 +19,9 @@
   tick the buffers were already drawn at (the game showing the units sharing a tile in turn,
   blinking markers) is presentation, not a step, and is no longer read as movement. The tick
   is read where the buffers are drawn, in the map screens' render on the simulation thread.
-- `smooth-movement snapshot [file]` saves the next painted frame, before the interface goes on
-  top, as a BMP in the game folder. `smooth-movement trace [count]` appends the next detected
+- `smooth-movement snapshot [after] [count] [file]` saves the next painted frame, or `count`
+  consecutive frames numbered `file-1`, `file-2`, ..., before the interface goes on top (or after
+  the engine's UI stage with `after`) as BMPs in the game folder. `smooth-movement trace [count]` appends the next detected
   movements to `smooth-movement-trace.txt` in the game folder.
 - Profiling is built in behind a runtime switch (`smooth-movement stats on|off|reset`,
   `stats detail on|off`); off, it costs one branch per counter.

@@ -39,7 +39,7 @@ smooth-movement bob 0.15    # bob height as a fraction of a tile (default 0.10);
 smooth-movement bobmult 1 2.4 2.7  # bob multipliers for horizontal, diagonal, vertical steps
 smooth-movement hops 1      # one hop per step instead of two
 smooth-movement stats on    # count and time the plugin's frame work (stats to print, stats reset)
-smooth-movement snapshot    # save the next painted frame as a BMP in the game folder
+smooth-movement snapshot    # save the next painted frame(s) as a BMP in the game folder
 smooth-movement trace 100   # log the next 100 detected movements to smooth-movement-trace.txt
 ```
 
@@ -71,10 +71,12 @@ about what is painted; it does not check either pass against the engine's own dr
 
 In game, `smooth-movement stats on` followed by `stats` after a while prints per-frame timings;
 `stats detail on` adds timers around every engine repaint and SDL call at some cost of its own.
-`smooth-movement snapshot [file]` saves the next frame the plugin paints, before the interface
-is drawn over it, as a BMP, to check the result without a screen capture. The path is relative
-to the game's working directory, an existing file is overwritten, and the request stays armed
-until a frame with a readable map viewport comes along. `smooth-movement trace [count]` appends
+`smooth-movement snapshot [after] [count] [file]` saves the next frame the plugin paints, before
+the interface is drawn over it (or after the engine's UI stage with `after`), as a BMP, to check
+the result without a screen capture; `count` saves that many consecutive frames as `file-1`,
+`file-2`, ... The path is relative to the game's working directory, an existing file is
+overwritten, the request stays armed until a frame with a readable map viewport comes along,
+and a new request is refused while one is armed. `smooth-movement trace [count]` appends
 the next `count` detected movements (viewport, layer, texpos, from, to, resulting facing and
 whether the game was paused) to `smooth-movement-trace.txt` in the same directory.
 

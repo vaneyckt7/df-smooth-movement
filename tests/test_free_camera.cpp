@@ -85,7 +85,6 @@ void test_disabled_does_nothing()
 	engine.landed_dx=1;
 	step(camera,engine,engine.frame());
 	assert(camera.glide_x(32.0)==0&&camera.glide_y(32.0)==0);
-	assert(!camera.rejoined_grid(false));
 }
 
 void test_scroll_glides_once_landed_then_decays()
@@ -105,24 +104,16 @@ void test_scroll_glides_once_landed_then_decays()
 	step(camera,engine,engine.frame(0));
 	assert(camera.glide_x(32.0)==32);
 	assert(camera.glide_y(32.0)==0);
-	assert(!camera.rejoined_grid(true));
 	int32_t previous=32;
 	int frames=0;
-	bool rejoined=false;
 	while(camera.glide_x(32.0)!=0&&frames<100)
 		{
 		step(camera,engine,engine.frame(16));
 		assert(camera.glide_x(32.0)<=previous);
 		previous=camera.glide_x(32.0);
 		++frames;
-		// The frame the offset reaches zero asks for exactly one cleanup redraw.
-		const bool now=camera.rejoined_grid(camera.glide_x(32.0)!=0);
-		assert(now==(camera.glide_x(32.0)==0));
-		rejoined=rejoined||now;
 		}
 	assert(frames>2&&frames<20);   // tau 35 ms: gone within a few hundred ms
-	assert(rejoined);
-	assert(!camera.rejoined_grid(false));
 	assert(engine.scroll_writes.empty());
 }
 

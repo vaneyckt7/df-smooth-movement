@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// The view-context tracker (what resets the animation context, what only stales the coverage)
-// and the full-redraw gate.
+// The view-context tracker: what resets the animation context and what is only a pan.
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -37,20 +36,20 @@ void test_first_frame_resets_once()
 	int viewport=0;
 	assert(tracker.revision()==0);
 	const view_context_changest first=tracker.observe(&viewport,base_signature(),5,7);
-	assert(first.reset&&first.panned&&first.coverage_stale());
+	assert(first.reset&&first.panned);
 	assert(tracker.revision()==1);
 	const view_context_changest same=tracker.observe(&viewport,base_signature(),5,7);
-	assert(!same.reset&&!same.panned&&!same.coverage_stale());
+	assert(!same.reset&&!same.panned);
 	assert(tracker.revision()==1);
 }
 
-void test_pan_stales_coverage_without_reset()
+void test_pan_is_reported_without_reset()
 {
 	view_context_trackerst tracker;
 	int viewport=0;
 	tracker.observe(&viewport,base_signature(),5,7);
 	const view_context_changest panned_x=tracker.observe(&viewport,base_signature(),6,7);
-	assert(!panned_x.reset&&panned_x.panned&&panned_x.coverage_stale());
+	assert(!panned_x.reset&&panned_x.panned);
 	const view_context_changest panned_y=tracker.observe(&viewport,base_signature(),6,9);
 	assert(!panned_y.reset&&panned_y.panned);
 	const view_context_changest still=tracker.observe(&viewport,base_signature(),6,9);
@@ -94,35 +93,13 @@ void test_new_viewport_object_resets()
 	assert(tracker.revision()==2);
 }
 
-void test_full_redraw_gate()
-{
-	full_redraw_gatest gate;
-	// The first observation counts as a redraw: the plugin was just enabled.
-	assert(gate.observe(3));
-	assert(gate.observe(3));
-	assert(!gate.observe(3));
-	assert(!gate.observe(3));
-	// A counter change paints that frame and the next, then stops.
-	assert(gate.observe(4));
-	assert(gate.observe(4));
-	assert(!gate.observe(4));
-	// Another change inside the window restarts it rather than stacking.
-	assert(gate.observe(5));
-	assert(gate.observe(6));
-	assert(gate.observe(6));
-	assert(!gate.observe(6));
-	// Wraparound of the int16 counter is still a change.
-	assert(gate.observe(int16_t(-32768)));
-}
-
 } // namespace
 
 int main()
 {
 	test_first_frame_resets_once();
-	test_pan_stales_coverage_without_reset();
+	test_pan_is_reported_without_reset();
 	test_every_signature_field_resets();
 	test_new_viewport_object_resets();
-	test_full_redraw_gate();
 	return 0;
 }

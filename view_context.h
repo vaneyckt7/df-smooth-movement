@@ -46,11 +46,6 @@ struct view_context_changest
 {
 	bool reset=false;      // the signature (or the main viewport object) changed
 	bool panned=false;     // the map scroll changed; also true on a reset and on the first frame
-
-	constexpr bool coverage_stale() const
-		{
-		return reset||panned;
-		}
 };
 
 class view_context_trackerst
@@ -87,30 +82,6 @@ class view_context_trackerst
 			pan_y=current_pan_y;
 			has_pan=true;
 			return change;
-			}
-};
-
-// A full engine redraw (gps->force_full_display_count advancing) wipes the sprites resting
-// mirrored on the grid. Whether the engine acts on the counter before or after the hook runs
-// in that frame is not known, so the pass paints the frame the counter changed on and the next.
-class full_redraw_gatest
-{
-	int16_t seen=0;
-	bool has_seen=false;
-	int32_t frames_left=0;
-
-	public:
-		static constexpr int32_t frames_after_redraw=2;
-
-		// True when this frame must be painted because of a full redraw.
-		bool observe(int16_t full_display_count)
-			{
-			if(!has_seen||full_display_count!=seen)frames_left=frames_after_redraw;
-			seen=full_display_count;
-			has_seen=true;
-			if(frames_left==0)return false;
-			--frames_left;
-			return true;
 			}
 };
 

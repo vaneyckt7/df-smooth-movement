@@ -55,7 +55,6 @@ class free_camerast
 	double drag_anchor_vy=0.0;
 	int32_t drag_anchor_mx=0;    // precise mouse at drag start, pixels
 	int32_t drag_anchor_my=0;
-	bool was_offset=false;       // edge-detects offset->0 for one cleanup redraw
 	int32_t prev_wx=0;           // window-scroll observation baseline
 	int32_t prev_wy=0;
 	bool has_prev=false;
@@ -236,7 +235,6 @@ class free_camerast
 			rest_x=0.0;
 			rest_y=0.0;
 			has_prev=false;   // fresh observation baseline; no phantom scroll on re-enable
-			// was_offset stays: the render path issues one cleanup redraw if we were mid-offset.
 			}
 
 		// Persistent offset in tiles, positive = view sits west/north of the window position.
@@ -321,15 +319,6 @@ class free_camerast
 		int32_t glide_y(double tile) const
 			{
 			return int32_t(std::lround(transient_y+rest_y*tile));
-			}
-
-		// True once, on the frame the offset returns to zero: the last shifted frame is still
-		// on screen and one engine redraw must replace it.
-		bool rejoined_grid(bool offset_now)
-			{
-			const bool rejoined=!offset_now&&was_offset;
-			was_offset=offset_now;
-			return rejoined;
 			}
 };
 

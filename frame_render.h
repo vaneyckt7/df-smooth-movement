@@ -94,11 +94,10 @@ class frame_rendererst
 	sprite_collectorst collector;
 	std::vector<viewport_renderst<Viewport>> renders;
 	size_t render_count=0;
-	// This frame's tiles, last frame's, and their union: the union is blacked out and
-	// repainted, since last frame's sprites are still on screen where nothing else paints.
+	// The engine redraws every map tile every frame before the pass runs, so nothing painted
+	// here outlives its frame: the covered tiles are blacked out and repainted each frame.
 	tile_coveragest coverage;
-	tile_coveragest previous_coverage;
-	tile_coveragest redraw_coverage;
+	tile_coveragest glide_coverage;
 
 	template<typename Canvas>
 	void draw_proxy(Canvas &canvas,const sprite_proxyst &proxy) const
@@ -183,42 +182,17 @@ class frame_rendererst
 			return settings;
 			}
 
-		// Last frame's sprites are gone from the screen (the engine repainted everything).
-		void forget_coverage()
-			{
-			previous_coverage.clear();
-			}
-
-		// A frame without movement still needs painting when the engine repainted a tile that a
-		// resting mirrored sprite covers: the sprite stays on screen until then. The reach is a
-		// 5x3 box around the anchor: the fragments to either side plus the largest mirror shift,
-		// and the row above for the bob. Levels are checked at the same tile, so a level whose
-		// grid differs from the anchor's is skipped.
+		// Whether a frame without movement still has sprites to paint: with flipping on, a
+		// creature resting with its back to its native sprite is drawn mirrored every frame,
+		// since the engine's own draw of it comes back each frame.
 		template<typename Manager>
-		bool resting_sprites_disturbed(
+		bool has_resting_sprites(
 			const std::vector<Viewport *> &viewports,
-			const Manager &manager)
+			const Manager &manager) const
 			{
 			if(!settings.flip)return false;
-			constexpr int32_t reach_x=2;
-			constexpr int32_t reach_y=1;
 			for(const Viewport *vp:viewports)
-				{
-				const visual_gridst grid{vp->dim_x,vp->dim_y};
-				for(const int32_t index:manager.mirrored_tiles(vp))
-					{
-					const int32_t x=index/vp->dim_y;
-					const int32_t y=index%vp->dim_y;
-					for(int32_t tx=x-reach_x;tx<=x+reach_x;++tx)
-						for(int32_t ty=y-reach_y;ty<=y+reach_y;++ty)
-							{
-							if(!grid.contains(tx,ty))continue;
-							for(const Viewport *level:viewports)
-								if(level->dim_x==vp->dim_x&&level->dim_y==vp->dim_y&&
-									engine_repainted_tile(level,grid.index(tx,ty)))return true;
-							}
-					}
-				}
+				if(manager.has_mirrored_facing(vp))return true;
 			return false;
 			}
 
@@ -278,23 +252,18 @@ class frame_rendererst
 				canvas.set_clip(map_rect);
 				canvas.fill_black(map_rect);
 				canvas.offset_origin(glide_x,glide_y);
-				redraw_coverage.reset(main_grid);
+				glide_coverage.reset(main_grid);
 				for(int32_t x=main_view.clip_x0;x<=main_view.clip_x1;++x)
 					for(int32_t y=main_view.clip_y0;y<=main_view.clip_y1;++y)
-						redraw_coverage.mark(x,y);
-				draw_levels(canvas,redraw_coverage);
+						glide_coverage.mark(x,y);
+				draw_levels(canvas,glide_coverage);
 				canvas.offset_origin(-glide_x,-glide_y);
 				canvas.clear_clip();
-				// Everything was repainted; per-tile bookkeeping restarts after the glide.
-				previous_coverage.clear();
 				return;
 				}
 
-			redraw_coverage.reset(main_grid);
-			redraw_coverage.merge(coverage);
-			redraw_coverage.merge(previous_coverage);
 			const int32_t tile_size=tile_pixel_size(zoom);
-			redraw_coverage.for_each([&](int32_t x,int32_t y)
+			coverage.for_each([&](int32_t x,int32_t y)
 				{
 				if(!main_view.inside_clip(x,y))return;
 				canvas.fill_black({
@@ -303,8 +272,7 @@ class frame_rendererst
 					tile_size,
 					tile_size});
 				});
-			draw_levels(canvas,redraw_coverage);
-			std::swap(coverage,previous_coverage);
+			draw_levels(canvas,coverage);
 			}
 };
 

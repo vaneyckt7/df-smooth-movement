@@ -42,7 +42,7 @@ class frame_statisticst
 		counter fills{0};
 		counter glides{0};
 		counter moving{0};
-		counter disturbed{0};
+		counter resting{0};
 
 		static uint64_t now_us()
 			{
@@ -70,7 +70,7 @@ class frame_statisticst
 			{
 			for(counter *c:{&frames,&rendered,&sync_us,&collect_us,&render_us,&engine_us,
 				&sprite_us,&fill_us,&total_us,&max_us,&tile_repaints,&blank_repaints,
-				&main_repaints,&occluded_repaints,&sprites,&fills,&glides,&moving,&disturbed})
+				&main_repaints,&occluded_repaints,&sprites,&fills,&glides,&moving,&resting})
 				c->store(0);
 			}
 
@@ -87,8 +87,8 @@ class frame_statisticst
 			emit("frames %llu (rendered %llu, glides %llu), avg %.1f us/frame, max %llu us\n",
 				(unsigned long long)f,(unsigned long long)r,(unsigned long long)glides.load(),
 				per(total_us,f),(unsigned long long)max_us.load());
-			emit("  moving frames %llu, disturbed-rest frames %llu\n",
-				(unsigned long long)moving.load(),(unsigned long long)disturbed.load());
+			emit("  moving frames %llu, resting-sprite frames %llu\n",
+				(unsigned long long)moving.load(),(unsigned long long)resting.load());
 			emit("  sync %.1f us/frame\n",per(sync_us,f));
 			emit("  render %.1f us/rendered frame: collect %.1f, inside engine repaints %.1f, sprite draws %.1f, fills %.1f\n",
 				per(render_us,r),per(collect_us,r),per(engine_us,r),per(sprite_us,r),per(fill_us,r));
