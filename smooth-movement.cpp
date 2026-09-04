@@ -110,56 +110,86 @@ struct sdl_apist
 		}
 };
 
-sdl_apist sdl;
-std::vector<SDL_Rect> fill_scratch;
-
-visual_animation_managerst animation_manager;
-frame_statisticst frame_stats;
-frame_rendererst<df::graphic_viewportst> frame_renderer;
-// Sprite flipping and walk bob, both off by default: `flip on`, `bob on`.
-render_settingst &render_settings=frame_renderer.get_settings();
-view_context_trackerst view_context;
-free_camerast camera;
-
-// The console thread arms a capture; the render thread saves and disarms it. The console
-// refuses a new request while one is armed, so the path is never written while it is read.
-std::atomic<bool> snapshot_requested{false};
-int32_t snapshot_frames_left=0;
-int32_t snapshot_frame_index=0;
-// Diagnostics: capture after the engine's UI stage instead of before it.
-bool snapshot_after_ui=false;
-// Diagnostics: movements left to print before the trace switches itself off.
-int32_t trace_budget=0;
+// The console arms a capture; the render thread saves and disarms it. The console refuses a
+// new request while one is armed, so the path is never written while it is read.
+struct snapshot_requestst
+{
+	std::atomic<bool> armed{false};
+	std::string path;
+	int32_t frames=1;
+	// Diagnostics: capture after the engine's UI stage instead of before it.
+	bool after_ui=false;
+};
 
 // The simulation thread fills the viewport buffers inside the map viewscreens' render, then
 // runs on while the render thread paints them, so the frame counter it shows is read there,
 // not at paint time when the counter may already have moved on. Draw serial in the high half,
 // tick in the low half, in one word so the paint side reads both as they were stored.
-std::atomic<uint64_t> drawn_buffers{0};
-// Set while a map viewscreen's render, which fills the buffers, is running.
-std::atomic<bool> buffers_drawing{false};
-uint32_t draw_serial=0;
-uint32_t painted_draw_serial=0;
-// Tick of the buffers about to be painted, or -1 when no draw was seen since the last paint.
-int64_t frame_simulation_tick=-1;
-
-void note_buffers_drawn()
+struct buffer_drawst
 {
-	if(world==nullptr)return;
-	++draw_serial;
-	drawn_buffers.store(
-		(uint64_t(draw_serial)<<32)|uint32_t(world->frame_counter),std::memory_order_release);
-}
+	std::atomic<uint64_t> drawn{0};
+	// Set while a map viewscreen's render, which fills the buffers, is running.
+	std::atomic<bool> drawing{false};
+	uint32_t serial=0;   // simulation thread only
 
-int64_t take_drawn_tick()
+	void note_drawn()
+		{
+		if(world==nullptr)return;
+		++serial;
+		drawn.store((uint64_t(serial)<<32)|uint32_t(world->frame_counter),std::memory_order_release);
+		}
+	uint32_t drawn_serial() const
+		{
+		return uint32_t(drawn.load(std::memory_order_acquire)>>32);
+		}
+};
+
+// The render thread's state, advanced by the update_all hook every frame and replaced whole
+// by reset_state. Console commands adjust settings inside it from the core thread while the
+// hook keeps running (the camera's, the animation time step, the render settings); those
+// writes are unsynchronised, so a frame may see a half-applied change, never a freed one.
+struct render_statest
 {
-	const uint64_t drawn=drawn_buffers.load(std::memory_order_acquire);
-	const uint32_t serial=uint32_t(drawn>>32);
-	if(serial==painted_draw_serial)return -1;
-	painted_draw_serial=serial;
-	return int64_t(int32_t(uint32_t(drawn)));
-}
-std::string snapshot_path;
+	visual_animation_managerst animation_manager;
+	frame_rendererst<df::graphic_viewportst> frame_renderer;
+	view_context_trackerst view_context;
+	free_camerast camera;
+	std::vector<SDL_Rect> fill_scratch;
+	uint32_t painted_draw_serial=0;
+	// Tick of the buffers about to be painted, or -1 when no draw was seen since the last paint.
+	int64_t simulation_tick=-1;
+	int32_t snapshot_frames_left=0;
+	int32_t snapshot_frame_index=0;
+
+	// The tick of a draw not yet painted, or -1.
+	int64_t take_drawn_tick(const buffer_drawst &draws)
+		{
+		const uint64_t drawn=draws.drawn.load(std::memory_order_acquire);
+		const uint32_t serial=uint32_t(drawn>>32);
+		if(serial==painted_draw_serial)return -1;
+		painted_draw_serial=serial;
+		return int64_t(int32_t(uint32_t(drawn)));
+		}
+};
+
+// The plugin's state, by owner. Console commands run on the core thread, which suspends the
+// simulation thread but not the render thread.
+struct plugin_statest
+{
+	// Bound at enable time before the hooks go in; read by the render thread after.
+	sdl_apist sdl;
+	// Counted by the render thread; switched, read and reset by the console.
+	frame_statisticst stats;
+	// Console-armed, render-served.
+	snapshot_requestst snapshot;
+	int32_t trace_budget=0;   // console-set; movements left to log before the trace stops
+	// Simulation thread writes, render thread reads.
+	buffer_drawst draws;
+	// Render thread's own; see above for what the console reaches into.
+	render_statest render;
+};
+
+plugin_statest state;
 
 using canvasst=sdl_canvasst<df::renderer_2d_base,df::graphic_viewportst,sdl_apist>;
 
@@ -237,12 +267,12 @@ viewport_visual_animation_inputst animation_input(const df::graphic_viewportst *
 		vp,
 		vp->dim_x,
 		vp->dim_y,
-		view_context.revision(),
+		state.render.view_context.revision(),
 		table::current(vp),
 		table::previous(vp),
 		window_x?*window_x:0,
 		window_y?*window_y:0,
-		frame_simulation_tick
+		state.render.simulation_tick
 		};
 }
 
@@ -271,94 +301,103 @@ std::vector<df::graphic_viewportst *> active_viewports()
 // on request only. Consecutive captures are numbered file-1, file-2, ...
 void save_snapshot(df::renderer_2d_base *renderer)
 {
-	const bool last=--snapshot_frames_left<=0;
-	++snapshot_frame_index;
-	std::string path=snapshot_path;
-	if(snapshot_frame_index>1||!last)
+	render_statest &r=state.render;
+	if(r.snapshot_frames_left<=0)
+		{
+		r.snapshot_frames_left=state.snapshot.frames;
+		r.snapshot_frame_index=0;
+		}
+	const bool last=--r.snapshot_frames_left<=0;
+	++r.snapshot_frame_index;
+	std::string path=state.snapshot.path;
+	if(r.snapshot_frame_index>1||!last)
 		{
 		// Number the file name, not a directory: the last dot after the last separator.
 		const size_t dot=path.rfind('.');
 		const size_t sep=path.find_last_of("/\\");
 		const size_t at=dot==std::string::npos||(sep!=std::string::npos&&dot<sep)?path.size():dot;
-		path.insert(at,"-"+std::to_string(snapshot_frame_index));
+		path.insert(at,"-"+std::to_string(r.snapshot_frame_index));
 		}
 	// Disarmed only once the path has been read: the console may then write a new one.
-	struct disarmst{bool last;~disarmst(){if(last)snapshot_requested=false;}} disarm{last};
-	if(!sdl.can_snapshot())return;
+	struct disarmst{bool last;~disarmst(){if(last)state.snapshot.armed=false;}} disarm{last};
+	if(!state.sdl.can_snapshot())return;
 	SDL_Renderer *sdl_renderer=static_cast<SDL_Renderer *>(renderer->sdl_renderer);
 	int w=0,h=0;
-	if(sdl.get_renderer_output_size(sdl_renderer,&w,&h)!=0||w<=0||h<=0)
+	if(state.sdl.get_renderer_output_size(sdl_renderer,&w,&h)!=0||w<=0||h<=0)
 		{
 		Core::printerr("smooth-movement: snapshot: no renderer output size\n");
 		return;
 		}
-	SDL_Surface *surface=sdl.create_rgb_surface_with_format(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
+	SDL_Surface *surface=state.sdl.create_rgb_surface_with_format(0,w,h,32,SDL_PIXELFORMAT_ARGB8888);
 	if(surface==nullptr)
 		{
 		Core::printerr("smooth-movement: snapshot: surface allocation failed\n");
 		return;
 		}
-	bool ok=sdl.render_read_pixels(
+	bool ok=state.sdl.render_read_pixels(
 		sdl_renderer,nullptr,surface->format->format,surface->pixels,surface->pitch)==0;
 	if(ok)
 		{
-		SDL_RWops *file=sdl.rw_from_file(path.c_str(),"wb");
-		ok=file!=nullptr&&sdl.save_bmp_rw(surface,file,1)==0;
+		SDL_RWops *file=state.sdl.rw_from_file(path.c_str(),"wb");
+		ok=file!=nullptr&&state.sdl.save_bmp_rw(surface,file,1)==0;
 		}
-	sdl.free_surface(surface);
+	state.sdl.free_surface(surface);
 	if(ok)Core::print("smooth-movement: snapshot saved to {} ({}x{})\n",path,w,h);
 	else Core::printerr("smooth-movement: snapshot failed\n");
 }
 
 void render_interpolated_world(df::renderer_2d_base *renderer)
 {
+	render_statest &r=state.render;
+	frame_statisticst &stats=state.stats;
 	df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
 	const std::vector<df::graphic_viewportst *> viewports=active_viewports();
-	const uint64_t t0=frame_stats.clock();
-	frame_stats.add(frame_stats.frames);
+	const uint64_t t0=stats.clock();
+	stats.add(stats.frames);
 	struct frame_timerst
 	{
+		frame_statisticst &stats;
 		uint64_t t0;
 		~frame_timerst()
 			{
 			if(!t0)return;
-			const uint64_t t=frame_stats.now_us()-t0;
-			frame_stats.add(frame_stats.total_us,t);
-			frame_stats.note_max(t);
+			const uint64_t t=stats.now_us()-t0;
+			stats.add(stats.total_us,t);
+			stats.note_max(t);
 			}
-	} timer{t0};
+	} timer{stats,t0};
 
 	if(vp!=nullptr)
 		{
-		const view_context_changest change=view_context.observe(
+		const view_context_changest change=r.view_context.observe(
 			vp,view_signature(renderer,vp),window_x?*window_x:0,window_y?*window_y:0);
-		if(change.reset)camera.cancel_transients();
+		if(change.reset)r.camera.cancel_transients();
 		}
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
-	const bool drawing_at_start=buffers_drawing.load(std::memory_order_acquire);
-	frame_simulation_tick=take_drawn_tick();
-	if(frame_simulation_tick>=0)frame_stats.add(frame_stats.drawn);
-	animation_manager.begin_frame(now_ms);
+	const bool drawing_at_start=state.draws.drawing.load(std::memory_order_acquire);
+	r.simulation_tick=r.take_drawn_tick(state.draws);
+	if(r.simulation_tick>=0)stats.add(stats.drawn);
+	r.animation_manager.begin_frame(now_ms);
 	for(const df::graphic_viewportst *viewport:viewports)
-		animation_manager.synchronize_viewport(animation_input(viewport));
-	animation_manager.end_frame();
-	if(t0)frame_stats.add(frame_stats.sync_us,frame_stats.now_us()-t0);
-	if(trace_budget>0)
+		r.animation_manager.synchronize_viewport(animation_input(viewport));
+	r.animation_manager.end_frame();
+	if(t0)stats.add(stats.sync_us,stats.now_us()-t0);
+	if(state.trace_budget>0)
 		{
 		// Opened only on a frame that has something to log.
 		std::ofstream trace;
 		for(const df::graphic_viewportst *viewport:viewports)
 			{
-			for(const visual_movementst &m:animation_manager.movements(viewport))
+			for(const visual_movementst &m:r.animation_manager.movements(viewport))
 				{
-				if(m.start_time_ms!=now_ms||trace_budget<=0)continue;
-				--trace_budget;
+				if(m.start_time_ms!=now_ms||state.trace_budget<=0)continue;
+				--state.trace_budget;
 				if(!trace.is_open())trace.open("smooth-movement-trace.txt",std::ios::app);
 				trace<<"t="<<now_ms<<" paused="<<(pause_state!=nullptr&&*pause_state)
 					<<" vp="<<(viewport==vp?"main":"other")<<" layer="<<int(m.layer)
 					<<" texpos="<<m.texpos<<" from ("<<m.source_x<<","<<m.source_y
 					<<") to ("<<m.target_x<<","<<m.target_y<<") facing="
-					<<int(animation_manager.get_facing(viewport,m.target_x,m.target_y))<<"\n";
+					<<int(r.animation_manager.get_facing(viewport,m.target_x,m.target_y))<<"\n";
 				}
 			}
 		}
@@ -373,39 +412,39 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	camera_frame.mouse_x=gps->precise_mouse_x;
 	camera_frame.mouse_y=gps->precise_mouse_y;
 	camera_frame.tile=cam_tile;
-	camera_frame.delta_ms=animation_manager.get_frame_delta_ms();
-	camera.update(
+	camera_frame.delta_ms=r.animation_manager.get_frame_delta_ms();
+	r.camera.update(
 		camera_frame,
 		[vp](int32_t dx,int32_t dy){return background_match_ratio(vp,dx,dy);},
 		scroll_window);
-	const int32_t glide_x=camera.glide_x(cam_tile);
-	const int32_t glide_y=camera.glide_y(cam_tile);
+	const int32_t glide_x=r.camera.glide_x(cam_tile);
+	const int32_t glide_y=r.camera.glide_y(cam_tile);
 	const bool glide=glide_x!=0||glide_y!=0;
 	// The engine redraws every map tile every frame before this hook runs (measured: one
 	// update_viewport_tile call per tile per frame with nothing changed), so nothing painted
 	// here outlives its frame; frame_render.h decides what a frame has to show.
-	const frame_paintst paint=frame_renderer.frame_paint(glide,viewports,animation_manager);
-	if(paint==frame_paintst::moving)frame_stats.add(frame_stats.moving);
-	if(paint==frame_paintst::resting)frame_stats.add(frame_stats.resting);
+	const frame_paintst paint=r.frame_renderer.frame_paint(glide,viewports,r.animation_manager);
+	if(paint==frame_paintst::moving)stats.add(stats.moving);
+	if(paint==frame_paintst::resting)stats.add(stats.resting);
 	if(paint!=frame_paintst::nothing)
 		{
-		frame_stats.add(frame_stats.rendered);
-		const uint64_t t1=frame_stats.clock();
+		stats.add(stats.rendered);
+		const uint64_t t1=stats.clock();
 		{
-		canvasst canvas(renderer,sdl,vp,frame_stats,fill_scratch);
-		frame_renderer.render(canvas,viewports,vp,animation_manager,glide_x,glide_y);
+		canvasst canvas(renderer,state.sdl,vp,stats,r.fill_scratch);
+		r.frame_renderer.render(canvas,viewports,vp,r.animation_manager,glide_x,glide_y);
 		}
-		if(t1)frame_stats.add(frame_stats.render_us,frame_stats.now_us()-t1);
+		if(t1)stats.add(stats.render_us,stats.now_us()-t1);
 		}
-	if(snapshot_requested&&!snapshot_after_ui)save_snapshot(renderer);
+	if(state.snapshot.armed&&!state.snapshot.after_ui)save_snapshot(renderer);
 	// The pass reads the viewport buffers and blanks parts of them around each engine repaint,
 	// which is sound only while the simulation thread is not drawing into them. It draws
 	// them in the map viewscreens' render; a draw in progress at either end of this hook, or
 	// one that started and finished inside it, means the two overlap. Counted so `stats` can
 	// show it never happens.
-	if(drawing_at_start||buffers_drawing.load(std::memory_order_acquire)||
-		uint32_t(drawn_buffers.load(std::memory_order_acquire)>>32)!=painted_draw_serial)
-		frame_stats.add(frame_stats.overlapped_draws);
+	if(drawing_at_start||state.draws.drawing.load(std::memory_order_acquire)||
+		state.draws.drawn_serial()!=r.painted_draw_serial)
+		stats.add(stats.overlapped_draws);
 }
 
 struct renderer_hook : df::renderer_2d_base
@@ -422,7 +461,7 @@ void renderer_hook::interpose_fn_update_all()
 	render_interpolated_world(this);
 	INTERPOSE_NEXT(update_all)();
 	// After the UI stage, only once the same readability check the pre-UI capture passed.
-	if(snapshot_requested&&snapshot_after_ui&&viewport_readable(gps?gps->main_viewport:nullptr))
+	if(state.snapshot.armed&&state.snapshot.after_ui&&viewport_readable(gps?gps->main_viewport:nullptr))
 		save_snapshot(this);
 }
 
@@ -432,10 +471,10 @@ struct dwarfmode_hook : df::viewscreen_dwarfmodest
 	typedef df::viewscreen_dwarfmodest interpose_base;
 	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
 		{
-		note_buffers_drawn();
-		buffers_drawing.store(true,std::memory_order_release);
+		state.draws.note_drawn();
+		state.draws.drawing.store(true,std::memory_order_release);
 		INTERPOSE_NEXT(render)(curtick);
-		buffers_drawing.store(false,std::memory_order_release);
+		state.draws.drawing.store(false,std::memory_order_release);
 		}
 };
 
@@ -444,10 +483,10 @@ struct dungeonmode_hook : df::viewscreen_dungeonmodest
 	typedef df::viewscreen_dungeonmodest interpose_base;
 	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
 		{
-		note_buffers_drawn();
-		buffers_drawing.store(true,std::memory_order_release);
+		state.draws.note_drawn();
+		state.draws.drawing.store(true,std::memory_order_release);
 		INTERPOSE_NEXT(render)(curtick);
-		buffers_drawing.store(false,std::memory_order_release);
+		state.draws.drawing.store(false,std::memory_order_release);
 		}
 };
 
@@ -456,7 +495,7 @@ IMPLEMENT_VMETHOD_INTERPOSE(dungeonmode_hook,render);
 
 void clear_sdl_bindings()
 {
-	sdl=sdl_apist();
+	state.sdl=sdl_apist();
 }
 
 bool load_sdl(color_ostream &out)
@@ -464,14 +503,14 @@ bool load_sdl(color_ostream &out)
 	clear_sdl_bindings();
 	DFLibrary *sdl_handle=DFSDL::obtain_library_handle();
 	#define bind(name,target) \
-		sdl.target=reinterpret_cast<decltype(sdl.target)>(LookupPlugin(sdl_handle,#name)); \
-		if(sdl.target==nullptr) { \
+		state.sdl.target=reinterpret_cast<decltype(state.sdl.target)>(LookupPlugin(sdl_handle,#name)); \
+		if(state.sdl.target==nullptr) { \
 			out.printerr("smooth-movement: SDL2 function unavailable: " #name "\n"); \
 			clear_sdl_bindings(); \
 			return false; \
 		}
 	#define bind_optional(name,target) \
-		sdl.target=reinterpret_cast<decltype(sdl.target)>(LookupPlugin(sdl_handle,#name));
+		state.sdl.target=reinterpret_cast<decltype(state.sdl.target)>(LookupPlugin(sdl_handle,#name));
 	bind(SDL_RenderCopyF,render_copy_f);
 	bind(SDL_RenderCopyExF,render_copy_ex_f);
 	bind(SDL_RenderFillRects,render_fill_rects);
@@ -489,23 +528,24 @@ bool load_sdl(color_ostream &out)
 	return true;
 }
 
+// Called with the hooks off. Removing a hook does not wait for a hook body already running
+// on the render thread, so on disable the reset can race with at most that last frame.
 void reset_state()
 {
-	animation_manager=visual_animation_managerst();
-	frame_renderer=frame_rendererst<df::graphic_viewportst>();
-	view_context=view_context_trackerst();
-	camera=free_camerast();
-	snapshot_requested=false;
-	snapshot_frames_left=0;
-	trace_budget=0;
-	painted_draw_serial=uint32_t(drawn_buffers.load(std::memory_order_acquire)>>32);
-	frame_simulation_tick=-1;
+	state.render=render_statest();
+	state.render.painted_draw_serial=state.draws.drawn_serial();
+	state.snapshot.armed=false;
+	state.trace_budget=0;
 }
 
 command_result status_command(
 	color_ostream &out,
 	std::vector<std::string> &parameters)
 {
+	visual_animation_managerst &animation_manager=state.render.animation_manager;
+	free_camerast &camera=state.render.camera;
+	// Sprite flipping and walk bob, both off by default: `flip on`, `bob on`.
+	render_settingst &settings=state.render.frame_renderer.get_settings();
 	if(parameters.empty())
 		{
 		out.print(
@@ -515,13 +555,13 @@ command_result status_command(
 		out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
 			camera.is_enabled()?"on":"off",-camera.rest_offset_x(),-camera.rest_offset_y());
 		out.print("sprite flipping: {}\n",
-			render_settings.flip?"on":"off");
+			settings.flip?"on":"off");
 		out.print("time step: {} ms\n",animation_manager.base_duration_ms());
 		out.print("walk bob: {}\n",
-			render_settings.bob.enabled?"on":"off");
+			settings.bob.enabled?"on":"off");
 		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-			render_settings.bob.horizontal_mult,render_settings.bob.diagonal_mult,render_settings.bob.vertical_mult);
-		out.print("hops per step: {}\n",render_settings.bob.hops);
+			settings.bob.horizontal_mult,settings.bob.diagonal_mult,settings.bob.vertical_mult);
+		out.print("hops per step: {}\n",settings.bob.hops);
 		return CR_OK;
 		}
 	if(parameters[0]=="camera")
@@ -591,7 +631,7 @@ command_result status_command(
 			args.erase(args.begin());
 			}
 		if(args.size()>1)return CR_WRONG_USAGE;
-		if(snapshot_requested)
+		if(state.snapshot.armed)
 			{
 			out.printerr("smooth-movement: a capture is still armed; wait for it to finish\n");
 			return CR_FAILURE;
@@ -601,17 +641,16 @@ command_result status_command(
 			out.printerr("smooth-movement: enable the plugin first\n");
 			return CR_FAILURE;
 			}
-		if(!sdl.can_snapshot())
+		if(!state.sdl.can_snapshot())
 			{
 			out.printerr("smooth-movement: frame capture needs SDL functions this SDL lacks\n");
 			return CR_FAILURE;
 			}
-		snapshot_path=args.size()==1?args[0]:"smooth-movement-snapshot.bmp";
-		snapshot_after_ui=after;
-		snapshot_frames_left=count;
-		snapshot_frame_index=0;
-		snapshot_requested=true;
-		out.print("smooth-movement: saving the next {} frame(s) to {}\n",count,snapshot_path);
+		state.snapshot.path=args.size()==1?args[0]:"smooth-movement-snapshot.bmp";
+		state.snapshot.after_ui=after;
+		state.snapshot.frames=count;
+		state.snapshot.armed=true;
+		out.print("smooth-movement: saving the next {} frame(s) to {}\n",count,state.snapshot.path);
 		return CR_OK;
 		}
 	if(parameters[0]=="trace")
@@ -623,28 +662,28 @@ command_result status_command(
 			try{count=std::stoi(parameters[1]);}
 			catch(const std::exception &){return CR_WRONG_USAGE;}
 			}
-		trace_budget=count;
+		state.trace_budget=count;
 		out.print("smooth-movement: tracing the next {} movements\n",count);
 		return CR_OK;
 		}
 	if(parameters[0]=="stats")
 		{
 		// stats | stats on|off | stats reset | stats detail on|off
-		if(parameters.size()==1){out.print("{}",frame_stats.report());return CR_OK;}
-		if(parameters[1]=="reset"){frame_stats.reset();return CR_OK;}
+		if(parameters.size()==1){out.print("{}",state.stats.report());return CR_OK;}
+		if(parameters[1]=="reset"){state.stats.reset();return CR_OK;}
 		if(parameters[1]=="on"||parameters[1]=="off")
 			{
-			frame_stats.enabled=parameters[1]=="on";
-			frame_stats.reset();
-			out.print("smooth-movement: stats {}\n",frame_stats.enabled?"on":"off");
+			state.stats.enabled=parameters[1]=="on";
+			state.stats.reset();
+			out.print("smooth-movement: stats {}\n",state.stats.enabled?"on":"off");
 			return CR_OK;
 			}
 		if(parameters[1]=="detail"&&parameters.size()==3&&
 			(parameters[2]=="on"||parameters[2]=="off"))
 			{
-			frame_stats.detail=parameters[2]=="on";
-			frame_stats.reset();
-			out.print("smooth-movement: stats detail {}\n",frame_stats.detail?"on":"off");
+			state.stats.detail=parameters[2]=="on";
+			state.stats.reset();
+			out.print("smooth-movement: stats detail {}\n",state.stats.detail?"on":"off");
 			return CR_OK;
 			}
 		return CR_WRONG_USAGE;
@@ -654,18 +693,18 @@ command_result status_command(
 		if(parameters.size()==1)
 			{
 			out.print("sprite flipping: {}\n",
-				render_settings.flip?"on":"off");
+				settings.flip?"on":"off");
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="on")
 			{
-			render_settings.flip=true;
+			settings.flip=true;
 			out.print("smooth-movement: sprite flipping enabled\n");
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="off")
 			{
-			render_settings.flip=false;
+			settings.flip=false;
 			out.print("smooth-movement: sprite flipping disabled\n");
 			return CR_OK;
 			}
@@ -696,13 +735,13 @@ command_result status_command(
 		{
 		if(parameters.size()==1)
 			{
-			out.print("hops per step: {}\n",render_settings.bob.hops);
+			out.print("hops per step: {}\n",settings.bob.hops);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&(parameters[1]=="1"||parameters[1]=="2"))
 			{
-			render_settings.bob.hops=parameters[1]=="1"?1:2;
-			out.print("smooth-movement: hops per step {}\n",render_settings.bob.hops);
+			settings.bob.hops=parameters[1]=="1"?1:2;
+			out.print("smooth-movement: hops per step {}\n",settings.bob.hops);
 			return CR_OK;
 			}
 		return CR_WRONG_USAGE;
@@ -712,7 +751,7 @@ command_result status_command(
 		if(parameters.size()==1)
 			{
 			out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-				render_settings.bob.horizontal_mult,render_settings.bob.diagonal_mult,render_settings.bob.vertical_mult);
+				settings.bob.horizontal_mult,settings.bob.diagonal_mult,settings.bob.vertical_mult);
 			return CR_OK;
 			}
 		if(parameters.size()==4)
@@ -728,17 +767,17 @@ command_result status_command(
 			// Written so that NaN fails too.
 			if(!(horizontal>=0.0f&&horizontal<=5.0f)||!(diagonal>=0.0f&&diagonal<=5.0f)||
 				!(vertical>=0.0f&&vertical<=5.0f))return CR_WRONG_USAGE;
-			if(!walk_bob_lift_fits(render_settings.bob.amplitude,horizontal,diagonal,vertical))
+			if(!walk_bob_lift_fits(settings.bob.amplitude,horizontal,diagonal,vertical))
 				{
 				out.printerr("smooth-movement: bob {:.2f} times that multiplier lifts more than {:.2f} tile; lower one of them\n",
-					render_settings.bob.amplitude,max_walk_bob_lift);
+					settings.bob.amplitude,max_walk_bob_lift);
 				return CR_FAILURE;
 				}
-			render_settings.bob.horizontal_mult=horizontal;
-			render_settings.bob.diagonal_mult=diagonal;
-			render_settings.bob.vertical_mult=vertical;
+			settings.bob.horizontal_mult=horizontal;
+			settings.bob.diagonal_mult=diagonal;
+			settings.bob.vertical_mult=vertical;
 			out.print("smooth-movement: bob multipliers horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-				render_settings.bob.horizontal_mult,render_settings.bob.diagonal_mult,render_settings.bob.vertical_mult);
+				settings.bob.horizontal_mult,settings.bob.diagonal_mult,settings.bob.vertical_mult);
 			return CR_OK;
 			}
 		return CR_WRONG_USAGE;
@@ -747,7 +786,7 @@ command_result status_command(
 		{
 		if(parameters.size()==1)
 			{
-			out.print("walk bob: {} (amount {:.2f})\n",render_settings.bob.enabled?"on":"off",render_settings.bob.amplitude);
+			out.print("walk bob: {} (amount {:.2f})\n",settings.bob.enabled?"on":"off",settings.bob.amplitude);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]!="on"&&parameters[1]!="off")
@@ -757,23 +796,23 @@ command_result status_command(
 				const float amount=std::stof(parameters[1]);
 				// Turning the bob off is 'bob off'; an amount only sets the height.
 				if(!(amount>0.0f)||amount>max_walk_bob_lift)return CR_WRONG_USAGE;
-				if(!walk_bob_lift_fits(amount,render_settings.bob.horizontal_mult,render_settings.bob.diagonal_mult,
-						render_settings.bob.vertical_mult))
+				if(!walk_bob_lift_fits(amount,settings.bob.horizontal_mult,settings.bob.diagonal_mult,
+						settings.bob.vertical_mult))
 					{
 					out.printerr("smooth-movement: bob {:.2f} times the current multipliers lifts more than {:.2f} tile; lower the multipliers first\n",
 						amount,max_walk_bob_lift);
 					return CR_FAILURE;
 					}
-				render_settings.bob.amplitude=amount;
-				out.print("smooth-movement: bob amount {:.2f}\n",render_settings.bob.amplitude);
+				settings.bob.amplitude=amount;
+				out.print("smooth-movement: bob amount {:.2f}\n",settings.bob.amplitude);
 				return CR_OK;
 				}
 			catch(...){return CR_WRONG_USAGE;}
 			}
 		if(parameters.size()==2&&(parameters[1]=="on"||parameters[1]=="off"))
 			{
-			render_settings.bob.enabled=parameters[1]=="on";
-			out.print("smooth-movement: walk bob {}\n",render_settings.bob.enabled?"enabled":"disabled");
+			settings.bob.enabled=parameters[1]=="on";
+			out.print("smooth-movement: walk bob {}\n",settings.bob.enabled?"enabled":"disabled");
 			return CR_OK;
 			}
 		return CR_WRONG_USAGE;

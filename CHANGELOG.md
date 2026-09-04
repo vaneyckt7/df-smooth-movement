@@ -10,6 +10,10 @@
   `tests/render_fuzz.cpp`, which checks every painted random frame against the properties
   the pass owes the engine instead of against an older implementation; see the README.
   It found the zoom drift above. `tests/oracle/` is gone.
+- The plugin file's globals are one `plugin_statest`, sectioned by owner: bound at enable,
+  console-set and render-read, the simulation-to-render draw handshake, and the render
+  thread's own state, which is replaced whole when the plugin is reset. The snapshot
+  command no longer writes the render thread's frame counters; it leaves a request.
 - What a frame has to show (a movement in flight, a resting mirrored creature, a camera
   glide, or nothing) is decided in `frame_render.h` and unit tested; the plugin file only
   reads the answer. `stats` also counts the frames that found freshly drawn viewport buffers
