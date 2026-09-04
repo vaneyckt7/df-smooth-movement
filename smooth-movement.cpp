@@ -196,21 +196,15 @@ struct console_settingst
 };
 
 // Console-to-render handoff: the core thread posts a change, the render thread applies it
-// before painting. With the hooks off (and the last frame waited out) there is no render
-// thread in the state, so the change is applied on the spot instead.
+// before painting. While the plugin is disabled the posts wait for the reset at enable.
 struct command_mailboxst
 {
 	using commandt=std::function<void(render_statest &)>;
 	std::mutex lock;
 	std::vector<commandt> pending;
 
-	void post(commandt command,bool hooks_running,render_statest &render)
+	void post(commandt command)
 		{
-		if(!hooks_running)
-			{
-			command(render);
-			return;
-			}
 		std::lock_guard<std::mutex> guard(lock);
 		pending.push_back(std::move(command));
 		}
@@ -241,7 +235,8 @@ struct plugin_statest
 	command_mailboxst mailbox;
 	// Frames of the update_all hook in flight, so disable can wait for the last one.
 	std::atomic<int32_t> hooks_in_flight{0};
-	// Render thread's own while the hooks run.
+	// Render thread's own. Written elsewhere only by the reset at enable, before the hooks
+	// go in; the console reads the camera's offset from it for display.
 	render_statest render;
 };
 
@@ -590,8 +585,9 @@ bool load_sdl(color_ostream &out)
 	return true;
 }
 
-// Called with the hooks off, after wait_for_last_frame. Commands posted before the reset
-// land in the fresh state, not in the discarded one.
+// Called at enable, before the hooks go in. The last disable removed the hooks and waited
+// for their last frame a command or more ago, so nothing else is in the render state.
+// Commands posted meanwhile land in the fresh state.
 void reset_state()
 {
 	state.render=render_statest();
@@ -604,9 +600,8 @@ void reset_state()
 
 // Removing a hook does not wait for a hook body already running on the render thread. Waits
 // for it, boundedly: the render thread may be blocked on the simulation thread this command
-// suspended, in which case the reset races with that last frame as it did before. The count
-// is taken inside the hook body, so a render thread already past the vtable load but not
-// yet counted is the one window this does not close.
+// suspended, in which case the wait gives up and says so; the render state is not touched
+// until the next enable either way.
 bool wait_for_last_frame()
 {
 	const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(200);
@@ -629,7 +624,7 @@ command_result status_command(
 	const free_camerast &camera=state.render.camera;
 	const auto apply=[](command_mailboxst::commandt command)
 		{
-		state.mailbox.post(std::move(command),is_enabled,state.render);
+		state.mailbox.post(std::move(command));
 		};
 	// Pushes the console's settings to the render thread.
 	const auto push_settings=[&]
@@ -964,9 +959,9 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 		INTERPOSE_HOOK(dwarfmode_hook,render).remove();
 		INTERPOSE_HOOK(dungeonmode_hook,render).remove();
 		if(!wait_for_last_frame())
-			out.printerr("smooth-movement: the render thread is still in the last frame; resetting anyway\n");
-		reset_state();
-		clear_sdl_bindings();
+			out.printerr("smooth-movement: the render thread is still in the last frame\n");
+		state.snapshot.armed=false;
+		state.trace_budget=0;
 		}
 	is_enabled=enable;
 	out.print("smooth-movement: {}\n",enable?"enabled":"disabled");

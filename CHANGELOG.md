@@ -12,9 +12,9 @@
   It found the zoom drift above. `tests/oracle/` is gone.
 - Console commands no longer write the render thread's state while a frame is running.
   Every setting change (camera, time step, flipping, walk bob) is posted to a mailbox the
-  render hook drains at the top of the next frame; with the plugin disabled it is applied on
-  the spot. `disable` waits (up to 200 ms) for a frame already inside the hook to finish
-  before the state is reset, and says so if it has to give up waiting. The console keeps its
+  render hook drains at the top of the next frame, or at the next `enable`. The render state
+  is reset at `enable` only; `disable` waits (up to 200 ms) for a frame already inside the
+  hook to finish, and says so if it has to give up waiting. The console keeps its
   own copy of the settings, validates against it (so two commands in one frame, as from an
   init file, see each other), and seeds every reset with it: settings now survive
   `disable`/`enable`, and the camera stays on across them (its offset does not).
