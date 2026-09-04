@@ -9,6 +9,7 @@
 #include "visual_layers.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -44,6 +45,17 @@ struct render_settingst
 		}
 };
 
+// What a frame has to show, if anything. The engine redraws every map tile every frame
+// before the pass runs, so nothing painted outlives its frame: a frame is painted when a
+// movement is in flight, a creature rests mirrored, or the camera glides between tiles.
+enum class frame_paintst:uint8_t
+{
+	nothing,
+	moving,
+	resting,
+	glide
+};
+
 struct pixel_rectst
 {
 	int32_t x=0;
@@ -60,6 +72,16 @@ inline int32_t tile_pixel(int32_t tile,int32_t origin,int32_t zoom)
 inline int32_t tile_pixel_size(int32_t zoom)
 {
 	return zoom==128?32:std::max(1,zoom*32/128);
+}
+
+// The pixel of a point between tiles, on the engine's tile positions: away from zoom 128 the
+// tiles are not a uniform stride apart, so a sprite placed by tile_pixel_size multiples would
+// drift off the tile it belongs to by up to a pixel per tile of distance.
+inline float tile_pixel_at(float tile,int32_t origin,int32_t zoom)
+{
+	const int32_t whole=int32_t(std::floor(tile));
+	const int32_t left=tile_pixel(whole,origin,zoom);
+	return float(left)+(tile-float(whole))*float(tile_pixel(whole+1,origin,zoom)-left);
 }
 
 template<typename Viewport>
@@ -103,12 +125,14 @@ class frame_rendererst
 	void draw_proxy(Canvas &canvas,const sprite_proxyst &proxy) const
 		{
 		const int32_t zoom=canvas.zoom();
-		const int32_t target_x=tile_pixel(proxy.target_x,canvas.origin_x(),zoom);
-		const int32_t target_y=tile_pixel(proxy.target_y,canvas.origin_y(),zoom);
 		const float tile_size=float(tile_pixel_size(zoom));
-		const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
-		const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
-		const float mirror_offset=float(proxy.mirror_shift)*tile_size;
+		// Both ends of the path on the engine's tile positions (the mirrored path when the
+		// sprite is drawn mirrored), so a sprite at rest sits exactly on its tile at any zoom.
+		const float shift=float(proxy.mirror_shift);
+		const float from_x=tile_pixel_at(proxy.source_x+shift,canvas.origin_x(),zoom);
+		const float to_x=tile_pixel_at(float(proxy.target_x)+shift,canvas.origin_x(),zoom);
+		const float from_y=tile_pixel_at(proxy.source_y,canvas.origin_y(),zoom);
+		const float to_y=tile_pixel_at(float(proxy.target_y),canvas.origin_y(),zoom);
 		const walk_bob_directionst bob_direction=walk_bob_direction(
 			proxy.source_x,proxy.source_y,proxy.target_x,proxy.target_y);
 		const walk_bob_settingst &bob=settings.bob;
@@ -118,8 +142,8 @@ class frame_rendererst
 			bob.diagonal_mult;
 		const float bob_offset=proxy.bob?
 			-walk_bob_lift(proxy.progress,bob.hops,bob.amplitude,bob_mult)*tile_size:0.0f;
-		const float base_x=source_x+(target_x-source_x)*proxy.progress+mirror_offset;
-		const float base_y=source_y+(target_y-source_y)*proxy.progress+bob_offset;
+		const float base_x=from_x+(to_x-from_x)*proxy.progress;
+		const float base_y=from_y+(to_y-from_y)*proxy.progress+bob_offset;
 		canvas.draw_sprite(proxy.texture,base_x,base_y,tile_size,proxy.mirrored);
 		}
 
@@ -182,18 +206,20 @@ class frame_rendererst
 			return settings;
 			}
 
-		// Whether a frame without movement still has sprites to paint: with flipping on, a
-		// creature resting with its back to its native sprite is drawn mirrored every frame,
-		// since the engine's own draw of it comes back each frame.
+		// The kind of frame to paint, `nothing` when there is nothing to show. With flipping
+		// on, a creature resting with its back to its native sprite is drawn mirrored every
+		// frame, since the engine's own draw of it comes back each frame.
 		template<typename Manager>
-		bool has_resting_sprites(
+		frame_paintst frame_paint(
+			bool glide,
 			const std::vector<Viewport *> &viewports,
 			const Manager &manager) const
 			{
-			if(!settings.flip)return false;
-			for(const Viewport *vp:viewports)
-				if(manager.has_mirrored_facing(vp))return true;
-			return false;
+			if(manager.requires_full_redraw())return frame_paintst::moving;
+			if(settings.flip)
+				for(const Viewport *vp:viewports)
+					if(manager.has_mirrored_facing(vp))return frame_paintst::resting;
+			return glide?frame_paintst::glide:frame_paintst::nothing;
 			}
 
 		// `viewports` lowest level first, ending with `main`; `glide` is the camera's pixel

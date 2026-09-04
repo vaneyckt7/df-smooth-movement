@@ -136,6 +136,8 @@ int32_t trace_budget=0;
 // not at paint time when the counter may already have moved on. Draw serial in the high half,
 // tick in the low half, in one word so the paint side reads both as they were stored.
 std::atomic<uint64_t> drawn_buffers{0};
+// Set while a map viewscreen's render, which fills the buffers, is running.
+std::atomic<bool> buffers_drawing{false};
 uint32_t draw_serial=0;
 uint32_t painted_draw_serial=0;
 // Tick of the buffers about to be painted, or -1 when no draw was seen since the last paint.
@@ -333,7 +335,9 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		if(change.reset)camera.cancel_transients();
 		}
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
+	const bool drawing_at_start=buffers_drawing.load(std::memory_order_acquire);
 	frame_simulation_tick=take_drawn_tick();
+	if(frame_simulation_tick>=0)frame_stats.add(frame_stats.drawn);
 	animation_manager.begin_frame(now_ms);
 	for(const df::graphic_viewportst *viewport:viewports)
 		animation_manager.synchronize_viewport(animation_input(viewport));
@@ -379,14 +383,11 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	const bool glide=glide_x!=0||glide_y!=0;
 	// The engine redraws every map tile every frame before this hook runs (measured: one
 	// update_viewport_tile call per tile per frame with nothing changed), so nothing painted
-	// here outlives its frame. A frame is painted when there is something to show on it:
-	// a camera glide, a movement in flight, or a creature resting mirrored.
-	const bool moving=animation_manager.requires_full_redraw();
-	const bool resting=!moving&&frame_renderer.has_resting_sprites(viewports,animation_manager);
-	if(moving)frame_stats.add(frame_stats.moving);
-	if(resting)frame_stats.add(frame_stats.resting);
-	const bool paint=glide||moving||resting;
-	if(paint)
+	// here outlives its frame; frame_render.h decides what a frame has to show.
+	const frame_paintst paint=frame_renderer.frame_paint(glide,viewports,animation_manager);
+	if(paint==frame_paintst::moving)frame_stats.add(frame_stats.moving);
+	if(paint==frame_paintst::resting)frame_stats.add(frame_stats.resting);
+	if(paint!=frame_paintst::nothing)
 		{
 		frame_stats.add(frame_stats.rendered);
 		const uint64_t t1=frame_stats.clock();
@@ -397,6 +398,14 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		if(t1)frame_stats.add(frame_stats.render_us,frame_stats.now_us()-t1);
 		}
 	if(snapshot_requested&&!snapshot_after_ui)save_snapshot(renderer);
+	// The pass reads the viewport buffers and blanks parts of them around each engine repaint,
+	// which is sound only while the simulation thread is not drawing into them. It draws
+	// them in the map viewscreens' render; a draw in progress at either end of this hook, or
+	// one that started and finished inside it, means the two overlap. Counted so `stats` can
+	// show it never happens.
+	if(drawing_at_start||buffers_drawing.load(std::memory_order_acquire)||
+		uint32_t(drawn_buffers.load(std::memory_order_acquire)>>32)!=painted_draw_serial)
+		frame_stats.add(frame_stats.overlapped_draws);
 }
 
 struct renderer_hook : df::renderer_2d_base
@@ -424,7 +433,9 @@ struct dwarfmode_hook : df::viewscreen_dwarfmodest
 	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
 		{
 		note_buffers_drawn();
+		buffers_drawing.store(true,std::memory_order_release);
 		INTERPOSE_NEXT(render)(curtick);
+		buffers_drawing.store(false,std::memory_order_release);
 		}
 };
 
@@ -434,7 +445,9 @@ struct dungeonmode_hook : df::viewscreen_dungeonmodest
 	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
 		{
 		note_buffers_drawn();
+		buffers_drawing.store(true,std::memory_order_release);
 		INTERPOSE_NEXT(render)(curtick);
+		buffers_drawing.store(false,std::memory_order_release);
 		}
 };
 

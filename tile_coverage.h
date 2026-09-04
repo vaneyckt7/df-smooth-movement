@@ -53,21 +53,6 @@ class tile_coveragest
 			touched.clear();
 			}
 
-		void clear()
-			{
-			reset(grid);
-			}
-
-		const visual_gridst &get_grid() const
-			{
-			return grid;
-			}
-
-		bool empty() const
-			{
-			return touched.empty();
-			}
-
 		// Marks a tile a proxy of `group` repaints. Tiles off the grid cannot be repainted.
 		void mark(int32_t x,int32_t y,visual_render_groupst group)
 			{
@@ -82,11 +67,6 @@ class tile_coveragest
 		void mark_proxied(int32_t x,int32_t y,viewport_visual_layer layer)
 			{
 			proxied[size_t(grid.index(x,y))]|=visual_layer_bit(layer);
-			}
-
-		bool covers(int32_t x,int32_t y) const
-			{
-			return grid.contains(x,y)&&(marks[size_t(grid.index(x,y))]&any_bit)!=0;
 			}
 
 		uint16_t proxied_layers(int32_t index) const
@@ -105,7 +85,7 @@ class tile_coveragest
 			return uint8_t(1U<<static_cast<uint8_t>(group));
 			}
 
-		// Every marked tile of another coverage, wherever the two grids overlap.
+		// Every marked tile of another coverage (a level's), wherever the two grids overlap.
 		void merge(const tile_coveragest &other)
 			{
 			for(const int32_t index:other.touched)

@@ -546,9 +546,12 @@ void test_resting_mirrored_sprite_is_painted_every_frame()
 {
 	scenest scene(8,6);
 	scene.renderer.get_settings().flip=true;
-	assert(!scene.renderer.has_resting_sprites(scene.viewports,scene.manager));
+	assert(scene.renderer.frame_paint(false,scene.viewports,scene.manager)==frame_paintst::nothing);
 	scene.step(2,3,3,3);
 	scene.sync(1150);
+	// A movement in flight is a moving frame, whether or not the camera glides.
+	assert(scene.renderer.frame_paint(false,scene.viewports,scene.manager)==frame_paintst::moving);
+	assert(scene.renderer.frame_paint(true,scene.viewports,scene.manager)==frame_paintst::moving);
 	scene.render();
 	// At rest, facing east, with every buffer settled: the engine's native draw comes back
 	// every frame, so the mirrored sprite is painted over it every frame.
@@ -556,11 +559,13 @@ void test_resting_mirrored_sprite_is_painted_every_frame()
 	scene.vp.screentexpos[scene.vp.index(3,3)]=50;
 	scene.sync(1300);
 	assert(scene.manager.has_mirrored_facing(&scene.vp));
-	assert(scene.renderer.has_resting_sprites(scene.viewports,scene.manager));
+	// The frame the movement expires on is its last moving frame; from then on the creature
+	// rests mirrored.
+	assert(scene.renderer.frame_paint(false,scene.viewports,scene.manager)==frame_paintst::moving);
 	for(const uint32_t t:{1300u,1350u,1400u})
 		{
 		scene.sync(t);
-		assert(scene.renderer.has_resting_sprites(scene.viewports,scene.manager));
+		assert(scene.renderer.frame_paint(false,scene.viewports,scene.manager)==frame_paintst::resting);
 		scene.render();
 		assert(scene.canvas.count(canvas_eventst::sprite)==1);
 		assert(scene.canvas.count(canvas_eventst::fill)==1);
@@ -571,12 +576,67 @@ void test_resting_mirrored_sprite_is_painted_every_frame()
 	// A level with another grid is asked too, and one without a mirrored facing adds nothing.
 	test_viewportst lower(8,6);
 	std::vector<test_viewportst *> levels{&lower,&scene.vp};
-	assert(scene.renderer.has_resting_sprites(levels,scene.manager));
+	assert(scene.renderer.frame_paint(false,levels,scene.manager)==frame_paintst::resting);
+	// A resting sprite is painted on a glide frame too, and counts as a resting frame.
+	assert(scene.renderer.frame_paint(true,levels,scene.manager)==frame_paintst::resting);
 	std::vector<test_viewportst *> alone{&lower};
-	assert(!scene.renderer.has_resting_sprites(alone,scene.manager));
+	assert(scene.renderer.frame_paint(false,alone,scene.manager)==frame_paintst::nothing);
+	// A camera glide alone is a glide frame.
+	assert(scene.renderer.frame_paint(true,alone,scene.manager)==frame_paintst::glide);
 	// Without flipping there is no resting sprite to paint.
 	scene.renderer.get_settings().flip=false;
-	assert(!scene.renderer.has_resting_sprites(scene.viewports,scene.manager));
+	assert(scene.renderer.frame_paint(false,scene.viewports,scene.manager)==frame_paintst::nothing);
+}
+
+// Away from zoom 128 the engine's tiles are not a uniform stride apart (33 and 34 pixels at
+// zoom 133), so sprites are placed on the engine's own tile positions: a resting mirrored
+// creature and its fragment sit exactly on their tiles, and a moving one starts on its
+// source tile.
+void test_sprites_sit_on_the_engine_tile_positions_at_any_zoom()
+{
+	scenest scene(8,6);
+	scene.renderer.get_settings().flip=true;
+	scene.canvas.zoom_=133;
+	scene.canvas.ox=27;
+	scene.canvas.oy=27;
+	const auto px=[&](int32_t tile){return float(tile_pixel(tile,27,133));};
+	assert(px(1)-px(0)==33&&px(4)-px(3)==34);
+	scene.vp.screentexpos[scene.vp.index(2,3)]=50;
+	scene.vp.screentexpos_right_creature[scene.vp.index(3,3)]=51;
+	scene.sync(1000);
+	scene.vp.redraw();
+	scene.vp.screentexpos[scene.vp.index(3,3)]=50;
+	scene.vp.screentexpos_right_creature[scene.vp.index(4,3)]=51;
+	scene.sync(1100);
+	scene.render();
+	// In flight at progress 0: on the source tiles, mirrored, the fragment two tiles left.
+	size_t sprites=0;
+	for(const canvas_eventst &e:scene.canvas.events)
+		{
+		if(e.kind!=canvas_eventst::sprite)continue;
+		++sprites;
+		assert(e.mirrored);
+		assert(e.py==px(3));
+		assert(e.px==px(2)||e.px==px(1));
+		}
+	assert(sprites==2);
+	// At rest, facing east: mirrored in place, on the engine's pixel positions.
+	scene.vp.redraw();
+	scene.vp.screentexpos[scene.vp.index(3,3)]=50;
+	scene.vp.screentexpos_right_creature[scene.vp.index(4,3)]=51;
+	scene.sync(1300);
+	scene.sync(1400);
+	scene.render();
+	sprites=0;
+	for(const canvas_eventst &e:scene.canvas.events)
+		{
+		if(e.kind!=canvas_eventst::sprite)continue;
+		++sprites;
+		assert(e.mirrored);
+		assert(e.py==px(3));
+		assert(e.px==px(3)||e.px==px(2));
+		}
+	assert(sprites==2);
 }
 
 // Repaints of one tile at one level whose shading (interface) is painted, in order.
@@ -727,6 +787,7 @@ int main()
 	test_fire_on_the_path_drops_the_sprite();
 	test_clip_edges_drop_the_sprite();
 	test_flip_mirrors_an_eastbound_creature_and_keeps_it_mirrored();
+	test_sprites_sit_on_the_engine_tile_positions_at_any_zoom();
 	test_bob_covers_the_row_above();
 	test_glide_repaints_the_whole_clip_at_the_shifted_origin();
 	test_lower_level_sprite_is_shaded_by_the_main_level();

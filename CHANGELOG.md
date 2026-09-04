@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Fixed: at zooms other than 128 the engine's tiles are not a uniform stride apart, and
+  sprites placed by multiples of the tile size drifted off their tile by up to a pixel per
+  tile of distance (a mirrored fragment two tiles away sat one pixel into the next tile).
+  Sprites are now placed on the engine's own tile positions at both ends of their path.
+- The paint-op oracle (the pre-redesign render pass kept as a fixture) is replaced by
+  `tests/render_fuzz.cpp`, which checks every painted random frame against the properties
+  the pass owes the engine instead of against an older implementation; see the README.
+  It found the zoom drift above. `tests/oracle/` is gone.
+- What a frame has to show (a movement in flight, a resting mirrored creature, a camera
+  glide, or nothing) is decided in `frame_render.h` and unit tested; the plugin file only
+  reads the answer. `stats` also counts the frames that found freshly drawn viewport buffers
+  and the buffer draws in progress at either end of the render hook or started inside it,
+  which is expected to stay at zero: the pass blanks and restores parts of the viewport
+  buffers around each engine repaint, which is sound only while the simulation thread is not
+  drawing into them.
 - Fixed: a creature resting mirrored no longer flickers between its mirrored and native
   sprite while the game is paused. The engine redraws every map tile every frame before the
   plugin's pass runs (measured in game: one `update_viewport_tile` call per tile per frame with
@@ -25,9 +40,8 @@
   movements to `smooth-movement-trace.txt` in the game folder.
 - Profiling is built in behind a runtime switch (`smooth-movement stats on|off|reset`,
   `stats detail on|off`); off, it costs one branch per counter.
-- The test tooling lives in `tests/`: unit tests, the paint-op oracle fuzzer that checks the
-  redesigned render pass against the previous implementation, and benchmarks, all driven by
-  `tests/run.sh`.
+- The test tooling lives in `tests/`: unit tests, the render property fuzzer and benchmarks,
+  all driven by `tests/run.sh`.
 - The render pass is rebuilt on components independent of the game: sprite
   collection, tile coverage, staged repaints and the frame pass live in their
   own headers, reuse their scratch across frames and allocate nothing per
@@ -46,8 +60,8 @@
   and the shading (the interface layer) is painted with the repaint above the
   tile's last sprite group instead of in a pass of its own; a level without
   sprites on a tile repaints it whole. A paint-operation oracle keyed by pixel
-  cell confirms the painted result is unchanged over 9381 random frames, with
-  one deliberate exception: the shading-only repaint after a tile's last sprite
+  cell confirmed the painted result unchanged over 9381 random frames (since
+  replaced by the property fuzzer), with one deliberate exception: the shading-only repaint after a tile's last sprite
   group now blanks the top shadow as well, so it is painted once, in engine
   order, instead of a second time over the sprites.
 - A tile whose buffers are all zero at a level is no longer asked to repaint there: the

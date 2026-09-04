@@ -43,6 +43,8 @@ class frame_statisticst
 		counter glides{0};
 		counter moving{0};
 		counter resting{0};
+		counter drawn{0}; // frames that found freshly drawn viewport buffers
+		counter overlapped_draws{0}; // simulation-thread buffer draws seen during the hook
 
 		static uint64_t now_us()
 			{
@@ -70,7 +72,8 @@ class frame_statisticst
 			{
 			for(counter *c:{&frames,&rendered,&sync_us,&collect_us,&render_us,&engine_us,
 				&sprite_us,&fill_us,&total_us,&max_us,&tile_repaints,&blank_repaints,
-				&main_repaints,&occluded_repaints,&sprites,&fills,&glides,&moving,&resting})
+				&main_repaints,&occluded_repaints,&sprites,&fills,&glides,&moving,&resting,&drawn,
+				&overlapped_draws})
 				c->store(0);
 			}
 
@@ -89,6 +92,8 @@ class frame_statisticst
 				per(total_us,f),(unsigned long long)max_us.load());
 			emit("  moving frames %llu, resting-sprite frames %llu\n",
 				(unsigned long long)moving.load(),(unsigned long long)resting.load());
+			emit("  buffer draws seen %llu, overlapping the hook %llu\n",
+				(unsigned long long)drawn.load(),(unsigned long long)overlapped_draws.load());
 			emit("  sync %.1f us/frame\n",per(sync_us,f));
 			emit("  render %.1f us/rendered frame: collect %.1f, inside engine repaints %.1f, sprite draws %.1f, fills %.1f\n",
 				per(render_us,r),per(collect_us,r),per(engine_us,r),per(sprite_us,r),per(fill_us,r));

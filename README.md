@@ -63,11 +63,16 @@ machine: `visual_animation.h` (movement detection), `frame_render.h` (the paint 
 batching in front of SDL). `smooth-movement.cpp` only binds them to the engine and parses the
 console commands.
 
-`tests/run.sh` builds and runs the unit tests, the paint-op oracle fuzzer and a render benchmark
-with any C++17 compiler. The oracle under `tests/oracle/` is a regression fixture: the render
-pass from before the redesign, ported onto the canvas interface, which the fuzzer requires to
-paint every random frame identically to the current pass. It shows the redesign changed nothing
-about what is painted; it does not check either pass against the engine's own draw order.
+`tests/run.sh` builds and runs the unit tests, the render property fuzzer and a render benchmark
+with any C++17 compiler. The fuzzer (`tests/render_fuzz.cpp`) drives the pass over random
+viewport histories and checks every painted frame against the properties it owes the engine:
+each covered tile blanked once before anything else, repaints only on covered tiles inside the
+clip and only where they paint something, every covered tile a level shows repainted, levels
+painted lowest first, a tile staged beneath its sprites with exactly the proxied layers hidden,
+repaints after a group's sprites adding only what sits above that group, the level shading
+painted exactly once after a tile's last sprite, sprites on the engine's tile positions over
+covered tiles only, and every viewport buffer left as it was found. The properties encode the
+engine's draw order as understood from its output, not as checked against its code.
 
 In game, `smooth-movement stats on` followed by `stats` after a while prints per-frame timings;
 `stats detail on` adds timers around every engine repaint and SDL call at some cost of its own.
