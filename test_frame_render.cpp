@@ -710,8 +710,44 @@ void test_blank_level_tiles_are_not_repainted()
 	assert(scene.canvas.repaints_of(&lower,2,3).empty());
 }
 
+void test_a_tile_paints_nothing_only_when_every_buffer_is_zero()
+{
+	test_viewportst vp(4,3);
+	const int32_t index=vp.index(2,1);
+	assert(tile_paints_nothing(&vp,index));
+	const auto alone=[&](auto *buffer)
+		{
+		buffer[index]=1;
+		assert(!tile_paints_nothing(&vp,index));
+		buffer[index]=0;
+		assert(tile_paints_nothing(&vp,index));
+		};
+	int32_t *const textures[]={
+		vp.screentexpos_background,vp.screentexpos_background_two,vp.screentexpos_spatter,
+		vp.screentexpos_building_one,vp.screentexpos_item,vp.screentexpos_vehicle,
+		vp.screentexpos_vermin,vp.screentexpos_left_creature,vp.screentexpos,
+		vp.screentexpos_right_creature,vp.screentexpos_building_two,vp.screentexpos_projectile,
+		vp.screentexpos_high_flow,vp.screentexpos_top_shadow,vp.screentexpos_signpost,
+		vp.screentexpos_upleft_creature,vp.screentexpos_up_creature,
+		vp.screentexpos_upright_creature,vp.screentexpos_designation,vp.screentexpos_interface};
+	static_assert(sizeof(textures)/sizeof(textures[0])==20);
+	for(int32_t *buffer:textures)alone(buffer);
+	alone(vp.screentexpos_liquid_flag);
+	alone(vp.screentexpos_spatter_flag);
+	alone(vp.screentexpos_shadow_flag);
+	alone(vp.screentexpos_floor_flag);
+	alone(vp.screentexpos_ramp_flag);
+	// A neighbouring tile's content does not count.
+	vp.screentexpos_background[vp.index(1,1)]=1;
+	assert(tile_paints_nothing(&vp,index));
+	// A viewport without an interface buffer reads it as zero.
+	vp.screentexpos_interface=nullptr;
+	assert(tile_paints_nothing(&vp,index));
+}
+
 int main()
 {
+	test_a_tile_paints_nothing_only_when_every_buffer_is_zero();
 	test_blank_level_tiles_are_not_repainted();
 	test_two_sprite_groups_on_a_tile_fold_the_shading_once_after_the_last();
 	test_designation_as_last_group_paints_the_shading_alone();
