@@ -14,6 +14,7 @@
 #include "df/texture_fullid.h"
 
 #include "frame_render.h"
+#include "frame_stats.h"
 #include "visual_animation.h"
 
 #include <SDL_render.h>
@@ -51,6 +52,8 @@ decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
 
 visual_animation_managerst animation_manager;
 std::vector<SDL_Rect> fill_scratch;
+
+frame_statisticst frame_stats;
 frame_rendererst<df::graphic_viewportst> frame_renderer;
 // Sprite flipping and walk bob, both off by default: `flip on`, `bob on`.
 render_settingst &render_settings=frame_renderer.get_settings();
@@ -474,8 +477,19 @@ class sdl_canvasst
 	void flush_fills()
 		{
 		if(fills.empty())return;
+		const uint64_t t=frame_stats.detail_clock();
 		render_fill_rects(sdl,fills.data(),int(fills.size()));
+		if(t)frame_stats.add(frame_stats.fill_us,frame_stats.now_us()-t);
 		fills.clear();
+		}
+	// Time from construction to the first canvas call is the sprite collection.
+	uint64_t start_us=frame_stats.clock();
+	bool first_call=true;
+	void note_call()
+		{
+		if(!first_call)return;
+		first_call=false;
+		if(start_us)frame_stats.add(frame_stats.collect_us,frame_stats.now_us()-start_us);
 		}
 
 	public:
@@ -518,7 +532,24 @@ class sdl_canvasst
 		void repaint(df::graphic_viewportst *vp,int32_t x,int32_t y)
 			{
 			flush_fills();
+			note_call();
+			if(frame_stats.enabled)classify_repaint(vp,x,y);
+			const uint64_t t=frame_stats.detail_clock();
 			renderer->update_viewport_tile(vp,x,y);
+			if(t)frame_stats.add(frame_stats.engine_us,frame_stats.now_us()-t);
+			}
+
+		// Where the repaints land: the ones the pass could in principle avoid are counted.
+		static void classify_repaint(const df::graphic_viewportst *vp,int32_t x,int32_t y)
+			{
+			frame_stats.add(frame_stats.tile_repaints);
+			const int32_t index=x*vp->dim_y+y;
+			if(tile_paints_nothing(vp,index))frame_stats.add(frame_stats.blank_repaints);
+			const df::graphic_viewportst *main=gps?gps->main_viewport:nullptr;
+			if(vp==main)frame_stats.add(frame_stats.main_repaints);
+			else if(main&&main->dim_x==vp->dim_x&&main->dim_y==vp->dim_y&&
+				main->screentexpos_background&&main->screentexpos_background[index]!=0)
+				frame_stats.add(frame_stats.occluded_repaints);
 			}
 
 		const void *texture(int32_t texpos) const
@@ -531,12 +562,16 @@ class sdl_canvasst
 		void draw_sprite(const void *texture,float x,float y,float size,bool mirrored)
 			{
 			flush_fills();
+			note_call();
+			frame_stats.add(frame_stats.sprites);
+			const uint64_t t=frame_stats.detail_clock();
 			SDL_Texture *sdl_texture=static_cast<SDL_Texture *>(const_cast<void *>(texture));
 			const SDL_FRect destination={x,y,size,size};
 			if(mirrored&&render_copy_ex_f!=nullptr)
 				render_copy_ex_f(
 					sdl,sdl_texture,nullptr,&destination,0.0,nullptr,SDL_FLIP_HORIZONTAL);
 			else render_copy_f(sdl,sdl_texture,nullptr,&destination);
+			if(t)frame_stats.add(frame_stats.sprite_us,frame_stats.now_us()-t);
 			}
 
 		// The draw colour is switched to black on the first fill and put back when the
@@ -544,6 +579,8 @@ class sdl_canvasst
 		// together: the frame pass fills before it paints anything over them.
 		void fill_black(const pixel_rectst &rect)
 			{
+			note_call();
+			frame_stats.add(frame_stats.fills);
 			if(!filling)
 				{
 				get_render_draw_color(sdl,&saved_r,&saved_g,&saved_b,&saved_a);
@@ -556,6 +593,8 @@ class sdl_canvasst
 		void set_clip(const pixel_rectst &rect)
 			{
 			flush_fills();
+			note_call();
+			frame_stats.add(frame_stats.glides);
 			const SDL_Rect sdl_rect={rect.x,rect.y,rect.w,rect.h};
 			render_set_clip_rect(sdl,&sdl_rect);
 			}
@@ -571,6 +610,19 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 {
 	df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
 	const std::vector<df::graphic_viewportst *> viewports=active_viewports();
+	const uint64_t t0=frame_stats.clock();
+	frame_stats.add(frame_stats.frames);
+	struct frame_timerst
+	{
+		uint64_t t0;
+		~frame_timerst()
+			{
+			if(!t0)return;
+			const uint64_t t=frame_stats.now_us()-t0;
+			frame_stats.add(frame_stats.total_us,t);
+			frame_stats.note_max(t);
+			}
+	} timer{t0};
 
 	if(vp!=nullptr)update_visual_context(renderer,vp);
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
@@ -578,6 +630,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	for(const df::graphic_viewportst *viewport:viewports)
 		animation_manager.synchronize_viewport(animation_input(viewport));
 	animation_manager.end_frame();
+	if(t0)frame_stats.add(frame_stats.sync_us,frame_stats.now_us()-t0);
 
 	if(!viewport_readable(vp)||renderer->sdl_renderer==nullptr)
 		return;
@@ -601,12 +654,20 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	has_full_display_count=true;
 	const bool after_full_redraw=full_redraw_frames>0;
 	if(after_full_redraw)--full_redraw_frames;
-	if(!glide&&!after_full_redraw&&!animation_manager.requires_full_redraw()&&
-		!frame_renderer.resting_sprites_disturbed(viewports,animation_manager))
-		return;
+	const bool moving=animation_manager.requires_full_redraw();
+	const bool disturbed=!glide&&!after_full_redraw&&!moving&&
+		frame_renderer.resting_sprites_disturbed(viewports,animation_manager);
+	if(moving)frame_stats.add(frame_stats.moving);
+	if(disturbed)frame_stats.add(frame_stats.disturbed);
+	if(!glide&&!after_full_redraw&&!moving&&!disturbed)return;
 
+	frame_stats.add(frame_stats.rendered);
+	const uint64_t t1=frame_stats.clock();
+	{
 	sdl_canvasst canvas(renderer);
 	frame_renderer.render(canvas,viewports,vp,animation_manager,glide_x,glide_y);
+	}
+	if(t1)frame_stats.add(frame_stats.render_us,frame_stats.now_us()-t1);
 }
 
 struct renderer_hook : df::renderer_2d_base
@@ -744,6 +805,28 @@ command_result status_command(
 				{
 				return CR_WRONG_USAGE;
 				}
+			}
+		return CR_WRONG_USAGE;
+		}
+	if(parameters[0]=="stats")
+		{
+		// stats | stats on|off | stats reset | stats detail on|off
+		if(parameters.size()==1){out.print("{}",frame_stats.report());return CR_OK;}
+		if(parameters[1]=="reset"){frame_stats.reset();return CR_OK;}
+		if(parameters[1]=="on"||parameters[1]=="off")
+			{
+			frame_stats.enabled=parameters[1]=="on";
+			frame_stats.reset();
+			out.print("smooth-movement: stats {}\n",frame_stats.enabled?"on":"off");
+			return CR_OK;
+			}
+		if(parameters[1]=="detail"&&parameters.size()==3&&
+			(parameters[2]=="on"||parameters[2]=="off"))
+			{
+			frame_stats.detail=parameters[2]=="on";
+			frame_stats.reset();
+			out.print("smooth-movement: stats detail {}\n",frame_stats.detail?"on":"off");
+			return CR_OK;
 			}
 		return CR_WRONG_USAGE;
 		}
@@ -897,7 +980,7 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 		"Smooth movement status; time step: timestep <ms>; free camera: camera on|off|reset|<fx> <fy>; "
 		"sprite flipping: flip on|off; "
 		"walk bob: bob on|off|<amount>; bob multipliers: bobmult <horizontal> <diagonal> <vertical>; "
-		"hops per step: hops 1|2.",
+		"hops per step: hops 1|2; profiling: stats [on|off|reset|detail on|off].",
 		status_command);
 	return CR_OK;
 }

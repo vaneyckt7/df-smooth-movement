@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Profiling is built in behind a runtime switch (`smooth-movement stats on|off|reset`,
+  `stats detail on|off`); off, it costs one branch per counter.
+- The test tooling lives in `tests/`: unit tests, the paint-op oracle fuzzer that checks the
+  redesigned render pass against the previous implementation, and benchmarks, all driven by
+  `tests/run.sh`.
 - The render pass is rebuilt on components independent of the game: sprite
   collection, tile coverage, staged repaints and the frame pass live in their
   own headers, reuse their scratch across frames and allocate nothing per

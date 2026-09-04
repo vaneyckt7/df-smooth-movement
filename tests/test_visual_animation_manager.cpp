@@ -972,5 +972,31 @@ int main()
 	assert(candidates_manager.mirrored_tiles(&listed).empty());
 	}
 
+	// A redraw that changes two tracked layers at once (a creature carrying an item takes a
+	// step), then the game hands back the same buffers: every changed layer must be retained,
+	// or the repeats read as fresh redraws and the movement restarts instead of landing.
+	{
+	std::array<int32_t,12> zero{};
+	std::array<int32_t,12> creature_previous{},creature_current{};
+	std::array<int32_t,12> item_previous{},item_current{};
+	const void *viewport=reinterpret_cast<const void *>(uintptr_t(77));
+	auto input=make_input(viewport,4,zero.data());
+	input.dim_x=4;input.dim_y=3;
+	visual_animation_managerst movement;
+	movement.set_base_duration_ms(100);
+	run_frame(movement,input,1000);
+	creature_previous[0*3+1]=7;creature_current[1*3+1]=7;
+	item_previous[0*3+1]=9;item_current[1*3+1]=9;
+	set_layer(input,viewport_visual_layer::center,creature_current.data(),creature_previous.data());
+	set_layer(input,viewport_visual_layer::item,item_current.data(),item_previous.data());
+	run_frame(movement,input,1016);
+	assert(movement.get_movement(viewport,viewport_visual_layer::center,1,1).progress==0.0f);
+	run_frame(movement,input,1066);
+	auto repeated=movement.get_movement(viewport,viewport_visual_layer::center,1,1);
+	assert(repeated.active&&repeated.progress==0.5f);
+	run_frame(movement,input,1116);
+	assert(!movement.get_movement(viewport,viewport_visual_layer::center,1,1).active);
+	}
+
 	return 0;
 }

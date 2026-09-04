@@ -38,6 +38,7 @@ smooth-movement bob on      # enable the walk bob
 smooth-movement bob 0.15    # bob height as a fraction of a tile (default 0.10); does not turn it on
 smooth-movement bobmult 1 2.4 2.7  # bob multipliers for horizontal, diagonal, vertical steps
 smooth-movement hops 1      # one hop per step instead of two
+smooth-movement stats on    # count and time the plugin's frame work (stats to print, stats reset)
 ```
 
 ### Walk bob
@@ -51,6 +52,14 @@ exactly one row above a bobbing sprite. On a row that is off the top of the scre
 the whole creature glides without the bob. Status icons and carried items bob with their
 creature. Like `flip` and `camera`, the bob settings return to their defaults when the plugin
 is disabled.
+
+## Development
+
+`tests/run.sh` builds and runs the unit tests, the paint-op oracle fuzzer (the pre-redesign
+render code, ported onto a canvas, must paint every frame identically) and a render benchmark. It
+needs only a C++17 compiler. In game, `smooth-movement stats on` followed by `stats` after a
+while prints per-frame timings; `stats detail on` adds timers around every engine repaint and
+SDL call at some cost of its own.
 
 ## Compatibility
 

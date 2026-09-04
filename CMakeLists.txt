@@ -5,11 +5,13 @@ target_compile_features(smooth-movement PRIVATE cxx_std_17)
 add_executable(
     smooth-movement-test
     EXCLUDE_FROM_ALL
-    test_visual_animation_manager.cpp)
+    tests/test_visual_animation_manager.cpp)
+target_include_directories(smooth-movement-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(smooth-movement-test PRIVATE cxx_std_17)
 
 add_executable(
     smooth-movement-render-test
     EXCLUDE_FROM_ALL
-    test_frame_render.cpp)
+    tests/test_frame_render.cpp)
+target_include_directories(smooth-movement-render-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(smooth-movement-render-test PRIVATE cxx_std_17)

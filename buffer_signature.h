@@ -17,6 +17,11 @@
 // FNV-1a over 64-bit words (two tiles per step) in four independent lanes, since one chain is
 // a serial multiply per element over every tracked buffer of every viewport each frame. The
 // value is only ever compared with the previous frame's, never stored.
+//
+// Measured against the alternative of an exact comparison with a retained copy (memcmp and a
+// vectorisable word loop): in the game, with nine 38x25 viewports, hashing took 12.6 µs a
+// frame and either comparison 16 to 17 µs, because comparing reads two streams where hashing
+// reads one, and this pass is bound by memory traffic.
 inline uint64_t tracked_buffer_signature(
 	const visual_gridst &grid,
 	const visual_layer_pointerst &buffers)
