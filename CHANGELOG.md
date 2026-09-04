@@ -7,8 +7,13 @@
   are their own headers with unit tests, driven against scripted engines. The layers whose
   contents are followed between frames are a named list (`movement_tracked_layers`) checked
   against the layer descriptors at compile time.
+- Fixed: sprites no longer flip or slide while the game is paused. A redraw at a simulation
+  tick the buffers were already drawn at (the game showing the units sharing a tile in turn,
+  blinking markers) is presentation, not a step, and is no longer read as movement. The tick
+  is read where the buffers are drawn, in the map screens' render on the simulation thread.
 - `smooth-movement snapshot [file]` saves the next painted frame, before the interface goes on
-  top, as a BMP in the game folder.
+  top, as a BMP in the game folder. `smooth-movement trace [count]` appends the next detected
+  movements to `smooth-movement-trace.txt` in the game folder.
 - Profiling is built in behind a runtime switch (`smooth-movement stats on|off|reset`,
   `stats detail on|off`); off, it costs one branch per counter.
 - The test tooling lives in `tests/`: unit tests, the paint-op oracle fuzzer that checks the

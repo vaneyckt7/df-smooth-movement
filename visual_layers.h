@@ -247,6 +247,10 @@ struct viewport_visual_animation_inputst
 	// Only a hint: it changes at input time, the buffers shift on a later render frame.
 	int32_t pan_x=0;
 	int32_t pan_y=0;
+	// The simulation's frame counter, or -1 when unknown. Creatures only step when it
+	// advances; buffer changes at a standing counter are presentation: cycling through the
+	// units sharing a tile, blinking markers, cursor highlights.
+	int64_t simulation_tick=-1;
 
 	visual_gridst grid() const
 		{

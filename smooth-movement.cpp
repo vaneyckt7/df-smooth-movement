@@ -16,6 +16,9 @@
 #include "df/graphic_viewportst.h"
 #include "df/renderer_2d_base.h"
 #include "df/texture_fullid.h"
+#include "df/viewscreen_dungeonmodest.h"
+#include "df/viewscreen_dwarfmodest.h"
+#include "df/world.h"
 
 #include "frame_render.h"
 #include "frame_stats.h"
@@ -30,8 +33,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -46,6 +51,8 @@ REQUIRE_GLOBAL(gps);
 REQUIRE_GLOBAL(window_x);
 REQUIRE_GLOBAL(window_y);
 REQUIRE_GLOBAL(window_z);
+using df::global::pause_state;
+using df::global::world;
 
 namespace {
 
@@ -115,6 +122,35 @@ full_redraw_gatest full_redraw_gate;
 free_camerast camera;
 
 bool snapshot_requested=false;
+// Diagnostics: movements left to print before the trace switches itself off.
+int32_t trace_budget=0;
+
+// The simulation thread fills the viewport buffers inside the map viewscreens' render, then
+// runs on while the render thread paints them, so the frame counter it shows is read there,
+// not at paint time when the counter may already have moved on. Draw serial in the high half,
+// tick in the low half, in one word so the paint side reads both as they were stored.
+std::atomic<uint64_t> drawn_buffers{0};
+uint32_t draw_serial=0;
+uint32_t painted_draw_serial=0;
+// Tick of the buffers about to be painted, or -1 when no draw was seen since the last paint.
+int64_t frame_simulation_tick=-1;
+
+void note_buffers_drawn()
+{
+	if(world==nullptr)return;
+	++draw_serial;
+	drawn_buffers.store(
+		(uint64_t(draw_serial)<<32)|uint32_t(world->frame_counter),std::memory_order_release);
+}
+
+int64_t take_drawn_tick()
+{
+	const uint64_t drawn=drawn_buffers.load(std::memory_order_acquire);
+	const uint32_t serial=uint32_t(drawn>>32);
+	if(serial==painted_draw_serial)return -1;
+	painted_draw_serial=serial;
+	return int64_t(int32_t(uint32_t(drawn)));
+}
 std::string snapshot_path;
 
 using canvasst=sdl_canvasst<df::renderer_2d_base,df::graphic_viewportst,sdl_apist>;
@@ -197,7 +233,8 @@ viewport_visual_animation_inputst animation_input(const df::graphic_viewportst *
 		table::current(vp),
 		table::previous(vp),
 		window_x?*window_x:0,
-		window_y?*window_y:0
+		window_y?*window_y:0,
+		frame_simulation_tick
 		};
 }
 
@@ -279,11 +316,31 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		if(change.reset)camera.cancel_transients();
 		}
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
+	frame_simulation_tick=take_drawn_tick();
 	animation_manager.begin_frame(now_ms);
 	for(const df::graphic_viewportst *viewport:viewports)
 		animation_manager.synchronize_viewport(animation_input(viewport));
 	animation_manager.end_frame();
 	if(t0)frame_stats.add(frame_stats.sync_us,frame_stats.now_us()-t0);
+	if(trace_budget>0)
+		{
+		// Opened only on a frame that has something to log.
+		std::ofstream trace;
+		for(const df::graphic_viewportst *viewport:viewports)
+			{
+			for(const visual_movementst &m:animation_manager.movements(viewport))
+				{
+				if(m.start_time_ms!=now_ms||trace_budget<=0)continue;
+				--trace_budget;
+				if(!trace.is_open())trace.open("smooth-movement-trace.txt",std::ios::app);
+				trace<<"t="<<now_ms<<" paused="<<(pause_state!=nullptr&&*pause_state)
+					<<" vp="<<(viewport==vp?"main":"other")<<" layer="<<int(m.layer)
+					<<" texpos="<<m.texpos<<" from ("<<m.source_x<<","<<m.source_y
+					<<") to ("<<m.target_x<<","<<m.target_y<<") facing="
+					<<int(animation_manager.get_facing(viewport,m.target_x,m.target_y))<<"\n";
+				}
+			}
+		}
 
 	if(!viewport_readable(vp)||renderer->sdl_renderer==nullptr)
 		return;
@@ -340,6 +397,30 @@ void renderer_hook::interpose_fn_update_all()
 	INTERPOSE_NEXT(update_all)();
 }
 
+// Both map screens draw the viewports; the interpose records the tick they drew.
+struct dwarfmode_hook : df::viewscreen_dwarfmodest
+{
+	typedef df::viewscreen_dwarfmodest interpose_base;
+	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
+		{
+		note_buffers_drawn();
+		INTERPOSE_NEXT(render)(curtick);
+		}
+};
+
+struct dungeonmode_hook : df::viewscreen_dungeonmodest
+{
+	typedef df::viewscreen_dungeonmodest interpose_base;
+	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
+		{
+		note_buffers_drawn();
+		INTERPOSE_NEXT(render)(curtick);
+		}
+};
+
+IMPLEMENT_VMETHOD_INTERPOSE(dwarfmode_hook,render);
+IMPLEMENT_VMETHOD_INTERPOSE(dungeonmode_hook,render);
+
 void clear_sdl_bindings()
 {
 	sdl=sdl_apist();
@@ -383,6 +464,9 @@ void reset_state()
 	full_redraw_gate=full_redraw_gatest();
 	camera=free_camerast();
 	snapshot_requested=false;
+	trace_budget=0;
+	painted_draw_serial=uint32_t(drawn_buffers.load(std::memory_order_acquire)>>32);
+	frame_simulation_tick=-1;
 }
 
 command_result status_command(
@@ -471,6 +555,19 @@ command_result status_command(
 		snapshot_path=parameters.size()==2?parameters[1]:"smooth-movement-snapshot.bmp";
 		snapshot_requested=true;
 		out.print("smooth-movement: saving the next frame to {}\n",snapshot_path);
+		return CR_OK;
+		}
+	if(parameters[0]=="trace")
+		{
+		// trace [count]: log the next detected movements to smooth-movement-trace.txt.
+		int32_t count=100;
+		if(parameters.size()==2)
+			{
+			try{count=std::stoi(parameters[1]);}
+			catch(const std::exception &){return CR_WRONG_USAGE;}
+			}
+		trace_budget=count;
+		out.print("smooth-movement: tracing the next {} movements\n",count);
 		return CR_OK;
 		}
 	if(parameters[0]=="stats")
@@ -646,7 +743,7 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 		"sprite flipping: flip on|off; "
 		"walk bob: bob on|off|<amount>; bob multipliers: bobmult <horizontal> <diagonal> <vertical>; "
 		"hops per step: hops 1|2; profiling: stats [on|off|reset|detail on|off]; "
-		"frame capture: snapshot [file].",
+		"frame capture: snapshot [file]; movement log: trace [count].",
 		status_command);
 	return CR_OK;
 }
@@ -658,9 +755,14 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 		{
 		reset_state();
 		if(!load_sdl(out))return CR_FAILURE;
-		if(!INTERPOSE_HOOK(renderer_hook,update_all).apply())
+		if(!INTERPOSE_HOOK(dwarfmode_hook,render).apply()||
+			!INTERPOSE_HOOK(dungeonmode_hook,render).apply()||
+			!INTERPOSE_HOOK(renderer_hook,update_all).apply())
 			{
-			out.printerr("smooth-movement: could not hook the 2D renderer\n");
+			out.printerr("smooth-movement: could not hook the map screens and 2D renderer\n");
+			INTERPOSE_HOOK(dwarfmode_hook,render).remove();
+			INTERPOSE_HOOK(dungeonmode_hook,render).remove();
+			INTERPOSE_HOOK(renderer_hook,update_all).remove();
 			clear_sdl_bindings();
 			return CR_FAILURE;
 			}
@@ -668,6 +770,8 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 	else
 		{
 		INTERPOSE_HOOK(renderer_hook,update_all).remove();
+		INTERPOSE_HOOK(dwarfmode_hook,render).remove();
+		INTERPOSE_HOOK(dungeonmode_hook,render).remove();
 		reset_state();
 		clear_sdl_bindings();
 		if(gps!=nullptr)++gps->force_full_display_count;

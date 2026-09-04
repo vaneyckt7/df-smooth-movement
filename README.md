@@ -40,6 +40,7 @@ smooth-movement bobmult 1 2.4 2.7  # bob multipliers for horizontal, diagonal, v
 smooth-movement hops 1      # one hop per step instead of two
 smooth-movement stats on    # count and time the plugin's frame work (stats to print, stats reset)
 smooth-movement snapshot    # save the next painted frame as a BMP in the game folder
+smooth-movement trace 100   # log the next 100 detected movements to smooth-movement-trace.txt
 ```
 
 ### Walk bob
@@ -73,7 +74,9 @@ In game, `smooth-movement stats on` followed by `stats` after a while prints per
 `smooth-movement snapshot [file]` saves the next frame the plugin paints, before the interface
 is drawn over it, as a BMP, to check the result without a screen capture. The path is relative
 to the game's working directory, an existing file is overwritten, and the request stays armed
-until a frame with a readable map viewport comes along.
+until a frame with a readable map viewport comes along. `smooth-movement trace [count]` appends
+the next `count` detected movements (viewport, layer, texpos, from, to, resulting facing and
+whether the game was paused) to `smooth-movement-trace.txt` in the same directory.
 
 ## Compatibility
 

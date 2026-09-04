@@ -998,5 +998,72 @@ int main()
 	assert(!movement.get_movement(viewport,viewport_visual_layer::center,1,1).active);
 	}
 
+	// A paused game: the buffers keep changing (units sharing a tile are shown in turn, markers
+	// blink) at a standing simulation tick. Whatever they show, nothing stepped, so nothing may
+	// move or turn: the hop below reads as a step at an advancing tick and as a repaint otherwise.
+	{
+	constexpr int32_t dim=4;
+	int32_t empty[dim*dim]={};
+	int32_t west[dim*dim]={};
+	int32_t east[dim*dim]={};
+	const int token=0;
+	const void *viewport=&token;
+	west[1*dim+2]=50;
+	east[2*dim+2]=50;
+	visual_animation_managerst manager;
+	manager.set_base_duration_ms(100);
+	auto input=make_input(viewport,dim,empty);
+	input.simulation_tick=400;
+	set_layer(input,viewport_visual_layer::center,west,empty);
+	run_frame(manager,input,1000);
+	set_layer(input,viewport_visual_layer::center,east,west);
+	run_frame(manager,input,1016);
+	assert(!manager.requires_full_redraw());
+	assert(!manager.get_movement(viewport,viewport_visual_layer::center,2,2).active);
+	assert(manager.get_facing(viewport,2,2)==native_sprite_facing);
+	set_layer(input,viewport_visual_layer::center,west,east);
+	run_frame(manager,input,1032);
+	assert(!manager.requires_full_redraw());
+	assert(manager.get_facing(viewport,1,2)==native_sprite_facing);
+	// The same change on a new tick is a step.
+	input.simulation_tick=401;
+	set_layer(input,viewport_visual_layer::center,east,west);
+	run_frame(manager,input,1048);
+	assert(manager.requires_full_redraw());
+	assert(manager.get_movement(viewport,viewport_visual_layer::center,2,2).active);
+	assert(manager.get_facing(viewport,2,2)==visual_facingst::east);
+	run_frame(manager,input,1150); // the step ends: its last full redraw
+	// Only the first redraw after a tick counts; a later repaint at that tick is presentation,
+	// and the sprite that just turned east stays east rather than flipping back.
+	set_layer(input,viewport_visual_layer::center,west,east);
+	run_frame(manager,input,1200);
+	assert(!manager.requires_full_redraw());
+	assert(manager.get_facing(viewport,1,2)==native_sprite_facing);
+	set_layer(input,viewport_visual_layer::center,east,west);
+	run_frame(manager,input,1216);
+	assert(!manager.requires_full_redraw());
+	assert(manager.get_facing(viewport,2,2)==native_sprite_facing);
+	// A tick that advances before the buffers catch up: the redraw showing the step comes a
+	// frame later, at the same tick, and still counts, because no drawn buffers claimed it yet.
+	input.simulation_tick=402;
+	run_frame(manager,input,1232); // buffers unchanged
+	assert(!manager.requires_full_redraw());
+	set_layer(input,viewport_visual_layer::center,west,east);
+	run_frame(manager,input,1248);
+	assert(manager.requires_full_redraw());
+	assert(manager.get_movement(viewport,viewport_visual_layer::center,1,2).active);
+	assert(manager.get_facing(viewport,1,2)==visual_facingst::west);
+	// An unknown tick (no simulation to ask) keeps every buffer change a candidate step.
+	visual_animation_managerst blind;
+	blind.set_base_duration_ms(100);
+	auto blind_input=make_input(viewport,dim,empty);
+	set_layer(blind_input,viewport_visual_layer::center,west,empty);
+	run_frame(blind,blind_input,1000);
+	set_layer(blind_input,viewport_visual_layer::center,east,west);
+	run_frame(blind,blind_input,1016);
+	assert(blind.requires_full_redraw());
+	assert(blind.get_facing(viewport,2,2)==visual_facingst::east);
+	}
+
 	return 0;
 }

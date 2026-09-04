@@ -72,6 +72,8 @@ class visual_animation_managerst
 		// already held the new view.
 		bool previous_view_stale=false;
 		uint64_t previous_buffer_signature=0;
+		// Simulation tick the buffers last advanced at, to tell a step from a repaint.
+		int64_t buffer_tick=-1;
 	};
 
 	uint32_t frame_time_ms=0;
@@ -226,6 +228,11 @@ class visual_animation_managerst
 			if(context_changed)state.facing.resize(grid);
 
 			const bool buffers_advanced=observe_buffers(state,input);
+			// A redraw at the tick the buffers were last drawn at shows the same world: whatever
+			// differs is presentation, not a step, and a paused game is nothing but such redraws.
+			const bool world_advanced=input.simulation_tick<0||
+				state.buffer_tick!=input.simulation_tick;
+			if(buffers_advanced)state.buffer_tick=input.simulation_tick;
 
 			if(context_changed)
 				{
@@ -271,7 +278,8 @@ class visual_animation_managerst
 					}
 				}
 
-			const bool suppress=!buffers_advanced||crossed_views||state.scroll.suppresses();
+			const bool suppress=!buffers_advanced||crossed_views||state.scroll.suppresses()||
+				!world_advanced;
 			if(buffers_advanced)state.scroll.spend_settle_frame();
 			if(!suppress)
 				{
@@ -320,6 +328,14 @@ class visual_animation_managerst
 			const viewport_animationst *state=find_viewport(viewport);
 			if(state==nullptr||!state->grid.contains(x,y))return native_sprite_facing;
 			return state->facing.at(size_t(state->grid.index(x,y)));
+			}
+
+		// Every movement in flight on a viewport, for diagnostics.
+		const std::vector<visual_movementst> &movements(const void *viewport) const
+			{
+			static const std::vector<visual_movementst> none;
+			const viewport_animationst *state=find_viewport(viewport);
+			return state!=nullptr?state->movements.all():none;
 			}
 
 		bool has_mirrored_facing(const void *viewport) const
