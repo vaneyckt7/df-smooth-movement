@@ -59,10 +59,26 @@ struct test_viewportst
 	int32_t *screentexpos_up_creature_old=nullptr;
 	int32_t *screentexpos_upright_creature_old=nullptr;
 	int32_t *screentexpos_designation_old=nullptr;
+	int32_t *screentexpos_background_old=nullptr;
+	uint64_t *screentexpos_floor_flag_old=nullptr;
+	int32_t *screentexpos_background_two_old=nullptr;
+	uint32_t *screentexpos_liquid_flag_old=nullptr;
+	uint32_t *screentexpos_spatter_flag_old=nullptr;
+	int32_t *screentexpos_spatter_old=nullptr;
+	uint64_t *screentexpos_ramp_flag_old=nullptr;
+	uint32_t *screentexpos_shadow_flag_old=nullptr;
+	int32_t *screentexpos_building_one_old=nullptr;
+	int32_t *screentexpos_vermin_old=nullptr;
+	int32_t *screentexpos_building_two_old=nullptr;
+	int32_t *screentexpos_projectile_old=nullptr;
+	int32_t *screentexpos_high_flow_old=nullptr;
+	int32_t *screentexpos_top_shadow_old=nullptr;
+	int32_t *screentexpos_signpost_old=nullptr;
+	int32_t *screentexpos_interface_old=nullptr;
 
-	std::vector<int32_t> i32[29];
-	std::vector<uint32_t> u32[3];
-	std::vector<uint64_t> u64[2];
+	std::vector<int32_t> i32[40];
+	std::vector<uint32_t> u32[6];
+	std::vector<uint64_t> u64[4];
 
 	test_viewportst(int32_t dx,int32_t dy)
 		{
@@ -85,14 +101,22 @@ struct test_viewportst
 			&screentexpos_item_old,&screentexpos_vehicle_old,&screentexpos_left_creature_old,
 			&screentexpos_old,&screentexpos_right_creature_old,&screentexpos_upleft_creature_old,
 			&screentexpos_up_creature_old,&screentexpos_upright_creature_old,
-			&screentexpos_designation_old};
-		static_assert(sizeof(i32_members)/sizeof(i32_members[0])==29);
-		for(size_t i=0;i<29;++i)*i32_members[i]=i32[i].data();
+			&screentexpos_designation_old,&screentexpos_background_old,
+			&screentexpos_background_two_old,&screentexpos_spatter_old,
+			&screentexpos_building_one_old,&screentexpos_vermin_old,
+			&screentexpos_building_two_old,&screentexpos_projectile_old,
+			&screentexpos_high_flow_old,&screentexpos_top_shadow_old,
+			&screentexpos_signpost_old,&screentexpos_interface_old};
+		static_assert(sizeof(i32_members)/sizeof(i32_members[0])==40);
+		for(size_t i=0;i<40;++i)*i32_members[i]=i32[i].data();
 		uint32_t **u32_members[]={
-			&screentexpos_liquid_flag,&screentexpos_spatter_flag,&screentexpos_shadow_flag};
-		for(size_t i=0;i<3;++i)*u32_members[i]=u32[i].data();
-		uint64_t **u64_members[]={&screentexpos_floor_flag,&screentexpos_ramp_flag};
-		for(size_t i=0;i<2;++i)*u64_members[i]=u64[i].data();
+			&screentexpos_liquid_flag,&screentexpos_spatter_flag,&screentexpos_shadow_flag,
+			&screentexpos_liquid_flag_old,&screentexpos_spatter_flag_old,
+			&screentexpos_shadow_flag_old};
+		for(size_t i=0;i<6;++i)*u32_members[i]=u32[i].data();
+		uint64_t **u64_members[]={&screentexpos_floor_flag,&screentexpos_ramp_flag,
+			&screentexpos_floor_flag_old,&screentexpos_ramp_flag_old};
+		for(size_t i=0;i<4;++i)*u64_members[i]=u64[i].data();
 		}
 
 	test_viewportst(const test_viewportst &)=delete;
@@ -104,16 +128,35 @@ struct test_viewportst
 		}
 
 	// A new engine redraw: the current buffers become the previous ones and start empty.
+	// The other buffers keep their content, which the engine has by now copied as well.
 	void redraw()
 		{
 		using table=viewport_layer_tablest<test_viewportst>;
+		const size_t n=size_t(dim_x)*size_t(dim_y);
 		for(const auto &buffer:table::buffers)
 			{
 			int32_t *current=this->*buffer.current;
 			int32_t *previous=this->*buffer.previous;
-			std::copy(current,current+size_t(dim_x)*size_t(dim_y),previous);
-			std::fill(current,current+size_t(dim_x)*size_t(dim_y),0);
+			std::copy(current,current+n,previous);
+			std::fill(current,current+n,0);
 			}
+		const auto settle=[n](auto *current,auto *previous){std::copy(current,current+n,previous);};
+		settle(screentexpos_background,screentexpos_background_old);
+		settle(screentexpos_floor_flag,screentexpos_floor_flag_old);
+		settle(screentexpos_background_two,screentexpos_background_two_old);
+		settle(screentexpos_liquid_flag,screentexpos_liquid_flag_old);
+		settle(screentexpos_spatter_flag,screentexpos_spatter_flag_old);
+		settle(screentexpos_spatter,screentexpos_spatter_old);
+		settle(screentexpos_ramp_flag,screentexpos_ramp_flag_old);
+		settle(screentexpos_shadow_flag,screentexpos_shadow_flag_old);
+		settle(screentexpos_building_one,screentexpos_building_one_old);
+		settle(screentexpos_vermin,screentexpos_vermin_old);
+		settle(screentexpos_building_two,screentexpos_building_two_old);
+		settle(screentexpos_projectile,screentexpos_projectile_old);
+		settle(screentexpos_high_flow,screentexpos_high_flow_old);
+		settle(screentexpos_top_shadow,screentexpos_top_shadow_old);
+		settle(screentexpos_signpost,screentexpos_signpost_old);
+		settle(screentexpos_interface,screentexpos_interface_old);
 		}
 };
 
@@ -505,8 +548,36 @@ void test_lower_level_sprite_is_shaded_by_the_main_level()
 
 } // namespace
 
+void test_resting_mirrored_sprite_needs_a_frame_only_when_the_engine_repaints_under_it()
+{
+	scenest scene(8,6);
+	scene.renderer.get_settings().flip=true;
+	scene.step(2,3,3,3);
+	scene.sync(1150);
+	scene.render();
+	// At rest, facing east, with every buffer settled: nothing on screen changed.
+	scene.vp.redraw();
+	scene.vp.screentexpos[scene.vp.index(3,3)]=50;
+	scene.sync(1300);
+	assert(scene.manager.has_mirrored_facing(&scene.vp));
+	assert(!scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
+	// A repaint far from the creature leaves the sprite on screen.
+	scene.vp.screentexpos_background[scene.vp.index(7,0)]=8;
+	assert(!scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
+	// Any buffer changing within reach of the sprite calls for a frame.
+	scene.vp.screentexpos_interface[scene.vp.index(4,3)]=4;
+	assert(scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
+	scene.vp.screentexpos_interface[scene.vp.index(4,3)]=3;
+	scene.vp.screentexpos_liquid_flag[scene.vp.index(3,2)]=1;
+	assert(scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
+	// Without flipping there is no resting sprite to protect.
+	scene.renderer.get_settings().flip=false;
+	assert(!scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
+}
+
 int main()
 {
+	test_resting_mirrored_sprite_needs_a_frame_only_when_the_engine_repaints_under_it();
 	test_step_repaints_the_path_with_the_creature_hidden();
 	test_last_frames_tiles_are_repainted_once_more();
 	test_fire_on_the_path_drops_the_sprite();

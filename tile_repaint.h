@@ -297,4 +297,41 @@ void repaint_interface_only(Viewport *vp,int32_t x,int32_t y,const Repaint &repa
 		vp->screentexpos_signpost[index]);
 }
 
+// Whether the engine repainted a tile this frame. The engine repaints a tile when any of its
+// buffers changed, and copies the buffers to their `_old` twins only after the frame, so at
+// hook time a difference between a buffer and its twin is exactly a repainted tile.
+template<typename Viewport>
+bool engine_repainted_tile(const Viewport *vp,int32_t index)
+{
+	const auto differs=[index](const auto *current,const auto *previous)
+		{
+		return current!=nullptr&&previous!=nullptr&&current[index]!=previous[index];
+		};
+	return differs(vp->screentexpos,vp->screentexpos_old)||
+		differs(vp->screentexpos_background,vp->screentexpos_background_old)||
+		differs(vp->screentexpos_floor_flag,vp->screentexpos_floor_flag_old)||
+		differs(vp->screentexpos_background_two,vp->screentexpos_background_two_old)||
+		differs(vp->screentexpos_liquid_flag,vp->screentexpos_liquid_flag_old)||
+		differs(vp->screentexpos_spatter_flag,vp->screentexpos_spatter_flag_old)||
+		differs(vp->screentexpos_spatter,vp->screentexpos_spatter_old)||
+		differs(vp->screentexpos_ramp_flag,vp->screentexpos_ramp_flag_old)||
+		differs(vp->screentexpos_shadow_flag,vp->screentexpos_shadow_flag_old)||
+		differs(vp->screentexpos_building_one,vp->screentexpos_building_one_old)||
+		differs(vp->screentexpos_item,vp->screentexpos_item_old)||
+		differs(vp->screentexpos_vehicle,vp->screentexpos_vehicle_old)||
+		differs(vp->screentexpos_vermin,vp->screentexpos_vermin_old)||
+		differs(vp->screentexpos_left_creature,vp->screentexpos_left_creature_old)||
+		differs(vp->screentexpos_right_creature,vp->screentexpos_right_creature_old)||
+		differs(vp->screentexpos_building_two,vp->screentexpos_building_two_old)||
+		differs(vp->screentexpos_projectile,vp->screentexpos_projectile_old)||
+		differs(vp->screentexpos_high_flow,vp->screentexpos_high_flow_old)||
+		differs(vp->screentexpos_top_shadow,vp->screentexpos_top_shadow_old)||
+		differs(vp->screentexpos_signpost,vp->screentexpos_signpost_old)||
+		differs(vp->screentexpos_upleft_creature,vp->screentexpos_upleft_creature_old)||
+		differs(vp->screentexpos_up_creature,vp->screentexpos_up_creature_old)||
+		differs(vp->screentexpos_upright_creature,vp->screentexpos_upright_creature_old)||
+		differs(vp->screentexpos_designation,vp->screentexpos_designation_old)||
+		differs(vp->screentexpos_interface,vp->screentexpos_interface_old);
+}
+
 #endif

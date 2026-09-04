@@ -95,6 +95,9 @@ double drag_anchor_vy=0.0;
 int32_t drag_anchor_mx=0;                     // precise mouse at drag start, pixels
 int32_t drag_anchor_my=0;
 bool camera_was_offset=false;                 // edge-detects offset->0 for one cleanup redraw
+int16_t full_display_count_seen=0;            // gps->force_full_display_count last frame
+bool has_full_display_count=false;
+int32_t full_redraw_frames=0;                 // frames still to paint after a full engine redraw
 int32_t camera_prev_wx=0;                     // window-scroll observation baseline
 int32_t camera_prev_wy=0;
 bool camera_has_prev=false;
@@ -549,14 +552,6 @@ class sdl_canvasst
 			}
 };
 
-bool has_mirrored_viewport_facing(
-	const std::vector<df::graphic_viewportst *> &viewports)
-{
-	for(const df::graphic_viewportst *vp:viewports)
-		if(animation_manager.has_mirrored_facing(vp))return true;
-	return false;
-}
-
 void render_interpolated_world(df::renderer_2d_base *renderer)
 {
 	df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
@@ -583,8 +578,16 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		if(gps!=nullptr)++gps->force_full_display_count;
 		}
 	if(glide)camera_was_offset=true;
-	if(!glide&&!animation_manager.requires_full_redraw()&&
-		(!render_settings.flip||!has_mirrored_viewport_facing(viewports)))
+	// A full engine redraw wipes the resting mirrored sprites; whether the engine acts on the
+	// counter before or after this hook, painting this frame and the next covers it.
+	const int16_t full_display_count=gps!=nullptr?gps->force_full_display_count:0;
+	if(!has_full_display_count||full_display_count!=full_display_count_seen)full_redraw_frames=2;
+	full_display_count_seen=full_display_count;
+	has_full_display_count=true;
+	const bool after_full_redraw=full_redraw_frames>0;
+	if(after_full_redraw)--full_redraw_frames;
+	if(!glide&&!after_full_redraw&&!animation_manager.requires_full_redraw()&&
+		!frame_renderer.resting_sprites_disturbed(viewports,animation_manager))
 		return;
 
 	sdl_canvasst canvas(renderer);
@@ -654,6 +657,8 @@ void reset_state()
 	camera_enabled=false;
 	camera_has_prev=false;
 	camera_was_offset=false;
+	has_full_display_count=false;
+	full_redraw_frames=0;
 }
 
 command_result status_command(

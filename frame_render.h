@@ -99,6 +99,7 @@ class frame_rendererst
 	tile_coveragest coverage;
 	tile_coveragest previous_coverage;
 	tile_coveragest redraw_coverage;
+	std::vector<int32_t> mirrored_scratch;
 
 	template<typename Canvas>
 	void draw_proxy(Canvas &canvas,const sprite_proxyst &proxy) const
@@ -203,6 +204,38 @@ class frame_rendererst
 		void forget_coverage()
 			{
 			previous_coverage.clear();
+			}
+
+		// A frame without movement still needs painting when the engine repainted a tile that a
+		// resting mirrored sprite covers: the sprite stays on screen until then. The reach
+		// covers the sprite's fragments and the largest mirror shift.
+		template<typename Manager>
+		bool resting_sprites_disturbed(
+			const std::vector<Viewport *> &viewports,
+			const Manager &manager)
+			{
+			if(!settings.flip)return false;
+			constexpr int32_t reach_x=2;
+			constexpr int32_t reach_y=1;
+			for(const Viewport *vp:viewports)
+				{
+				manager.mirrored_tiles(vp,mirrored_scratch);
+				if(mirrored_scratch.empty())continue;
+				const visual_gridst grid{vp->dim_x,vp->dim_y};
+				for(const int32_t index:mirrored_scratch)
+					{
+					const int32_t x=index/vp->dim_y;
+					const int32_t y=index%vp->dim_y;
+					for(int32_t tx=x-reach_x;tx<=x+reach_x;++tx)
+						for(int32_t ty=y-reach_y;ty<=y+reach_y;++ty)
+							{
+							if(!grid.contains(tx,ty))continue;
+							for(const Viewport *level:viewports)
+								if(engine_repainted_tile(level,grid.index(tx,ty)))return true;
+							}
+					}
+				}
+			return false;
 			}
 
 		// `viewports` lowest level first, ending with `main`; `glide` is the camera's pixel

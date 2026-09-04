@@ -10,6 +10,11 @@
   496 µs with 300 creatures in a 200x110 view. The painted output is unchanged
   except that a mirrored stationary sprite no longer blocks on fire in the
   tiles between its own tile and the one it is drawn on.
+- With sprite flipping on, a frame without movement is painted only when the
+  engine repainted a tile under a resting mirrored sprite (any buffer of a
+  tile within the sprite's reach differs from its previous-frame twin), or
+  after a full engine redraw. Before, every frame with a mirrored creature on
+  screen was painted in full.
 - Lower per-frame CPU cost: proxy collection visits only tiles near a
   movement instead of sweeping every layer of every viewport, the buffer
   signature covers only the current buffers and hashes them two tiles at a
