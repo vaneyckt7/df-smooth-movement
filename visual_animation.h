@@ -286,8 +286,10 @@ class visual_animation_managerst
 					movement_duration_ms);
 				}
 			expire_movements(state,input);
-			state.facing.settle(
-				input.current[static_cast<size_t>(viewport_visual_layer::center)]);
+			// Facing only changes with the buffers; expiry also runs on time.
+			if(buffers_advanced)
+				state.facing.settle(
+					input.current[static_cast<size_t>(viewport_visual_layer::center)]);
 			if(!state.movements.empty())force_full_redraw=true;
 			}
 

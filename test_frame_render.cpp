@@ -174,6 +174,8 @@ struct canvas_eventst
 	int32_t center=0;        // repaint: the center buffer as the engine would read it
 	int32_t interface=0;
 	int32_t background=0;
+	int32_t item=0;
+	int32_t designation=0;
 	float px=0.0f;           // sprite: pixel position
 	float py=0.0f;
 	bool mirrored=false;
@@ -212,6 +214,8 @@ struct recording_canvasst
 		e.center=vp->screentexpos[vp->index(x,y)];
 		e.interface=vp->screentexpos_interface[vp->index(x,y)];
 		e.background=vp->screentexpos_background[vp->index(x,y)];
+		e.item=vp->screentexpos_item[vp->index(x,y)];
+		e.designation=vp->screentexpos_designation[vp->index(x,y)];
 		events.push_back(e);
 		}
 
@@ -576,8 +580,109 @@ void test_resting_mirrored_sprite_needs_a_frame_only_when_the_engine_repaints_un
 	assert(!scene.renderer.resting_sprites_disturbed(scene.viewports,scene.manager));
 }
 
+// Repaints of one tile at one level whose shading (interface) is painted, in order.
+size_t shaded_repaints(const recording_canvasst &canvas,const test_viewportst *vp,int32_t x,int32_t y)
+{
+	size_t shaded=0;
+	for(const canvas_eventst &e:canvas.repaints_of(vp,x,y))if(e.interface!=0)++shaded;
+	return shaded;
+}
+
+void test_two_sprite_groups_on_a_tile_fold_the_shading_once_after_the_last()
+{
+	scenest scene(8,6);
+	// A creature carrying an item: both layers step from (2,3) to (3,3).
+	scene.vp.screentexpos_item[scene.vp.index(2,3)]=90;
+	scene.vp.screentexpos[scene.vp.index(2,3)]=50;
+	scene.sync(1000);
+	scene.vp.redraw();
+	scene.vp.screentexpos_item[scene.vp.index(3,3)]=90;
+	scene.vp.screentexpos[scene.vp.index(3,3)]=50;
+	scene.sync(1100);
+	scene.sync(1150);
+	scene.render();
+	const auto &canvas=scene.canvas;
+	assert(canvas.count(canvas_eventst::sprite)==2);
+	for(const int32_t x:{2,3})
+		{
+		const auto repaints=canvas.repaints_of(&scene.vp,x,3);
+		// Beneath both groups, above the item group, above the main group.
+		assert(repaints.size()==3);
+		for(const canvas_eventst &e:repaints)
+			{
+			assert(e.center==0);
+			assert(e.item==0);
+			}
+		assert(repaints[0].background==7);
+		assert(repaints[1].background==0);
+		assert(repaints[2].background==0);
+		// The shading is painted exactly once, with the last group, so it covers both sprites.
+		assert(shaded_repaints(canvas,&scene.vp,x,3)==1);
+		assert(repaints.back().interface==3);
+		}
+	assert(scene.vp.screentexpos_item[scene.vp.index(3,3)]==90);
+}
+
+void test_designation_as_last_group_paints_the_shading_alone()
+{
+	scenest scene(8,6);
+	scene.vp.screentexpos_designation[scene.vp.index(2,3)]=70;
+	scene.vp.screentexpos[scene.vp.index(2,3)]=50;
+	scene.sync(1000);
+	scene.vp.redraw();
+	scene.vp.screentexpos_designation[scene.vp.index(3,3)]=70;
+	scene.vp.screentexpos[scene.vp.index(3,3)]=50;
+	scene.sync(1100);
+	scene.sync(1150);
+	scene.render();
+	const auto &canvas=scene.canvas;
+	assert(canvas.count(canvas_eventst::sprite)==2);
+	for(const int32_t x:{2,3})
+		{
+		const auto repaints=canvas.repaints_of(&scene.vp,x,3);
+		assert(repaints.size()==3);
+		for(const canvas_eventst &e:repaints)
+			{
+			assert(e.center==0);
+			assert(e.designation==0);
+			}
+		// The main group is not the tile's last, so its repaint above holds the shading back;
+		// the designation group ends with the shading alone.
+		assert(repaints[1].interface==0);
+		assert(shaded_repaints(canvas,&scene.vp,x,3)==1);
+		assert(repaints.back().interface==3);
+		assert(repaints.back().background==0);
+		}
+}
+
+void test_resting_sprite_is_disturbed_by_a_repaint_on_another_level_with_the_same_grid()
+{
+	scenest scene(8,6);
+	scene.renderer.get_settings().flip=true;
+	scene.step(2,3,3,3);
+	scene.sync(1150);
+	scene.render();
+	scene.vp.redraw();
+	scene.vp.screentexpos[scene.vp.index(3,3)]=50;
+	scene.sync(1300);
+	assert(scene.manager.has_mirrored_facing(&scene.vp));
+	test_viewportst lower(8,6);
+	std::vector<test_viewportst *> levels{&lower,&scene.vp};
+	assert(!scene.renderer.resting_sprites_disturbed(levels,scene.manager));
+	lower.screentexpos_background[lower.index(4,4)]=8;
+	assert(scene.renderer.resting_sprites_disturbed(levels,scene.manager));
+	// A level with another grid cannot be compared tile for tile and is left alone.
+	test_viewportst other(3,2);
+	std::vector<test_viewportst *> mismatched{&other,&scene.vp};
+	std::fill(other.screentexpos_background,other.screentexpos_background+6,8);
+	assert(!scene.renderer.resting_sprites_disturbed(mismatched,scene.manager));
+}
+
 int main()
 {
+	test_two_sprite_groups_on_a_tile_fold_the_shading_once_after_the_last();
+	test_designation_as_last_group_paints_the_shading_alone();
+	test_resting_sprite_is_disturbed_by_a_repaint_on_another_level_with_the_same_grid();
 	test_resting_mirrored_sprite_needs_a_frame_only_when_the_engine_repaints_under_it();
 	test_step_repaints_the_path_with_the_creature_hidden();
 	test_last_frames_tiles_are_repainted_once_more();

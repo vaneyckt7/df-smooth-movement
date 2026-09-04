@@ -186,8 +186,10 @@ class frame_rendererst
 			}
 
 		// A frame without movement still needs painting when the engine repainted a tile that a
-		// resting mirrored sprite covers: the sprite stays on screen until then. The reach
-		// covers the sprite's fragments and the largest mirror shift.
+		// resting mirrored sprite covers: the sprite stays on screen until then. The reach is a
+		// 5x3 box around the anchor: the fragments to either side plus the largest mirror shift,
+		// and the row above for the bob. Levels are checked at the same tile, so a level whose
+		// grid differs from the anchor's is skipped.
 		template<typename Manager>
 		bool resting_sprites_disturbed(
 			const std::vector<Viewport *> &viewports,
@@ -208,7 +210,8 @@ class frame_rendererst
 							{
 							if(!grid.contains(tx,ty))continue;
 							for(const Viewport *level:viewports)
-								if(engine_repainted_tile(level,grid.index(tx,ty)))return true;
+								if(level->dim_x==vp->dim_x&&level->dim_y==vp->dim_y&&
+									engine_repainted_tile(level,grid.index(tx,ty)))return true;
 							}
 					}
 				}

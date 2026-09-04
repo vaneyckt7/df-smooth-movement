@@ -265,6 +265,7 @@ bool interface_pass_readable(const Viewport *vp)
 		vp->screentexpos_building_two!=nullptr&&
 		vp->screentexpos_projectile!=nullptr&&
 		vp->screentexpos_high_flow!=nullptr&&
+		vp->screentexpos_top_shadow!=nullptr&&
 		vp->screentexpos_signpost!=nullptr;
 }
 
@@ -294,6 +295,7 @@ void repaint_interface_only(Viewport *vp,int32_t x,int32_t y,const Repaint &repa
 		vp->screentexpos_building_two[index],
 		vp->screentexpos_projectile[index],
 		vp->screentexpos_high_flow[index],
+		vp->screentexpos_top_shadow[index],
 		vp->screentexpos_signpost[index]);
 }
 

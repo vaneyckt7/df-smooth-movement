@@ -20,7 +20,13 @@
   and the shading (the interface layer) is painted with the repaint above the
   tile's last sprite group instead of in a pass of its own; a level without
   sprites on a tile repaints it whole. A paint-operation oracle keyed by pixel
-  cell confirms the painted result is unchanged over 9258 random frames.
+  cell confirms the painted result is unchanged over 9381 random frames, with
+  one deliberate exception: the shading-only repaint after a tile's last sprite
+  group now blanks the top shadow as well, so it is painted once, in engine
+  order, instead of a second time over the sprites.
+- Idle frames cost less: the facing grid settles only when the buffers
+  changed, and the black fills that blank tiles before a repaint are queued
+  and handed to SDL in one call per batch instead of one call per tile.
 - The frame pass no longer sweeps the screen: covered tiles are visited from
   the list of marked tiles instead of scanning the bounding box once per
   render group and level, and the tiles with a mirrored resting creature are

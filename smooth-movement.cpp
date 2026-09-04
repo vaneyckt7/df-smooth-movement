@@ -44,12 +44,13 @@ constexpr const char *plugin_version="0.3.0";
 // Runtime harness for the engine-owned visual state; gameplay data is never read.
 decltype(&SDL_RenderCopyF) render_copy_f=nullptr;
 decltype(&SDL_RenderCopyExF) render_copy_ex_f=nullptr;
-decltype(&SDL_RenderFillRect) render_fill_rect=nullptr;
+decltype(&SDL_RenderFillRects) render_fill_rects=nullptr;
 decltype(&SDL_RenderSetClipRect) render_set_clip_rect=nullptr;
 decltype(&SDL_GetRenderDrawColor) get_render_draw_color=nullptr;
 decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
 
 visual_animation_managerst animation_manager;
+std::vector<SDL_Rect> fill_scratch;
 frame_rendererst<df::graphic_viewportst> frame_renderer;
 // Sprite flipping and walk bob, both off by default: `flip on`, `bob on`.
 render_settingst &render_settings=frame_renderer.get_settings();
@@ -467,6 +468,15 @@ class sdl_canvasst
 	SDL_Renderer *sdl;
 	bool filling=false;
 	Uint8 saved_r=0,saved_g=0,saved_b=0,saved_a=255;
+	// The frame's black fills, issued as one SDL call before anything paints over them.
+	std::vector<SDL_Rect> &fills=fill_scratch;
+
+	void flush_fills()
+		{
+		if(fills.empty())return;
+		render_fill_rects(sdl,fills.data(),int(fills.size()));
+		fills.clear();
+		}
 
 	public:
 		explicit sdl_canvasst(df::renderer_2d_base *renderer):
@@ -477,6 +487,7 @@ class sdl_canvasst
 
 		~sdl_canvasst()
 			{
+			flush_fills();
 			if(filling)set_render_draw_color(sdl,saved_r,saved_g,saved_b,saved_a);
 			}
 
@@ -506,6 +517,7 @@ class sdl_canvasst
 
 		void repaint(df::graphic_viewportst *vp,int32_t x,int32_t y)
 			{
+			flush_fills();
 			renderer->update_viewport_tile(vp,x,y);
 			}
 
@@ -518,6 +530,7 @@ class sdl_canvasst
 		// `bind` aborts load_sdl on any missing symbol and plugin_enable then refuses the hook.
 		void draw_sprite(const void *texture,float x,float y,float size,bool mirrored)
 			{
+			flush_fills();
 			SDL_Texture *sdl_texture=static_cast<SDL_Texture *>(const_cast<void *>(texture));
 			const SDL_FRect destination={x,y,size,size};
 			if(mirrored&&render_copy_ex_f!=nullptr)
@@ -527,7 +540,8 @@ class sdl_canvasst
 			}
 
 		// The draw colour is switched to black on the first fill and put back when the
-		// frame's canvas goes away, not around every tile.
+		// frame's canvas goes away, not around every tile. Fills are collected and issued
+		// together: the frame pass fills before it paints anything over them.
 		void fill_black(const pixel_rectst &rect)
 			{
 			if(!filling)
@@ -536,18 +550,19 @@ class sdl_canvasst
 				set_render_draw_color(sdl,0,0,0,255);
 				filling=true;
 				}
-			const SDL_Rect sdl_rect={rect.x,rect.y,rect.w,rect.h};
-			render_fill_rect(sdl,&sdl_rect);
+			fills.push_back({rect.x,rect.y,rect.w,rect.h});
 			}
 
 		void set_clip(const pixel_rectst &rect)
 			{
+			flush_fills();
 			const SDL_Rect sdl_rect={rect.x,rect.y,rect.w,rect.h};
 			render_set_clip_rect(sdl,&sdl_rect);
 			}
 
 		void clear_clip()
 			{
+			flush_fills();
 			render_set_clip_rect(sdl,nullptr);
 			}
 };
@@ -613,7 +628,7 @@ void clear_sdl_bindings()
 {
 	render_copy_f=nullptr;
 	render_copy_ex_f=nullptr;
-	render_fill_rect=nullptr;
+	render_fill_rects=nullptr;
 	render_set_clip_rect=nullptr;
 	get_render_draw_color=nullptr;
 	set_render_draw_color=nullptr;
@@ -632,7 +647,7 @@ bool load_sdl(color_ostream &out)
 		}
 	bind(SDL_RenderCopyF,render_copy_f);
 	bind(SDL_RenderCopyExF,render_copy_ex_f);
-	bind(SDL_RenderFillRect,render_fill_rect);
+	bind(SDL_RenderFillRects,render_fill_rects);
 	bind(SDL_RenderSetClipRect,render_set_clip_rect);
 	bind(SDL_GetRenderDrawColor,get_render_draw_color);
 	bind(SDL_SetRenderDrawColor,set_render_draw_color);
