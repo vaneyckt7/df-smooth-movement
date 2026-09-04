@@ -132,7 +132,7 @@ constexpr uint16_t visual_layer_bit(viewport_visual_layer layer)
 
 // The layers a redraw through `group` has already painted as proxies, and so must hide.
 // Designations are drawn last and stand alone.
-constexpr uint16_t visual_layers_through_group(visual_render_groupst group)
+constexpr uint16_t compute_visual_layers_through_group(visual_render_groupst group)
 {
 	uint16_t mask=0;
 	for(const auto &descriptor:visual_layer_descriptors)
@@ -140,6 +140,20 @@ constexpr uint16_t visual_layers_through_group(visual_render_groupst group)
 			static_cast<uint8_t>(descriptor.render_group)<=static_cast<uint8_t>(group))
 			mask|=visual_layer_bit(descriptor.layer);
 	return mask;
+}
+
+constexpr std::array<uint16_t,static_cast<size_t>(visual_render_groupst::count)>
+	visual_layers_through_group_table=[]
+{
+	std::array<uint16_t,static_cast<size_t>(visual_render_groupst::count)> table{};
+	for(size_t i=0;i<table.size();++i)
+		table[i]=compute_visual_layers_through_group(static_cast<visual_render_groupst>(i));
+	return table;
+}();
+
+constexpr uint16_t visual_layers_through_group(visual_render_groupst group)
+{
+	return visual_layers_through_group_table[static_cast<size_t>(group)];
 }
 
 constexpr uint16_t all_visual_layers_mask=uint16_t((1U<<visual_layer_count)-1);

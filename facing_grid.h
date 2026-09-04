@@ -15,26 +15,26 @@
 class facing_gridst
 {
 	std::vector<int8_t> facing;
-	// Stationary mirrored creatures are repainted every frame; this is the cheap pre-check,
-	// recomputed by settle() rather than maintained at every write.
-	bool mirrored=false;
+	// Stationary mirrored creatures are repainted every frame; settle() lists their tiles
+	// once per frame rather than maintaining the list at every write.
+	std::vector<int32_t> mirrored;
 
 	public:
 		void resize(const visual_gridst &grid)
 			{
 			facing.assign(grid.tile_count(),int8_t(native_sprite_facing));
-			mirrored=false;
+			mirrored.clear();
 			}
 
 		void reset()
 			{
 			std::fill(facing.begin(),facing.end(),int8_t(native_sprite_facing));
-			mirrored=false;
+			mirrored.clear();
 			}
 
 		bool has_mirrored() const
 			{
-			return mirrored;
+			return !mirrored.empty();
 			}
 
 		size_t size() const
@@ -78,22 +78,19 @@ class facing_gridst
 		// End of a redraw: an empty tile has no creature to face anywhere.
 		void settle(const int32_t *center_current)
 			{
-			bool any_mirrored=false;
+			mirrored.clear();
 			for(size_t i=0;i<facing.size();++i)
 				{
 				if(center_current[i]==0)facing[i]=int8_t(native_sprite_facing);
-				else if(facing[i]!=int8_t(native_sprite_facing))any_mirrored=true;
+				else if(facing[i]!=int8_t(native_sprite_facing))mirrored.push_back(int32_t(i));
 				}
-			mirrored=any_mirrored;
 			}
 
-		// Tiles whose creature faces away from the sprite's native side, ascending indices.
-		void mirrored_tiles(std::vector<int32_t> &tiles) const
+		// Tiles whose creature faces away from the sprite's native side, ascending indices,
+		// as of the last settle().
+		const std::vector<int32_t> &mirrored_tiles() const
 			{
-			tiles.clear();
-			if(!mirrored)return;
-			for(size_t i=0;i<facing.size();++i)
-				if(facing[i]!=int8_t(native_sprite_facing))tiles.push_back(int32_t(i));
+			return mirrored;
 			}
 };
 

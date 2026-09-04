@@ -5,23 +5,19 @@
 
 #include "visual_layers.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <vector>
 
 // The tiles a frame repaints, as one byte per tile: bit 0 for any coverage and one bit per
 // render group above it. Plus, per tile, the layers that have a proxy targeting it, which the
-// engine's redraw must then leave blank. Iteration is column by column, top to bottom.
+// engine's redraw must then leave blank. Iteration visits tiles in marking order: tiles are
+// repainted independently, so no order is owed.
 class tile_coveragest
 {
 	visual_gridst grid;
 	std::vector<uint8_t> marks;
 	std::vector<uint16_t> proxied;
 	std::vector<int32_t> touched;
-	int32_t min_x=0;
-	int32_t max_x=-1;
-	int32_t min_y=0;
-	int32_t max_y=-1;
 
 	static constexpr uint8_t any_bit=1;
 
@@ -33,22 +29,7 @@ class tile_coveragest
 	void touch(int32_t x,int32_t y,uint8_t bits)
 		{
 		const int32_t index=grid.index(x,y);
-		if(marks[size_t(index)]==0)
-			{
-			touched.push_back(index);
-			if(touched.size()==1)
-				{
-				min_x=max_x=x;
-				min_y=max_y=y;
-				}
-			else
-				{
-				min_x=std::min(min_x,x);
-				max_x=std::max(max_x,x);
-				min_y=std::min(min_y,y);
-				max_y=std::max(max_y,y);
-				}
-			}
+		if(marks[size_t(index)]==0)touched.push_back(index);
 		marks[size_t(index)]|=bits;
 		}
 
@@ -70,8 +51,6 @@ class tile_coveragest
 					}
 				}
 			touched.clear();
-			max_x=-1;
-			max_y=-1;
 			}
 
 		void clear()
@@ -153,12 +132,9 @@ class tile_coveragest
 		template<typename Callback>
 		void for_each_marked(uint8_t bits,const Callback &callback) const
 			{
-			for(int32_t x=min_x;x<=max_x;++x)
-				{
-				const uint8_t *column=marks.data()+size_t(grid.index(x,0));
-				for(int32_t y=min_y;y<=max_y;++y)
-					if(column[y]&bits)callback(x,y);
-				}
+			for(const int32_t index:touched)
+				if(marks[size_t(index)]&bits)
+					callback(index/grid.dim_y,index%grid.dim_y);
 			}
 };
 

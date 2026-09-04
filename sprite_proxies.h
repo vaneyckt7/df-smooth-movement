@@ -113,7 +113,6 @@ class sprite_collectorst
 {
 	std::vector<sprite_proxyst> proxies;
 	std::vector<int32_t> candidates;
-	std::vector<int32_t> mirrored;
 	std::vector<int32_t> anchors;
 	std::vector<bool> bobs;
 	// Per tile: the index of the centre proxy targeting it, and the layers already proxied.
@@ -343,8 +342,7 @@ class sprite_collectorst
 		const Texture &texture_of)
 		{
 		const visual_gridst &grid=view.grid;
-		manager.mirrored_tiles(view.id,mirrored);
-		for(const int32_t anchor_index:mirrored)
+		for(const int32_t anchor_index:manager.mirrored_tiles(view.id))
 			{
 			const int32_t anchor_x=anchor_index/grid.dim_y;
 			const int32_t anchor_y=anchor_index%grid.dim_y;

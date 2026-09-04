@@ -966,12 +966,10 @@ int main()
 	assert(none.empty());
 	// Mirrored tiles: the centre that stepped east now faces east; the one that stepped
 	// south keeps its native facing, and the item has none.
-	std::vector<int32_t> mirrored;
-	candidates_manager.mirrored_tiles(&candidates_viewport,mirrored);
+	const std::vector<int32_t> &mirrored=candidates_manager.mirrored_tiles(&candidates_viewport);
 	assert(mirrored.size()==1&&mirrored[0]==2*n+2);
 	assert(candidates_manager.get_facing(&candidates_viewport,2,2)!=native_sprite_facing);
-	candidates_manager.mirrored_tiles(&listed,mirrored);
-	assert(mirrored.empty());
+	assert(candidates_manager.mirrored_tiles(&listed).empty());
 	}
 
 	return 0;

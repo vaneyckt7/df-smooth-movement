@@ -341,11 +341,11 @@ class visual_animation_managerst
 			}
 
 		// Tiles whose creature faces away from the sprite's native side, ascending indices.
-		void mirrored_tiles(const void *viewport,std::vector<int32_t> &tiles) const
+		const std::vector<int32_t> &mirrored_tiles(const void *viewport) const
 			{
-			tiles.clear();
-			if(const viewport_animationst *state=find_viewport(viewport))
-				state->facing.mirrored_tiles(tiles);
+			static const std::vector<int32_t> none;
+			const viewport_animationst *state=find_viewport(viewport);
+			return state!=nullptr?state->facing.mirrored_tiles():none;
 			}
 
 		visual_movement_renderst get_movement(

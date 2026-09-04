@@ -99,7 +99,6 @@ class frame_rendererst
 	tile_coveragest coverage;
 	tile_coveragest previous_coverage;
 	tile_coveragest redraw_coverage;
-	std::vector<int32_t> mirrored_scratch;
 
 	template<typename Canvas>
 	void draw_proxy(Canvas &canvas,const sprite_proxyst &proxy) const
@@ -199,10 +198,8 @@ class frame_rendererst
 			constexpr int32_t reach_y=1;
 			for(const Viewport *vp:viewports)
 				{
-				manager.mirrored_tiles(vp,mirrored_scratch);
-				if(mirrored_scratch.empty())continue;
 				const visual_gridst grid{vp->dim_x,vp->dim_y};
-				for(const int32_t index:mirrored_scratch)
+				for(const int32_t index:manager.mirrored_tiles(vp))
 					{
 					const int32_t x=index/vp->dim_y;
 					const int32_t y=index%vp->dim_y;

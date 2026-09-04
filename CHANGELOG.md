@@ -21,6 +21,13 @@
   tile's last sprite group instead of in a pass of its own; a level without
   sprites on a tile repaints it whole. A paint-operation oracle keyed by pixel
   cell confirms the painted result is unchanged over 9258 random frames.
+- The frame pass no longer sweeps the screen: covered tiles are visited from
+  the list of marked tiles instead of scanning the bounding box once per
+  render group and level, and the tiles with a mirrored resting creature are
+  listed once per frame when the facings settle instead of rescanned by every
+  reader. Native, with a no-op engine, a 120x70 view with three levels and
+  eight moving creatures takes about 10 µs per frame instead of 29 µs, and
+  28 µs instead of 63 µs with forty creatures.
 - Lower per-frame CPU cost: proxy collection visits only tiles near a
   movement instead of sweeping every layer of every viewport, the buffer
   signature covers only the current buffers and hashes them two tiles at a
