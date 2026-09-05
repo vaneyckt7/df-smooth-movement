@@ -197,12 +197,14 @@ struct levelst
 				if(w%23==0)vp.screentexpos_building_one[i]=2000+int32_t(w%3);
 				// A third of the main level carries shading, so folded shading gets exercised there too.
 				if(w%3==0)vp.screentexpos_interface[i]=3000;
+				if(w%11==0)vp.screentexpos_top_shadow[i]=7000;
 				}
 			}
 		else
 			{
 			for(const auto &t:open){const int32_t i=at(t.first,t.second);if(i<0)continue;
-				vp.screentexpos_background[i]=1000+int32_t(uint32_t(t.first*7+t.second*13)%7);vp.screentexpos_interface[i]=3000;}
+				vp.screentexpos_background[i]=1000+int32_t(uint32_t(t.first*7+t.second*13)%7);vp.screentexpos_interface[i]=3000;
+				if((t.first+t.second)%4==0)vp.screentexpos_top_shadow[i]=7000;}
 			}
 		for(const auto &it:items){const int32_t i=at(it.first.first,it.first.second);if(i>=0)vp.screentexpos_item[i]=it.second;}
 		for(const auto &it:designations){const int32_t i=at(it.first.first,it.first.second);if(i>=0)vp.screentexpos_designation[i]=it.second;}
