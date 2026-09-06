@@ -45,11 +45,38 @@ an export of another branch, for example
   `harness/timings.sh -r 5 base=harness/out/src-base stats=.`.
 - `CXXFLAGS=-DHARNESS_STATS harness/run.sh . stats` builds the harness with the `stats`
   console command wired in and exercises it after the run; the trace must stay identical.
-- `test.sh <plugin dir>`: builds and runs the unit tests and, when present, the manager
+- `replay.sh <plugin dir> <label> <recording>`: builds the harness against that source and
+  replays a recording made in the game (see below), writing `out/<label>.trace`.
+- `recinfo.py <recording> [first] [last]`: prints one line per recorded frame: settings,
+  window, viewports, unit count, and the repaints the game made.
+- `test.sh <plugin dir>`: builds and runs the unit tests, the recording codec test, a
+  record-and-replay round trip of the synthetic scene, and, when present, the manager
   benchmark.
 - `compile.sh <plugin dir>`: builds the plugin in DFHack's docker build image against the real
   headers. Needs `DFHACK_SRC` pointing at a DFHack checkout with `build/linux` configured,
   and touches nothing outside that build directory.
+
+## Replaying the game
+
+The synthetic scene is invented, so the counts it produces are only as meaningful as the
+scene. `smooth-movement stats record <file> [frames]` in the game writes, for each of the next
+frames (900 by default), everything the render hook read: the plugin's settings, the clock,
+window position, pause state, follow target, mouse, zoom and origin, every buffer of every
+active viewport (run-coded against the previous frame), the units in view with the texture of
+any hauled item, and what the hook did with it: how many tiles it repainted and whether it
+painted at all. `stats record stop` ends a recording early. Recording costs about a
+millisecond per frame, so do not take timings while it runs. The file is written relative to
+the game's directory; `frame_record.h` documents the format.
+
+`bench replay <recording> [trace]` feeds those frames to the plugin under the stubs and
+compares its repaint count and painted flag with the game's, frame by frame. A recording of
+the plugin version that made it must replay with zero differing frames; that is the check that
+the stubs and the replay model the game faithfully (1800 frames of a fresh embark replay with
+none, as of this writing). A recording then serves as a real scene for the other tools: replay
+two versions with traces and run `compare.sh` or `oracle.py` on them. Each frame also
+records how many buffer words the game changed while the hook ran; a frame with a non-zero
+count saw input the replay cannot reproduce, and the replay summary says how many of the
+differing frames were of that kind.
 
 ## What the numbers mean
 
@@ -62,6 +89,7 @@ else.
 ## Limits
 
 The harness only sees what the stubs model. `compile.sh` catches a field the stubs lack, but
-not a field they model with the wrong size or meaning. The in-game `smooth-movement stats`
-command measures the same counters on a real fortress and is the check the harness cannot
-replace.
+not a field they model with the wrong size or meaning; a replay that matches the game frame
+for frame catches the second kind for everything the render hook reads. Time is the exception:
+engine calls cost nothing here, so the in-game `smooth-movement stats` command remains the
+only measure of what a change saves.
