@@ -1900,6 +1900,11 @@ command_result status_command(
 				out.print("smooth-movement: recording stopped\n");
 				return CR_OK;
 				}
+			if(!is_enabled)
+				{
+				out.printerr("smooth-movement: enable the plugin before recording\n");
+				return CR_FAILURE;
+				}
 			uint32_t frames=900;
 			if(parameters.size()==4)
 				{

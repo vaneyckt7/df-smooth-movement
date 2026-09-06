@@ -66,6 +66,15 @@ struct bench_rendererst : df::renderer_2d_base
 			tile_cache.tile_cache.emplace(id,reinterpret_cast<void*>(intptr_t(texpos)));
 			}
 		}
+	// The recording says the game had no texture for this texpos: make that true here too.
+	void uncache_texture(int32_t texpos)
+		{
+		for(uint32_t flag:{uint32_t(df::texture_fullid_flag::mask_transparent_background),0u})
+			{
+			df::texture_fullid id;id.texpos=texpos;id.r=id.g=id.b=1.0f;id.br=id.bg=id.bb=0.0f;id.flag=flag;
+			tile_cache.tile_cache.erase(id);
+			}
+		}
 	void update_viewport_tile(df::graphic_viewportst *vp,int32_t x,int32_t y) override
 		{
 		++repaint_calls;
@@ -378,7 +387,7 @@ int run_replay(const char *record_path)
 			units.push_back({});
 			df::unit &unit=units.back();
 			unit.pos.x=u.x;unit.pos.y=u.y;unit.pos.z=u.z;
-			if(u.cached)renderer.cache_texture(u.texpos);
+			if(u.texpos!=0){if(u.cached)renderer.cache_texture(u.texpos);else renderer.uncache_texture(u.texpos);}
 			if(u.texpos!=0)
 				{
 				df::material &m=materials[u.texpos];
