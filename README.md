@@ -35,6 +35,7 @@ smooth-movement camera on   # enable the free camera
 smooth-movement linear on   # use linear easing with adaptive 150–500 ms movement tweens
 smooth-movement hauled on   # show icons for carried boulders, bars, and wood
 smooth-movement stats on    # time the render hook; `smooth-movement stats` prints the numbers
+smooth-movement record f.rec # write what the render hook sees for the next 900 frames to f.rec
 ```
 
 ## Compatibility

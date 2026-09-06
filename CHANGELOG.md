@@ -6,6 +6,9 @@
   stage and tile repaints by the game, and (while on) times the render hook split into movement
   detection and drawing. Timing is off by default; counting costs one increment per frame,
   per painted frame and per repaint.
+- Add `smooth-movement record <file> [frames]`, with `record stop` and `record status`:
+  writes what the render hook reads each frame to a file that tools outside the game can
+  replay (`frame_record.h` documents the format).
 - Set smoothstep movement tweens to 150 ms. Add optional linear easing with
   adaptive 150–500 ms durations based on the cadence between consecutive steps
   (`smooth-movement linear on`) and icons for boulders, bars, and wood hauled by units
