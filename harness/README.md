@@ -62,7 +62,8 @@ or an export of another branch, for example
   or has no frames, the trace could not be written, or the plugin would not enable, 3 on a
   usage error.
   `replay.sh` passes that code through.
-- `test.sh <plugin dir>`: builds and runs the recording codec test.
+- `test.sh <plugin dir>`: builds and runs the recording codec test and a record-and-replay
+  round trip of a small built-in scene.
 - `compile.sh <plugin dir>`: builds the plugin in DFHack's docker build image against the real
   headers. Needs `DFHACK_SRC` pointing at a DFHack checkout with `build/linux` configured,
   and touches nothing outside that build directory.
@@ -97,3 +98,6 @@ The replay also fills the stub texture cache with every texture the recording me
 the first frame, while the game fills its cache as it paints. A unit whose sprite first appears
 in the frame it starts moving has no cached texture in the game and is skipped there, but is
 drawn in the replay, which shows up as a differing frame in the same way.
+The built-in self-test scene
+(`bench selftest <recording-out> [trace-out]`, run by `test.sh`) exists only to check the recorder and
+the replay against each other.

@@ -4,12 +4,13 @@
 // plugin versions.
 //
 // Build: c++ -std=c++17 -O2 -Istubs -I<plugin dir> -DPLUGIN_SOURCE='"<plugin dir>/smooth-movement.cpp"' bench.cpp
-// Run:   ./bench replay <recording> [trace-out]
-//        Reads <recording>. Writes <trace-out>, one line per renderer call. Leave <trace-out>
-//        out, or pass `-`, to replay without a trace.
-// Exit:  0 every frame matched the game, 1 some frames differed, 2 the recording could not be
-//        read or has no frames, the trace could not be written or the plugin could not be
-//        enabled, 3 usage error.
+// Run:   ./bench replay <recording> [trace-out]         replay frames recorded in the game
+//        ./bench selftest <recording-out> [trace-out]   record a small built-in scene, for test.sh
+//        replay reads <recording>; selftest writes <recording-out>. Both write <trace-out>, one
+//        line per renderer call. Leave <trace-out> out, or pass `-`, to run without a trace.
+// Exit:  0 every frame matched the game (selftest: the scene ran), 1 some frames differed,
+//        2 the recording could not be read or has no frames, the trace could not be written or
+//        the plugin could not be enabled, 3 usage error.
 //
 // Trace lines, one per renderer call the plugin makes, in order:
 //   # frame replay N t=<clock ms> w=<window x>,<window y>   start of frame N
@@ -159,6 +160,102 @@ void *DFHack::harness_lookup_sdl(const char *name)
 }
 
 namespace {
+
+// A small deterministic scene for the self-test: one main viewport, a few creatures walking a
+// fixed pattern, one of them hauling. It exists so the recorder and the replay can be checked
+// against each other without the game; real scenes come from recordings.
+struct scenest
+{
+	df::graphic_viewportst vp;
+	std::vector<int32_t> i32[40];
+	std::vector<uint64_t> u64[4];
+	std::vector<uint32_t> u32[6];
+	struct creaturest{int32_t x,y,t;bool hauls;};
+	std::vector<creaturest> creatures;
+	std::vector<df::unit> units;
+	df::item boulder{df::item_type::BOULDER};
+	df::unit_inventory_item hauled{&boulder,df::inv_item_role_type::Hauled};
+
+	void allocate(int32_t dim_x,int32_t dim_y)
+		{
+		const size_t n=size_t(dim_x)*size_t(dim_y);
+		for(auto &v:i32)v.assign(n,0);
+		for(auto &v:u64)v.assign(n,0);
+		for(auto &v:u32)v.assign(n,0);
+		vp.flag.bits.active=1;vp.dim_x=dim_x;vp.dim_y=dim_y;
+		vp.clipx={0,dim_x-1};vp.clipy={0,dim_y-1};
+		size_t a=0,b=0,c=0;
+		auto I=[&]{return i32[a++].data();};auto L=[&]{return u64[b++].data();};auto U=[&]{return u32[c++].data();};
+		vp.screentexpos_background=I();vp.screentexpos_floor_flag=L();vp.screentexpos_background_two=I();
+		vp.screentexpos_liquid_flag=U();vp.screentexpos_spatter_flag=U();vp.screentexpos_spatter=I();
+		vp.screentexpos_ramp_flag=L();vp.screentexpos_shadow_flag=U();vp.screentexpos_building_one=I();
+		vp.screentexpos_item=I();vp.screentexpos_vehicle=I();vp.screentexpos_vermin=I();
+		vp.screentexpos_left_creature=I();vp.screentexpos=I();vp.screentexpos_right_creature=I();
+		vp.screentexpos_building_two=I();vp.screentexpos_projectile=I();vp.screentexpos_high_flow=I();
+		vp.screentexpos_top_shadow=I();vp.screentexpos_signpost=I();vp.screentexpos_upleft_creature=I();
+		vp.screentexpos_up_creature=I();vp.screentexpos_upright_creature=I();vp.screentexpos_designation=I();
+		vp.screentexpos_interface=I();
+		vp.screentexpos_background_old=I();vp.screentexpos_floor_flag_old=L();vp.screentexpos_background_two_old=I();
+		vp.screentexpos_liquid_flag_old=U();vp.screentexpos_spatter_flag_old=U();vp.screentexpos_spatter_old=I();
+		vp.screentexpos_ramp_flag_old=L();vp.screentexpos_shadow_flag_old=U();vp.screentexpos_building_one_old=I();
+		vp.screentexpos_item_old=I();vp.screentexpos_vehicle_old=I();vp.screentexpos_vermin_old=I();
+		vp.screentexpos_left_creature_old=I();vp.screentexpos_old=I();vp.screentexpos_right_creature_old=I();
+		vp.screentexpos_building_two_old=I();vp.screentexpos_projectile_old=I();vp.screentexpos_high_flow_old=I();
+		vp.screentexpos_top_shadow_old=I();vp.screentexpos_signpost_old=I();vp.screentexpos_upleft_creature_old=I();
+		vp.screentexpos_up_creature_old=I();vp.screentexpos_upright_creature_old=I();vp.screentexpos_designation_old=I();
+		vp.screentexpos_interface_old=I();
+		if(a!=40||b!=4||c!=6){fprintf(stderr,"per-tile array count mismatch %zu %zu %zu\n",a,b,c);abort();}
+		}
+
+	// Creature i walks a square: right, down, left, up, one tile per step.
+	void step(int32_t step_index)
+		{
+		static const int32_t dx[4]={1,0,-1,0},dy[4]={0,1,0,-1};
+		for(size_t i=0;i<creatures.size();++i)
+			{
+			const int32_t dir=int32_t((step_index/3+int32_t(i))%4);
+			creatures[i].x+=dx[dir];creatures[i].y+=dy[dir];
+			}
+		}
+
+	// The game's redraw: current becomes old, then current is drawn from the world.
+	void redraw(int32_t wx,int32_t wy)
+		{
+		units.clear();
+		for(const auto &c:creatures)
+			if(c.hauls)
+				{
+				units.push_back({});
+				units.back().pos.x=int16_t(c.x);units.back().pos.y=int16_t(c.y);units.back().pos.z=100;
+				units.back().inventory={&hauled};
+				}
+		DFHack::Units::harness_units.clear();
+		for(auto &u:units)DFHack::Units::harness_units.push_back(&u);
+		const int32_t dx=vp.dim_x,dy=vp.dim_y;
+		for(int k=0;k<20;++k)i32[20+k]=i32[k];
+		for(int k=0;k<2;++k)u64[2+k]=u64[k];
+		for(int k=0;k<3;++k)u32[3+k]=u32[k];
+		for(int k=0;k<20;++k)std::fill(i32[k].begin(),i32[k].end(),0);
+		for(int k=0;k<2;++k)std::fill(u64[k].begin(),u64[k].end(),0);
+		for(int k=0;k<3;++k)std::fill(u32[k].begin(),u32[k].end(),0);
+		auto at=[&](int32_t x,int32_t y)->int32_t{x-=wx;y-=wy;return (x>=0&&x<dx&&y>=0&&y<dy)?x*dy+y:-1;};
+		for(int32_t x=0;x<dx;++x)for(int32_t y=0;y<dy;++y)
+			{
+			const int32_t i=x*dy+y;const uint32_t w=uint32_t(x+wx)*73856093u^uint32_t(y+wy)*19349663u;
+			vp.screentexpos_background[i]=1000+int32_t(w%7);
+			if(w%3==0)vp.screentexpos_interface[i]=3000;
+			if(w%11==0)vp.screentexpos_top_shadow[i]=7000;
+			}
+		for(size_t k=0;k<creatures.size();++k)
+			{
+			const creaturest &c=creatures[k];
+			int32_t i=at(c.x,c.y);
+			if(i>=0){vp.screentexpos[i]=c.t;if(c.hauls)vp.screentexpos_item[i]=c.t+4;}
+			if(k%2==0){i=at(c.x+1,c.y);if(i>=0)vp.screentexpos_right_creature[i]=c.t+1;}
+			if(k%3==0){i=at(c.x,c.y-1);if(i>=0)vp.screentexpos_up_creature[i]=c.t+3;}
+			}
+		}
+};
 
 // One viewport slot of a recording: the per-tile arrays are decoded in place, frame after frame.
 struct replay_slotst
@@ -373,6 +470,67 @@ int main(int argc,char **argv)
 		if(trace&&(ferror(trace)||fclose(trace)!=0)){fprintf(stderr,"trace write failed\n");return 2;}
 		return rc;
 		}
-	fprintf(stderr,"usage: bench replay <recording> [trace-out]\n  <recording>: file written by `smooth-movement record`\n  <trace-out>: file to write the trace to (`-` or omitted: no trace)\n");
-	return 3;
+	if(argc<3||strcmp(argv[1],"selftest")){fprintf(stderr,"usage: bench replay <recording> [trace-out]\n       bench selftest <recording-out> [trace-out]\n  replay reads a file written by `smooth-movement record`; selftest writes one from a built-in scene\n  <trace-out>: file to write the trace to (`-` or omitted: no trace)\n");return 3;}
+	const char *trace_path=argc>3&&strcmp(argv[3],"-")?argv[3]:nullptr;
+	const int32_t dim_x=30,dim_y=20;
+	scenest scene;
+	scene.allocate(dim_x,dim_y);
+	bench_rendererst renderer;
+	renderer.sdl_renderer=reinterpret_cast<void*>(0x1);
+	renderer.origin_x=5;renderer.origin_y=7;
+	renderer.viewport_zoom_factor=128;
+	df::graphic graphics;df::enabler enable;df::plotinfost plot;
+	int32_t wx=50,wy=50,wz=100;bool paused=false;
+	df::global::gps=&graphics;df::global::enabler=&enable;df::global::plotinfo=&plot;
+	df::global::pause_state=&paused;df::global::window_x=&wx;df::global::window_y=&wy;df::global::window_z=&wz;
+	graphics.dimx=dim_x+20;graphics.dimy=dim_y+5;
+	graphics.main_viewport=&scene.vp;
+	renderer.ids.resize(frame_record::slot_count,nullptr);
+	renderer.ids[frame_record::main_slot]=&scene.vp;
+	for(int i=0;i<8;++i)scene.creatures.push_back({wx+4+i*3,wy+5+(i%3)*4,110+i,i%4==0});
+	// Texture cache: every texpos the scene can produce, transparent-background variant.
+	for(int32_t t=100;t<130;++t){df::texture_fullid id;id.texpos=t;id.r=id.g=id.b=1.0f;id.br=id.bg=id.bb=0.0f;id.flag=df::texture_fullid_flag::mask_transparent_background;renderer.tile_cache.tile_cache[id]=bench_rendererst::fake_texture(t,true);}
+
+	// The hauled boulder's texture (6000) starts uncached; a staging repaint caches it, as in the game.
+	cache_on_repaint=true;
+
+	DFHack::color_ostream out;
+	const auto rc=plugin_enable(out,true);
+	if(rc!=DFHack::CR_OK){fprintf(stderr,"plugin_enable failed: %s",out.captured.c_str());return 2;}
+	struct disablest{DFHack::color_ostream &out;~disablest(){plugin_enable(out,false);}} disable{out};
+	flip_enabled=true;
+	hauled_enabled=true;
+	const int frames=240,warmup=30;
+	{std::vector<std::string> p{"stats","on"};status_command(out,p);}
+
+	// Thirty warm-up frames run before recording starts, with a scroll still in flight at that
+	// point, so the recording begins mid-session with animation and camera state to reset. Then
+	// steps every six frames, a pause in the middle, one frame with the viewport inactive (the
+	// hook returns before capturing units), and one scroll near the end whose per-tile arrays land two
+	// frames after the window moved, like the game does.
+	uint32_t now_ms=1000;
+	int32_t steps=0,land_at=-1;
+	scene.redraw(wx,wy);
+	for(int f=-warmup;f<frames;++f)
+		{
+		if(f==0)
+			{
+			std::vector<std::string> p{"record",argv[2],std::to_string(frames)};
+			if(status_command(out,p)!=DFHack::CR_OK){fprintf(stderr,"%s",out.captured.c_str());return 2;}
+			if(trace_path!=nullptr&&!open_trace(argv[2],trace_path))return 2;	// warm-up draws are not in the recording
+			}
+		paused=f>=120&&f<150;
+		if(f%6==0&&!paused){scene.step(steps++);scene.redraw(wx,wy);}
+		if(f==-1||f==180){wx+=1;land_at=f+2;}
+		if(f==land_at){scene.redraw(wx,wy);land_at=-1;}
+		scene.vp.flag.bits.active=f!=200;
+		DFHack::Core::getInstance().p->tick_ms=now_ms;
+		if(trace)fprintf(trace,"# frame selftest %d t=%u w=%d,%d\n",f,now_ms,wx,wy);
+		render_interpolated_world(&renderer);
+		now_ms+=16;
+		}
+	{out.captured.clear();std::vector<std::string> p{"stats"};status_command(out,p);fputs(out.captured.c_str(),stdout);
+	p={"stats","bogus"};if(status_command(out,p)!=DFHack::CR_WRONG_USAGE)puts("BAD: bogus accepted");}
+	if(trace)fclose(trace);
+	return 0;
 }
