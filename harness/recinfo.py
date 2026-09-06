@@ -22,9 +22,9 @@ one.
 This script only reads the file; it runs none of the plugin's render code. A recording holds
 two kinds of data. The frame header, the unit list and the end-of-hook record are small and
 are what this script prints. The per-tile arrays of every viewport are the bulk of the file
-and exist for a replay tool, which decodes them into a viewport and runs the plugin's real
-render hook on them, then compares the repaints it makes with the repaints recorded here.
-This script decodes each array's run lengths only to find
+and exist for the replay: `bench replay` (the harness in this directory) decodes them into a
+stub viewport and runs the plugin's real render hook on them, then compares the repaints it
+makes with the repaints recorded here. This script decodes each array's run lengths only to find
 where it ends, and discards the entries. Use it to see what a recording contains before
 replaying it: its length, whether the game was paused, which frames painted, and whether
 anything changed under the hook."""

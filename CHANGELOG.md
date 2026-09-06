@@ -9,6 +9,8 @@
 - Add `smooth-movement record <file> [frames]`, with `record stop` and `record status`:
   writes what the render hook reads each frame to a file that tools outside the game can
   replay (`frame_record.h` documents the format).
+- Add `harness/`, which replays a recording through the plugin outside the game against stub
+  headers, so two versions can be compared on the same frames (see `harness/README.md`).
 - Set smoothstep movement tweens to 150 ms. Add optional linear easing with
   adaptive 150–500 ms durations based on the cadence between consecutive steps
   (`smooth-movement linear on`) and icons for boulders, bars, and wood hauled by units

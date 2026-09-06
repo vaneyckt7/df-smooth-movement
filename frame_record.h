@@ -1,6 +1,6 @@
 // Frame recording: everything the render hook reads from the game, captured once per frame so
-// that a tool outside the game can replay a real fortress through the plugin. Shared between
-// the plugin (writer, `smooth-movement record`) and the tools that read it.
+// the offline harness can replay a real fortress through the plugin. Shared between the plugin
+// (writer, `smooth-movement record`) and the harness (reader, `bench replay`).
 //
 // File layout (little-endian, byte packed):
 //   "SMRC" u32 version
