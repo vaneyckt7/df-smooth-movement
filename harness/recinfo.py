@@ -2,7 +2,7 @@
 """Prints one line per frame of a `smooth-movement record` file, without the per-tile arrays.
 Usage: recinfo.py <recording> [first frame] [last frame]
 
-    $ harness/recinfo.py harness/out/fortress.rec 0 9
+    $ harness/recinfo.py harness/recordings/fortress-600.rec 0 9
     version 2
         0 t=706920620 flip=1 hauled=0 camera=0 linear=0 w=76,83,158 P follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
         2 t=706921277 flip=1 hauled=0 camera=0 linear=0 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
