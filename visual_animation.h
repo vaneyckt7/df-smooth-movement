@@ -384,30 +384,50 @@ class visual_animation_managerst
 		state.suppress_frames=0;
 		}
 
+	// The signature hashes every tracked per-tile array each frame, so its speed sets the
+	// floor of a frame. One FNV-1a chain is a serial multiply per entry; eight independent
+	// chains, each over every eighth entry, let the CPU overlap them.
+	static constexpr size_t signature_lanes=8;
+
+	static void hash_signature_lanes(
+		uint64_t (&lanes)[signature_lanes],
+		const int32_t *values,
+		int32_t count)
+		{
+		constexpr uint64_t fnv_prime=0x100000001b3ULL;
+		int32_t i=0;
+		for(;i+int32_t(signature_lanes)<=count;i+=int32_t(signature_lanes))
+			for(size_t lane=0;lane<signature_lanes;++lane)
+				lanes[lane]=(lanes[lane]^uint64_t(uint32_t(values[i+int32_t(lane)])))*fnv_prime;
+		for(;i<count;++i)
+			lanes[0]=(lanes[0]^uint64_t(uint32_t(values[i])))*fnv_prime;
+		}
+
 	// Identifies the buffer contents this frame, to tell a redrawn viewport from a repeated one.
 	static uint64_t compute_buffer_signature(const viewport_visual_animation_inputst &input)
 		{
-		// FNV-1a. Only ever compared against the previous frame's value, never stored.
+		// FNV-1a in lanes. Only ever compared against the previous frame's value, never stored.
 		constexpr uint64_t fnv_offset_basis=0xcbf29ce484222325ULL;
 		constexpr uint64_t fnv_prime=0x100000001b3ULL;
-		uint64_t hash=fnv_offset_basis;
+		uint64_t lanes[signature_lanes];
+		for(size_t lane=0;lane<signature_lanes;++lane)
+			lanes[lane]=fnv_offset_basis^uint64_t(lane);
 		const int32_t tile_count=input.dim_x*input.dim_y;
 		if(input.current_background!=nullptr&&input.previous_background!=nullptr)
-			for(int32_t i=0;i<tile_count;++i)
-				{
-				hash=(hash^uint64_t(uint32_t(input.current_background[i])))*fnv_prime;
-				hash=(hash^uint64_t(uint32_t(input.previous_background[i])))*fnv_prime;
-				}
+			{
+			hash_signature_lanes(lanes,input.current_background,tile_count);
+			hash_signature_lanes(lanes,input.previous_background,tile_count);
+			}
 		for(size_t layer=0;layer<input.current.size();++layer)
 			{
 			if(!visual_layer_tracks_own_movement(
 				static_cast<viewport_visual_layer>(layer)))continue;
-			for(int32_t i=0;i<tile_count;++i)
-				{
-				hash=(hash^uint64_t(uint32_t(input.current[layer][i])))*fnv_prime;
-				hash=(hash^uint64_t(uint32_t(input.previous[layer][i])))*fnv_prime;
-				}
+			hash_signature_lanes(lanes,input.current[layer],tile_count);
+			hash_signature_lanes(lanes,input.previous[layer],tile_count);
 			}
+		uint64_t hash=lanes[0];
+		for(size_t lane=1;lane<signature_lanes;++lane)
+			hash=(hash*fnv_prime)^lanes[lane];
 		return hash;
 		}
 
