@@ -833,6 +833,50 @@ void game_repaint(df::renderer_2d_base *renderer,df::graphic_viewportst *vp,int3
 	renderer->update_viewport_tile(vp,x,y);
 }
 
+// Whether a repaint of the tile would paint anything. The game draws only the per-tile
+// arrays whose entry for the tile holds a texture or flag, so a tile whose 25 entries are all
+// zero paints nothing. Tiles of a level below the camera are mostly like that already, and a
+// tile on the camera's level becomes like that once the layers a stage hides are zeroed. Read
+// inside the suppressed context, right before the repaint it can save.
+bool tile_paints_nothing(const df::graphic_viewportst *vp,int32_t index)
+{
+	const auto zero=[index](const auto *array){return array==nullptr||array[index]==0;};
+	return zero(vp->screentexpos_background)&&
+		zero(vp->screentexpos_floor_flag)&&
+		zero(vp->screentexpos_background_two)&&
+		zero(vp->screentexpos_liquid_flag)&&
+		zero(vp->screentexpos_spatter_flag)&&
+		zero(vp->screentexpos_spatter)&&
+		zero(vp->screentexpos_ramp_flag)&&
+		zero(vp->screentexpos_shadow_flag)&&
+		zero(vp->screentexpos_building_one)&&
+		zero(vp->screentexpos_item)&&
+		zero(vp->screentexpos_vehicle)&&
+		zero(vp->screentexpos_vermin)&&
+		zero(vp->screentexpos_left_creature)&&
+		zero(vp->screentexpos)&&
+		zero(vp->screentexpos_right_creature)&&
+		zero(vp->screentexpos_building_two)&&
+		zero(vp->screentexpos_projectile)&&
+		zero(vp->screentexpos_high_flow)&&
+		zero(vp->screentexpos_top_shadow)&&
+		zero(vp->screentexpos_signpost)&&
+		zero(vp->screentexpos_upleft_creature)&&
+		zero(vp->screentexpos_up_creature)&&
+		zero(vp->screentexpos_upright_creature)&&
+		zero(vp->screentexpos_designation)&&
+		zero(vp->screentexpos_interface);
+}
+
+// A staged repaint: skipped when the tile, with the stage's layers hidden, has nothing to
+// paint.
+void staged_repaint(
+	df::renderer_2d_base *renderer,df::graphic_viewportst *vp,int32_t x,int32_t y)
+{
+	if(tile_paints_nothing(vp,x*vp->dim_y+y))return;
+	game_repaint(renderer,vp,x,y);
+}
+
 void redraw_viewport_tile(
 	df::renderer_2d_base *renderer,
 	const viewport_renderst &viewport,
@@ -842,7 +886,7 @@ void redraw_viewport_tile(
 {
 	df::graphic_viewportst *vp=viewport.viewport;
 	const int32_t index=x*vp->dim_y+y;
-	const auto redraw=[&]{game_repaint(renderer,vp,x,y);};
+	const auto redraw=[&]{staged_repaint(renderer,vp,x,y);};
 	const auto stage=[&]
 		{
 		with_suppressed_visual_layers(
@@ -885,7 +929,7 @@ void draw_interface_only(
 {
 	if(!interface_pass_readable(vp))return;
 	const int32_t index=x*vp->dim_y+y;
-	const auto redraw=[&]{game_repaint(renderer,vp,x,y);};
+	const auto redraw=[&]{staged_repaint(renderer,vp,x,y);};
 	const auto without_visuals=[&]
 		{
 		with_suppressed_visual_layers(
@@ -948,7 +992,7 @@ void redraw_above(
 	const std::unordered_map<int32_t,uint16_t> &selected)
 {
 	const int32_t index=x*vp->dim_y+y;
-	const auto redraw=[&]{game_repaint(renderer,vp,x,y);};
+	const auto redraw=[&]{staged_repaint(renderer,vp,x,y);};
 	const auto suppress_visuals=[&]
 		{
 		const auto stage=[&]

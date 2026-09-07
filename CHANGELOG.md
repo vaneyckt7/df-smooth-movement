@@ -11,6 +11,12 @@
   replay (`frame_record.h` documents the format).
 - Add `harness/`, which replays a recording through the plugin outside the game against stub
   headers, so two versions can be compared on the same frames (see `harness/README.md`).
+  The recordings in `harness/recordings/` are fixed fixtures; `harness/test.sh` checks each
+  replay against the per-frame draw digests in `harness/expected/`.
+- Skip repaints of tiles that have nothing to paint. The game paints nothing for a tile whose
+  25 per-tile entries are all zero, which is most tiles of a level below the camera, and any
+  tile once the layers a stage hides are zeroed; the render hook now checks that before
+  asking for the repaint. What appears on screen is unchanged.
 - Set smoothstep movement tweens to 150 ms. Add optional linear easing with
   adaptive 150–500 ms durations based on the cadence between consecutive steps
   (`smooth-movement linear on`) and icons for boulders, bars, and wood hauled by units
