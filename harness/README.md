@@ -70,9 +70,9 @@ or an export of another branch, for example
 
 ## Recordings in the repository
 
-`recordings/` holds two recordings made in the game with the plugin version that shipped in
-this repository at the time, both of the same fortress at zoom 192 with nine viewports on
-screen. `fortress-600.rec` is 600 frames with the free camera off, starting paused and then
+`recordings/` holds two recordings made in Dwarf Fortress 53.16 with DFHack 53.16-r1.1 and
+plugin 0.5.0 as merged in the recorder pull request, both of the same fortress at zoom 192
+with nine viewports on screen. `fortress-600.rec` is 600 frames with the free camera off, starting paused and then
 scrolling. `fortress-camera-183.rec` is 183 frames with the free camera on, resting a little off
 the tile grid, with creatures walking left so their sprites are mirrored. `test.sh` replays
 both and requires zero differing frames, so a change to the plugin, the stubs or the replay
