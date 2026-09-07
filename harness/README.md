@@ -62,10 +62,22 @@ or an export of another branch, for example
   or has no frames, the trace could not be written, or the plugin would not enable, 3 on a
   usage error.
   `replay.sh` passes that code through.
-- `test.sh <plugin dir>`: builds and runs the recording codec test.
+- `test.sh <plugin dir>`: builds and runs the recording codec test, then replays every recording
+  in `recordings/` and fails when any frame differs from what the game's plugin did.
 - `compile.sh <plugin dir>`: builds the plugin in DFHack's docker build image against the real
   headers. Needs `DFHACK_SRC` pointing at a DFHack checkout with `build/linux` configured,
   and touches nothing outside that build directory.
+
+## Recordings in the repository
+
+`recordings/` holds two recordings made in Dwarf Fortress 53.16 with DFHack 53.16-r1.1 and
+plugin 0.5.0 as merged in the recorder pull request, both of the same fortress at zoom 192
+with nine viewports on screen. `fortress-600.rec` is 600 frames with the free camera off, starting paused and then
+scrolling. `fortress-camera-183.rec` is 183 frames with the free camera on, resting a little off
+the tile grid, with creatures walking left so their sprites are mirrored. `test.sh` replays
+both and requires zero differing frames, so a change to the plugin, the stubs or the replay
+that alters what the render hook does on a real scene fails the test without the game. A
+change that is meant to alter it needs a new recording made in the game with that version.
 
 ## What a replay tells you
 
