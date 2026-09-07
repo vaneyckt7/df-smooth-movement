@@ -115,7 +115,8 @@ and are the figures that carry over to the game, where every repaint is real wor
 calls cost nothing here, so the wall-clock time a replay prints covers the plugin's own
 bookkeeping and, when a trace is written, the trace lines; it varies by about two percent
 between runs of one build on one machine, so a difference smaller than that says nothing.
-The in-game `smooth-movement stats` command remains the only measure of what a change saves.
+That time is the measure for a change to the bookkeeping; for a change to the repaints the
+in-game `smooth-movement stats` command remains the only measure of what it saves.
 
 ## Limits
 

@@ -972,4 +972,27 @@ int main()
 	const auto abandoned=empty_manager.get_scroll(&empty_token);
 	assert(abandoned.abandoned&&!abandoned.pending);
 	}
+
+	// The array signature is hashed in lanes of eight entries with the remainder in a tail
+	// loop. A 3x3 viewport has nine entries, so tile (2,2) is the only tail entry: a change
+	// there alone must still read as a redrawn viewport, or its movement goes undetected.
+	{
+	constexpr int32_t dim=3;
+	int32_t empty[dim*dim]={};
+	int32_t source[dim*dim]={};
+	int32_t target[dim*dim]={};
+	const int tail_token=0;
+	const void *viewport=&tail_token;
+	source[2*dim+1]=77;
+	target[2*dim+2]=77;   // moved from (2,1) to (2,2), the last entry
+	visual_animation_managerst manager;
+	auto input=make_input(viewport,dim,empty);
+	set_layer(input,viewport_visual_layer::center,empty,source);
+	run_frame(manager,input,30000);
+	run_frame(manager,input,30016);
+	set_layer(input,viewport_visual_layer::center,target,source);
+	run_frame(manager,input,30032);
+	assert(manager.get_movement(
+		viewport,viewport_visual_layer::center,2,2).active);
+	}
 }
