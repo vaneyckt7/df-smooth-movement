@@ -33,7 +33,7 @@ jobs:
       - name: Add the plugin to DFHack
         run: |
           mkdir -p dfhack/plugins/external/smooth-movement
-          cp CMakeLists.txt smooth-movement.cpp test_visual_animation_manager.cpp visual_animation.h frame_record.h frame_recorder.h frame_stats.h dfhack/plugins/external/smooth-movement/
+          cp CMakeLists.txt smooth-movement.cpp test_visual_animation_manager.cpp visual_animation.h frame_record.h frame_recorder.h frame_stats.h tile_repaint.h dfhack/plugins/external/smooth-movement/
 
       - name: Build Linux plugin
         run: |
