@@ -22,6 +22,7 @@
 #include "df/unit_inventory_item.h"
 #include "df/viewport_spatter_flag.h"
 
+#include "frame_record.h"
 #include "visual_animation.h"
 
 #include <SDL_render.h>
@@ -32,6 +33,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <mutex>
 #include <set>
 #include <string>
 #include <type_traits>
@@ -100,6 +103,107 @@ struct frame_statsst
 };
 
 frame_statsst frame_stats;
+
+// Frame recorder for `smooth-movement record`: writes what the render hook reads before
+// each frame and what it did after it (see frame_record.h). Capture runs on the render thread
+// under the lock; the console thread only starts and stops it.
+// Animation and camera state that a freshly enabled plugin starts from; the recorder resets it
+// at its first frame so the replay, which starts from plugin_enable, sees the same start.
+void reset_visual_state();
+
+struct frame_recorderst
+{
+	std::mutex mutex;
+	FILE *file=nullptr;
+	std::string path;
+	uint32_t remaining=0;
+	uint32_t written=0;
+	bool failed=false;
+	bool reset_pending=false;   // first captured frame starts from fresh visual state
+	bool units_pending=false;   // capture wrote the viewports; the unit list is still owed
+	frame_record::writerst writer;
+	// Raw bytes of every per-tile array as of the last captured frame, per slot and array.
+	std::vector<uint8_t> previous[frame_record::slot_count*frame_record::buffer_count];
+
+	bool start(const std::string &to,uint32_t frames)
+		{
+		const std::lock_guard<std::mutex> lock(mutex);
+		close();
+		file=std::fopen(to.c_str(),"wb");
+		if(file==nullptr)return false;
+		path=to;
+		remaining=frames;
+		written=0;
+		failed=false;
+		reset_pending=true;
+		units_pending=false;
+		for(auto &p:previous)p.clear();
+		writer.bytes.clear();
+		frame_record::write_file_header(writer);
+		flush();
+		return !failed;
+		}
+
+	void stop()
+		{
+		const std::lock_guard<std::mutex> lock(mutex);
+		close();
+		}
+
+	// All called by the render hook: capture at its start, capture_units where the hook looks
+	// units up (after the camera update, which can move the window), finish at its end.
+	void capture(df::renderer_2d_base *renderer,uint32_t now_ms);
+	void capture_units(df::renderer_2d_base *renderer);
+	// Entries of the active viewports' per-tile arrays that differ from the captured copy: the game
+	// changed them while the hook ran, so the replay saw different input than the hook did.
+	uint32_t changed_since_capture() const;
+	void finish(uint32_t repaints,bool painted)
+		{
+		const std::lock_guard<std::mutex> lock(mutex);
+		if(file==nullptr||writer.bytes.empty())return;
+		if(units_pending){frame_record::write_units(writer,{});units_pending=false;}
+		frame_record::write_frame_result(writer,{repaints,painted,changed_since_capture()});
+		flush();
+		if(failed)return;
+		++written;
+		if(--remaining==0)close();
+		}
+
+	void status(color_ostream &out)
+		{
+		const std::lock_guard<std::mutex> lock(mutex);
+		if(file!=nullptr)
+			out.print("recording: {} of {} frames to {}\n",written,written+remaining,path);
+		else if(failed)
+			out.print("recording: failed writing {} after {} frames\n",path,written);
+		else if(written!=0)
+			out.print("recording: {} frames written to {}\n",written,path);
+		else
+			out.print("recording: off\n");
+		}
+
+private:
+	void flush()
+		{
+		if(!writer.bytes.empty()&&
+			std::fwrite(writer.bytes.data(),1,writer.bytes.size(),file)!=writer.bytes.size())
+			{
+			failed=true;
+			close();
+			}
+		writer.bytes.clear();
+		}
+
+	void close()
+		{
+		if(file!=nullptr)std::fclose(file);
+		file=nullptr;
+		remaining=0;
+		writer.bytes.clear();
+		}
+};
+
+frame_recorderst frame_recorder;
 
 // Runs a callback when the scope ends, whichever return path is taken.
 template<typename Callback>
@@ -979,6 +1083,130 @@ int32_t item_texpos(df::item *item)
 		}
 }
 
+void frame_recorderst::capture(df::renderer_2d_base *renderer,uint32_t now_ms)
+{
+	const std::lock_guard<std::mutex> lock(mutex);
+	if(file==nullptr)return;
+	if(reset_pending)
+		{
+		reset_pending=false;
+		reset_visual_state();
+		if(gps!=nullptr)++gps->force_full_display_count;
+		}
+	writer.bytes.clear();
+	frame_record::frame_headerst header;
+	header.flip=flip_enabled;
+	header.hauled=hauled_enabled;
+	header.camera=camera_enabled;
+	header.linear=animation_manager.is_linear();
+	header.tick_ms=now_ms;
+	header.window_x=window_x?*window_x:0;
+	header.window_y=window_y?*window_y:0;
+	header.window_z=window_z?*window_z:0;
+	header.paused=pause_state&&*pause_state;
+	header.follow_unit=plotinfo?plotinfo->follow_unit:-1;
+	header.mouse_x=gps?gps->precise_mouse_x:0;
+	header.mouse_y=gps?gps->precise_mouse_y:0;
+	header.mouse_mbut=enabler!=nullptr&&enabler->mouse_mbut;
+	header.zoom=renderer->viewport_zoom_factor;
+	header.origin_x=renderer->origin_x;
+	header.origin_y=renderer->origin_y;
+	header.dimx=gps?gps->dimx:0;
+	header.dimy=gps?gps->dimy:0;
+	header.rest_x=rest_x;
+	header.rest_y=rest_y;
+	frame_record::write_frame_header(writer,header);
+
+	std::vector<std::pair<int,const df::graphic_viewportst *>> viewports;
+	if(gps!=nullptr)
+		{
+		for(int slot=0;slot<frame_record::main_slot;++slot)
+			{
+			const df::graphic_viewportst *vp=gps->lower_viewport[slot];
+			if(vp!=nullptr&&vp->flag.bits.active)viewports.emplace_back(slot,vp);
+			}
+		const df::graphic_viewportst *vp=gps->main_viewport;
+		if(vp!=nullptr&&vp->flag.bits.active)viewports.emplace_back(frame_record::main_slot,vp);
+		}
+	writer.u8(uint8_t(viewports.size()));
+	for(const auto &entry:viewports)
+		{
+		const int slot=entry.first;
+		const df::graphic_viewportst *vp=entry.second;
+		frame_record::write_viewport_header(writer,{slot,vp->dim_x,vp->dim_y,
+			vp->clipx[0],vp->clipx[1],vp->clipy[0],vp->clipy[1],vp->screen_x,vp->screen_y});
+		const size_t count=size_t(vp->dim_x)*size_t(vp->dim_y);
+		int index=0;
+		frame_record::for_each_buffer(*vp,[&](auto pointer)
+			{
+			using T=std::remove_cv_t<std::remove_pointer_t<decltype(pointer)>>;
+			std::vector<uint8_t> &last=previous[slot*frame_record::buffer_count+index++];
+			if(pointer==nullptr)
+				{
+				writer.u8(0);
+				last.clear();
+				return;
+				}
+			writer.u8(1);
+			const T *previous_words=last.size()==count*sizeof(T)?
+				reinterpret_cast<const T *>(last.data()):nullptr;
+			writer.words(pointer,previous_words,count);
+			last.resize(count*sizeof(T));
+			std::memcpy(last.data(),pointer,count*sizeof(T));
+			});
+		}
+	units_pending=true;
+}
+
+void frame_recorderst::capture_units(df::renderer_2d_base *renderer)
+{
+	const std::lock_guard<std::mutex> lock(mutex);
+	if(file==nullptr||!units_pending)return;
+	units_pending=false;
+	std::vector<frame_record::unit_recordst> records;
+	const df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
+	if(vp!=nullptr&&window_x!=nullptr&&window_y!=nullptr&&window_z!=nullptr)
+		{
+		std::vector<df::unit *> units;
+		Units::getUnitsInBox(
+			units,
+			*window_x,*window_y,*window_z,
+			*window_x+vp->dim_x-1,*window_y+vp->dim_y-1,*window_z,
+			[](df::unit *unit){return !Units::isHidden(unit);});
+		for(const df::unit *unit:units)
+			{
+			const int32_t texpos=item_texpos(hauled_item(unit));
+			records.push_back({unit->pos.x,unit->pos.y,unit->pos.z,texpos,
+				texpos!=0&&cached_texture(renderer,texpos)!=nullptr});
+			}
+		}
+	frame_record::write_units(writer,records);
+}
+
+uint32_t frame_recorderst::changed_since_capture() const
+{
+	uint32_t changed=0;
+	if(gps==nullptr)return 0;
+	const auto scan=[&](int slot,const df::graphic_viewportst *vp)
+		{
+		if(vp==nullptr||!vp->flag.bits.active)return;
+		const size_t count=size_t(vp->dim_x)*size_t(vp->dim_y);
+		int index=0;
+		frame_record::for_each_buffer(*vp,[&](auto pointer)
+			{
+			using T=std::remove_cv_t<std::remove_pointer_t<decltype(pointer)>>;
+			const std::vector<uint8_t> &last=previous[slot*frame_record::buffer_count+index++];
+			if(pointer==nullptr||last.size()!=count*sizeof(T))return;
+			const T *words=reinterpret_cast<const T *>(last.data());
+			for(size_t i=0;i<count;++i)
+				if(std::memcmp(&pointer[i],&words[i],sizeof(T))!=0)++changed;
+			});
+		};
+	for(int slot=0;slot<frame_record::main_slot;++slot)scan(slot,gps->lower_viewport[slot]);
+	scan(frame_record::main_slot,gps->main_viewport);
+	return changed;
+}
+
 std::vector<carried_item_proxyst> collect_carried_item_proxies(
 	df::renderer_2d_base *renderer,
 	df::graphic_viewportst *vp)
@@ -1393,11 +1621,18 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	// Read once: if the console flipped the flag on mid-frame, the guard would subtract a
 	// start time of zero.
 	const bool timing_enabled=frame_stats.enabled.load(std::memory_order_relaxed);
+	// The frame's clock, read once so that a recording carries the value the frame used.
+	const uint32_t now_ms=Core::getInstance().p->getTickCount();
+	frame_recorder.capture(renderer,now_ms);
+	const uint64_t frame_repaints=frame_stats.repaints.load(std::memory_order_relaxed);
+	const uint64_t frame_painted=frame_stats.painted.load(std::memory_order_relaxed);
 	const uint64_t frame_start_us=timing_enabled?frame_statsst::now_us():0;
 	uint64_t sync_end_us=frame_start_us;
 	// Runs on every exit, including the early return for frames with nothing to draw.
 	const scope_guardst timing([&]
 		{
+		frame_recorder.finish(uint32_t(frame_stats.repaints.load(std::memory_order_relaxed)-frame_repaints),
+			frame_stats.painted.load(std::memory_order_relaxed)!=frame_painted);
 		if(!timing_enabled)return;
 		const uint64_t end_us=frame_statsst::now_us();
 		frame_stats.timed.fetch_add(1,std::memory_order_relaxed);
@@ -1417,7 +1652,6 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		cancel_camera_transients();
 		camera_has_prev=false;
 		}
-	const uint32_t now_ms=Core::getInstance().p->getTickCount();
 	animation_manager.begin_frame(now_ms);
 	for(df::graphic_viewportst *viewport:viewports)
 		animation_manager.synchronize_viewport(animation_input(viewport));
@@ -1448,6 +1682,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		if(gps!=nullptr)++gps->force_full_display_count;
 		}
 	if(glide)camera_was_offset=true;
+	frame_recorder.capture_units(renderer);
 	std::vector<carried_item_proxyst> carried_items=
 		hauled_enabled?collect_carried_item_proxies(renderer,vp):
 		std::vector<carried_item_proxyst>{};
@@ -1586,9 +1821,11 @@ bool load_sdl(color_ostream &out)
 	return true;
 }
 
-void reset_state()
+void reset_visual_state()
 {
+	const bool linear=animation_manager.is_linear();
 	animation_manager=visual_animation_managerst();
+	animation_manager.set_linear(linear);
 	previous_coverage.clear();
 	visual_context_revision=0;
 	previous_viewport=nullptr;
@@ -1598,16 +1835,22 @@ void reset_state()
 	previous_pan_y=0;
 	has_pan_context=false;
 	cancel_camera_transients();
-	rest_x=0.0;
-	rest_y=0.0;
-	camera_enabled=false;
 	camera_has_prev=false;
 	camera_was_offset=false;
 	native_follow_id=-1;
+}
+
+void reset_state()
+{
+	reset_visual_state();
+	rest_x=0.0;
+	rest_y=0.0;
+	camera_enabled=false;
 	flip_enabled=false;
 	hauled_enabled=false;
 	frame_stats.enabled=false;
 	frame_stats.clear();
+	frame_recorder.stop();
 }
 
 void print_frame_stats(color_ostream &out)
@@ -1685,6 +1928,46 @@ command_result status_command(
 			return CR_OK;
 			}
 		return CR_WRONG_USAGE;
+		}
+	if(parameters[0]=="record")
+		{
+		if(parameters.size()==1)return CR_WRONG_USAGE;
+		if(parameters[1]=="status")
+			{
+			if(parameters.size()!=2)return CR_WRONG_USAGE;
+			frame_recorder.status(out);
+			return CR_OK;
+			}
+		if(parameters[1]=="stop")
+			{
+			if(parameters.size()!=2)return CR_WRONG_USAGE;
+			frame_recorder.stop();
+			out.print("smooth-movement: recording stopped\n");
+			return CR_OK;
+			}
+		if(parameters.size()>3)return CR_WRONG_USAGE;
+		if(!is_enabled)
+			{
+			out.printerr("smooth-movement: enable the plugin before recording\n");
+			return CR_FAILURE;
+			}
+		uint32_t frames=900;
+		if(parameters.size()==3)
+			{
+			const std::string &count=parameters[2];
+			if(count.empty()||count.size()>9||
+				count.find_first_not_of("0123456789")!=std::string::npos)
+				return CR_WRONG_USAGE;
+			frames=uint32_t(std::stoul(count));
+			if(frames==0)return CR_WRONG_USAGE;
+			}
+		if(!frame_recorder.start(parameters[1],frames))
+			{
+			out.printerr("smooth-movement: cannot write {}\n",parameters[1]);
+			return CR_FAILURE;
+			}
+		out.print("smooth-movement: recording {} frames to {}\n",frames,parameters[1]);
+		return CR_OK;
 		}
 	if(parameters[0]=="all")
 		{
@@ -1823,7 +2106,8 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 		"flip, linear and hauled together: all on|off; "
 		"sprite flipping: flip on|off; linear movement: linear on|off; "
 		"hauled item icons: hauled on|off; "
-		"frame timing: stats [on|off|reset].",
+		"frame timing: stats [on|off|reset]; "
+		"frame recording for the offline harness: record <file> [frames] | record stop | record status.",
 		status_command);
 	return CR_OK;
 }
