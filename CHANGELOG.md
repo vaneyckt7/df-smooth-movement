@@ -21,6 +21,10 @@
   tracked array of every viewport each frame to tell a redrawn viewport from a repeated one,
   and one FNV-1a chain is a serial multiply per entry; eight chains over interleaved entries
   let the CPU overlap them. What the hook draws is unchanged.
+- Skip the sweep for resting mirrored creatures on a viewport that has none. The sweep
+  visited every tile of every viewport each frame while `flip` is on; the movement tracker
+  already knows whether any tile of a viewport faces the mirrored way, and a level below the
+  camera usually has none. What the hook draws is unchanged.
 - Set smoothstep movement tweens to 150 ms. Add optional linear easing with
   adaptive 150–500 ms durations based on the cadence between consecutive steps
   (`smooth-movement linear on`) and icons for boulders, bars, and wood hauled by units

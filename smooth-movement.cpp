@@ -1480,7 +1480,9 @@ std::vector<render_proxyst> collect_proxies(
 	// A creature that has stopped still needs its mirrored sprite painted each frame.
 	// Otherwise the engine repaints it natively and the two orientations alternate between steps.
 	// A fragment's tile is its anchor minus the layer's centre offset, inverting the moving path.
-	if(flip_enabled)
+	// The movement tracker knows whether any tile of the viewport faces the mirrored way, so a
+	// viewport with none, such as a level below the camera, skips the sweep.
+	if(flip_enabled&&animation_manager.has_mirrored_facing(vp))
 		{
 		for(int32_t anchor_x=0;anchor_x<vp->dim_x;++anchor_x)
 			{
