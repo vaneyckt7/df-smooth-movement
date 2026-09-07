@@ -1076,4 +1076,50 @@ int main()
 	for(size_t i=1;i<tiles.size();++i)
 		assert(tiles[i-1]!=tiles[i]);
 	}
+
+	// The sweep for resting mirrored creatures visits only the tiles the tracker lists, so
+	// the list must name exactly the tiles whose facing is not the native one, column by
+	// column and top to bottom within a column, the order the sweep walked them in. The
+	// viewport is wider than it is tall so that a list built with the two dimensions
+	// confused, in the tile index or in the walk's bounds, names the wrong tiles.
+	{
+	constexpr int32_t dim_x=5;
+	constexpr int32_t dim_y=3;
+	int32_t empty[dim_x*dim_y]={};
+	int32_t before[dim_x*dim_y]={};
+	int32_t after[dim_x*dim_y]={};
+	const int mirrored_token=0;
+	const void *viewport=&mirrored_token;
+	before[3*dim_y+1]=81;
+	after[4*dim_y+1]=81;   // moved east from (3,1) to (4,1)
+	before[0*dim_y+2]=82;
+	after[1*dim_y+2]=82;   // moved east from (0,2) to (1,2)
+	visual_animation_managerst manager;
+	auto input=make_input(viewport,dim_x,empty);
+	input.dim_y=dim_y;
+	set_layer(input,viewport_visual_layer::center,before,empty);
+	run_frame(manager,input,42000);
+	std::vector<std::array<int32_t,2>> tiles;
+	manager.collect_mirrored_tiles(viewport,dim_x,dim_y,tiles);
+	assert(tiles.empty());
+	set_layer(input,viewport_visual_layer::center,after,before);
+	run_frame(manager,input,42016);
+	manager.collect_mirrored_tiles(viewport,dim_x,dim_y,tiles);
+	assert(tiles.size()==2);
+	assert(tiles[0][0]==1&&tiles[0][1]==2);
+	assert(tiles[1][0]==4&&tiles[1][1]==1);
+	for(int32_t x=0;x<dim_x;++x)
+		for(int32_t y=0;y<dim_y;++y)
+			{
+			const bool listed=std::find(tiles.begin(),tiles.end(),
+				std::array<int32_t,2>{x,y})!=tiles.end();
+			assert(listed==(manager.get_facing(viewport,x,y)!=native_sprite_facing));
+			}
+	set_layer(input,viewport_visual_layer::center,empty,after);
+	run_frame(manager,input,42032);
+	manager.collect_mirrored_tiles(viewport,dim_x,dim_y,tiles);
+	assert(tiles.empty());
+	manager.collect_mirrored_tiles(nullptr,dim_x,dim_y,tiles);
+	assert(tiles.empty());
+	}
 }

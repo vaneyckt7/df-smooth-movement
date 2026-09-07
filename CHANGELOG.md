@@ -29,6 +29,9 @@
   hook read every layer of every tile of every viewport each frame and asked the movement
   tracker about each non-empty one; the tracker now lists the tiles its active movements can
   reach, and a viewport with none is skipped. What the hook draws is unchanged.
+- Sweep only the tiles that face the mirrored way when repainting resting mirrored creatures.
+  The sweep asked the movement tracker for the facing of every tile of a viewport that had
+  any; the tracker now lists those tiles. What the hook draws is unchanged.
 - Set smoothstep movement tweens to 150 ms. Add optional linear easing with
   adaptive 150–500 ms durations based on the cadence between consecutive steps
   (`smooth-movement linear on`) and icons for boulders, bars, and wood hauled by units

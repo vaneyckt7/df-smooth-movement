@@ -1484,76 +1484,75 @@ std::vector<render_proxyst> collect_proxies(
 	// A creature that has stopped still needs its mirrored sprite painted each frame.
 	// Otherwise the engine repaints it natively and the two orientations alternate between steps.
 	// A fragment's tile is its anchor minus the layer's centre offset, inverting the moving path.
-	// The movement tracker knows whether any tile of the viewport faces the mirrored way, so a
-	// viewport with none, such as a level below the camera, skips the sweep.
-	if(flip_enabled&&animation_manager.has_mirrored_facing(vp))
+	// The movement tracker lists the tiles of the viewport that face the mirrored way, so the
+	// sweep visits those alone; a viewport with none, such as a level below the camera, lists
+	// nothing.
+	if(flip_enabled)
 		{
-		for(int32_t anchor_x=0;anchor_x<vp->dim_x;++anchor_x)
+		animation_manager.collect_mirrored_tiles(vp,vp->dim_x,vp->dim_y,tiles);
+		for(const std::array<int32_t,2> &anchor:tiles)
 			{
-			for(int32_t anchor_y=0;anchor_y<vp->dim_y;++anchor_y)
+			const int32_t anchor_x=anchor[0];
+			const int32_t anchor_y=anchor[1];
+			for(uint8_t draw_order=0;draw_order<visual_layer_count;++draw_order)
 				{
-				if(animation_manager.get_facing(vp,anchor_x,anchor_y)==
-					native_sprite_facing)continue;
-				for(uint8_t draw_order=0;draw_order<visual_layer_count;++draw_order)
+				const viewport_visual_layer visual_layer=
+					visual_layer_at_draw_order(draw_order);
+				const visual_render_groupst group=
+					visual_render_group(visual_layer);
+				if(group!=visual_render_groupst::main&&
+					group!=visual_render_groupst::upper)continue;
+				const auto &descriptor=visual_layer_descriptor(visual_layer);
+				const int32_t x=anchor_x-descriptor.center_x;
+				const int32_t y=anchor_y-descriptor.center_y;
+				if(x<0||x>=vp->dim_x||y<0||y>=vp->dim_y)continue;
+				const size_t layer=static_cast<size_t>(visual_layer);
+				const int32_t texpos=layers[layer][x*vp->dim_y+y];
+				if(texpos==0)continue;
+				bool already_drawn=false;
+				for(const render_proxyst &existing:proxies)
+					if(existing.layer==visual_layer&&
+						existing.target_x==x&&existing.target_y==y)
+						already_drawn=true;
+				if(already_drawn)continue;
+
+				// source == target at progress 1.0 draws in place, moved only by mirror_shift.
+				render_proxyst proxy=
 					{
-					const viewport_visual_layer visual_layer=
-						visual_layer_at_draw_order(draw_order);
-					const visual_render_groupst group=
-						visual_render_group(visual_layer);
-					if(group!=visual_render_groupst::main&&
-						group!=visual_render_groupst::upper)continue;
-					const auto &descriptor=visual_layer_descriptor(visual_layer);
-					const int32_t x=anchor_x-descriptor.center_x;
-					const int32_t y=anchor_y-descriptor.center_y;
-					if(x<0||x>=vp->dim_x||y<0||y>=vp->dim_y)continue;
-					const size_t layer=static_cast<size_t>(visual_layer);
-					const int32_t texpos=layers[layer][x*vp->dim_y+y];
-					if(texpos==0)continue;
-					bool already_drawn=false;
-					for(const render_proxyst &existing:proxies)
-						if(existing.layer==visual_layer&&
-							existing.target_x==x&&existing.target_y==y)
-							already_drawn=true;
-					if(already_drawn)continue;
-
-					// source == target at progress 1.0 draws in place, moved only by mirror_shift.
-					render_proxyst proxy=
+					visual_layer,
+					float(x),
+					float(y),
+					x,
+					y,
+					texpos,
+					1.0f,
+					nullptr,
+					true,
+					mirrored_tile_x(x,anchor_x)-x,
+					{}
+					};
+				// The sprite lands on x+mirror_shift, so that interval must be repaintable.
+				// The shift has either sign, so order the interval ends first.
+				const int32_t coverage_first=std::min(x,x+proxy.mirror_shift);
+				const int32_t coverage_last=std::max(x,x+proxy.mirror_shift);
+				bool blocked=false;
+				for(int32_t coverage_x=coverage_first;
+					coverage_x<=coverage_last;++coverage_x)
+					{
+					if(!inside_clip(vp,coverage_x,y)||
+						(group==visual_render_groupst::main&&
+						has_fire(vp,coverage_x,y)))
 						{
-						visual_layer,
-						float(x),
-						float(y),
-						x,
-						y,
-						texpos,
-						1.0f,
-						nullptr,
-						true,
-						mirrored_tile_x(x,anchor_x)-x,
-						{}
-						};
-					// The sprite lands on x+mirror_shift, so that interval must be repaintable.
-					// The shift has either sign, so order the interval ends first.
-					const int32_t coverage_first=std::min(x,x+proxy.mirror_shift);
-					const int32_t coverage_last=std::max(x,x+proxy.mirror_shift);
-					bool blocked=false;
-					for(int32_t coverage_x=coverage_first;
-						coverage_x<=coverage_last;++coverage_x)
-						{
-						if(!inside_clip(vp,coverage_x,y)||
-							(group==visual_render_groupst::main&&
-							has_fire(vp,coverage_x,y)))
-							{
-							blocked=true;
-							break;
-							}
-						proxy.coverage.emplace(coverage_x,y);
+						blocked=true;
+						break;
 						}
-					if(blocked)continue;
-
-					proxy.texture=cached_texture(renderer,texpos);
-					if(proxy.texture==nullptr)continue;
-					proxies.push_back(std::move(proxy));
+					proxy.coverage.emplace(coverage_x,y);
 					}
+				if(blocked)continue;
+
+				proxy.texture=cached_texture(renderer,texpos);
+				if(proxy.texture==nullptr)continue;
+				proxies.push_back(std::move(proxy));
 				}
 			}
 		}
