@@ -42,8 +42,8 @@ format.
 
 ## Scripts
 
-The scripts build and write under `harness/out/`, which is ignored by git. Run them from the
-repository root. `<plugin dir>` is a directory holding the plugin sources (`smooth-movement.cpp`,
+The scripts build and write under `harness/out/`, which is ignored by git, with the `c++` on
+the path; clang and g++ both work. Run them from the repository root. `<plugin dir>` is a directory holding the plugin sources (`smooth-movement.cpp`,
 `visual_animation.h`, `frame_record.h` and the unit test), such as the repository root (`.`)
 or an export of another branch, for example
 `mkdir -p harness/out/src-base && git archive origin/release/v0.5.0 | tar -x -C harness/out/src-base`.
