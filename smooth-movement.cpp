@@ -25,6 +25,7 @@
 #include "frame_record.h"
 #include "frame_recorder.h"
 #include "frame_stats.h"
+#include "tile_repaint.h"
 #include "visual_animation.h"
 
 #include <SDL_render.h>
@@ -401,73 +402,6 @@ void update_visual_context(
 	has_pan_context=true;
 }
 
-using viewport_layer_memberst=int32_t *df::graphic_viewportst::*;
-
-struct visual_layer_bufferst
-{
-	viewport_visual_layer layer;
-	viewport_layer_memberst current;
-	viewport_layer_memberst previous;
-};
-
-constexpr size_t visual_layer_count=static_cast<size_t>(viewport_visual_layer::count);
-constexpr std::array visual_layer_buffers=
-	{
-	visual_layer_bufferst{viewport_visual_layer::right,
-		&df::graphic_viewportst::screentexpos_right_creature,
-		&df::graphic_viewportst::screentexpos_right_creature_old},
-	visual_layer_bufferst{viewport_visual_layer::center,
-		&df::graphic_viewportst::screentexpos,
-		&df::graphic_viewportst::screentexpos_old},
-	visual_layer_bufferst{viewport_visual_layer::left,
-		&df::graphic_viewportst::screentexpos_left_creature,
-		&df::graphic_viewportst::screentexpos_left_creature_old},
-	visual_layer_bufferst{viewport_visual_layer::upright,
-		&df::graphic_viewportst::screentexpos_upright_creature,
-		&df::graphic_viewportst::screentexpos_upright_creature_old},
-	visual_layer_bufferst{viewport_visual_layer::up,
-		&df::graphic_viewportst::screentexpos_up_creature,
-		&df::graphic_viewportst::screentexpos_up_creature_old},
-	visual_layer_bufferst{viewport_visual_layer::upleft,
-		&df::graphic_viewportst::screentexpos_upleft_creature,
-		&df::graphic_viewportst::screentexpos_upleft_creature_old},
-	visual_layer_bufferst{viewport_visual_layer::vehicle,
-		&df::graphic_viewportst::screentexpos_vehicle,
-		&df::graphic_viewportst::screentexpos_vehicle_old},
-	visual_layer_bufferst{viewport_visual_layer::item,
-		&df::graphic_viewportst::screentexpos_item,
-		&df::graphic_viewportst::screentexpos_item_old},
-	visual_layer_bufferst{viewport_visual_layer::designation,
-		&df::graphic_viewportst::screentexpos_designation,
-		&df::graphic_viewportst::screentexpos_designation_old}
-	};
-
-constexpr bool valid_visual_layer_buffers()
-{
-	uint16_t layers=0;
-	for(const auto &buffer:visual_layer_buffers)
-		{
-		const uint16_t layer=uint16_t(1U<<static_cast<uint8_t>(buffer.layer));
-		if(layers&layer)return false;
-		layers|=layer;
-		}
-	return layers==uint16_t((1U<<visual_layer_count)-1);
-}
-
-static_assert(valid_visual_layer_buffers());
-
-template<typename Viewport>
-auto visual_layers(Viewport *vp,bool previous=false)
-{
-	using layer_pointer=std::conditional_t<
-		std::is_const_v<Viewport>,const int32_t *,int32_t *>;
-	std::array<layer_pointer,visual_layer_count> layers{};
-	for(const auto &buffer:visual_layer_buffers)
-		layers[static_cast<size_t>(buffer.layer)]=vp->*(previous?
-			buffer.previous:buffer.current);
-	return layers;
-}
-
 viewport_visual_animation_inputst animation_input(df::graphic_viewportst *vp)
 {
 	const df::graphic_viewportst *const_viewport=vp;
@@ -517,44 +451,6 @@ bool has_fire(const df::graphic_viewportst *vp,int32_t x,int32_t y)
 		fire_frame(vp->screentexpos_spatter_flag[x*vp->dim_y+y]);
 }
 
-template<typename T>
-class scoped_value_restorest
-{
-	T &value;
-	T saved;
-
-	public:
-		explicit scoped_value_restorest(T &value,T replacement=T{}):
-			value(value),
-			saved(std::exchange(value,std::move(replacement)))
-			{
-			static_assert(std::is_nothrow_move_assignable_v<T>);
-			}
-
-		~scoped_value_restorest() noexcept
-			{
-			value=std::move(saved);
-			}
-
-		scoped_value_restorest(const scoped_value_restorest &)=delete;
-		scoped_value_restorest &operator=(const scoped_value_restorest &)=delete;
-		scoped_value_restorest(scoped_value_restorest &&)=delete;
-		scoped_value_restorest &operator=(scoped_value_restorest &&)=delete;
-};
-
-template<typename Callback>
-void with_zeroed_values(const Callback &callback)
-{
-	callback();
-}
-
-template<typename Callback,typename T,typename... Values>
-void with_zeroed_values(const Callback &callback,T &value,Values &...values)
-{
-	scoped_value_restorest<T> zero(value);
-	with_zeroed_values(callback,values...);
-}
-
 struct render_proxyst
 {
 	viewport_visual_layer layer;
@@ -597,84 +493,12 @@ struct viewport_renderst
 	render_coveragest coverage;
 };
 
-constexpr uint16_t visual_layer_bit(viewport_visual_layer layer)
-{
-	return uint16_t(1U<<static_cast<uint8_t>(layer));
-}
-
 uint16_t selected_mask(
 	const std::unordered_map<int32_t,uint16_t> &selected,
 	int32_t index)
 {
 	const auto found=selected.find(index);
 	return found==selected.end()?0:found->second;
-}
-
-template<size_t Layer=0,typename Callback>
-void with_suppressed_visual_layers(
-	const std::array<int32_t *,visual_layer_count> &layers,
-	int32_t index,
-	uint16_t mask,
-	const Callback &callback)
-{
-	if constexpr(Layer==visual_layer_count)
-		callback();
-	else if(mask&(1U<<Layer))
-		{
-		scoped_value_restorest<int32_t> zero(layers[Layer][index]);
-		with_suppressed_visual_layers<Layer+1>(layers,index,mask,callback);
-		}
-	else
-		with_suppressed_visual_layers<Layer+1>(layers,index,mask,callback);
-}
-
-template<typename Callback>
-void with_base_suppressed(
-	df::graphic_viewportst *vp,
-	int32_t index,
-	const Callback &callback)
-{
-	with_zeroed_values(
-		callback,
-		vp->screentexpos_background[index],
-		vp->screentexpos_floor_flag[index],
-		vp->screentexpos_background_two[index],
-		vp->screentexpos_liquid_flag[index],
-		vp->screentexpos_spatter_flag[index],
-		vp->screentexpos_spatter[index],
-		vp->screentexpos_ramp_flag[index],
-		vp->screentexpos_shadow_flag[index],
-		vp->screentexpos_building_one[index]);
-}
-
-template<typename Callback>
-void with_main_suppressed(
-	df::graphic_viewportst *vp,
-	int32_t index,
-	const Callback &callback)
-{
-	with_base_suppressed(vp,index,[&]
-		{
-		with_zeroed_values(callback,vp->screentexpos_vermin[index]);
-		});
-}
-
-template<typename Callback>
-void with_upper_suppressed(
-	df::graphic_viewportst *vp,
-	int32_t index,
-	const Callback &callback)
-{
-	with_main_suppressed(vp,index,[&]
-		{
-		with_zeroed_values(
-			callback,
-			vp->screentexpos_building_two[index],
-			vp->screentexpos_projectile[index],
-			vp->screentexpos_high_flow[index],
-			vp->screentexpos_top_shadow[index],
-			vp->screentexpos_signpost[index]);
-		});
 }
 
 // Every tile repaint the plugin asks the game for goes through here so `stats` can count them.
@@ -685,89 +509,8 @@ void game_repaint(df::renderer_2d_base *renderer,df::graphic_viewportst *vp,int3
 	renderer->update_viewport_tile(vp,x,y);
 }
 
-// Calls `visit` on each of the 25 per-tile arrays the game draws a tile from, the 20
-// texture slots and the 5 flag words, in the game's order, until one call returns false.
-template<typename Visit>
-bool visit_tile_arrays(const df::graphic_viewportst *vp,const Visit &visit)
-{
-	return visit(vp->screentexpos_background)&&
-		visit(vp->screentexpos_floor_flag)&&
-		visit(vp->screentexpos_background_two)&&
-		visit(vp->screentexpos_liquid_flag)&&
-		visit(vp->screentexpos_spatter_flag)&&
-		visit(vp->screentexpos_spatter)&&
-		visit(vp->screentexpos_ramp_flag)&&
-		visit(vp->screentexpos_shadow_flag)&&
-		visit(vp->screentexpos_building_one)&&
-		visit(vp->screentexpos_item)&&
-		visit(vp->screentexpos_vehicle)&&
-		visit(vp->screentexpos_vermin)&&
-		visit(vp->screentexpos_left_creature)&&
-		visit(vp->screentexpos)&&
-		visit(vp->screentexpos_right_creature)&&
-		visit(vp->screentexpos_building_two)&&
-		visit(vp->screentexpos_projectile)&&
-		visit(vp->screentexpos_high_flow)&&
-		visit(vp->screentexpos_top_shadow)&&
-		visit(vp->screentexpos_signpost)&&
-		visit(vp->screentexpos_upleft_creature)&&
-		visit(vp->screentexpos_up_creature)&&
-		visit(vp->screentexpos_upright_creature)&&
-		visit(vp->screentexpos_designation)&&
-		visit(vp->screentexpos_interface);
-}
-
-// Whether a repaint of the tile would paint anything. The game draws only the per-tile
-// arrays whose entry for the tile holds a texture or flag, so a tile whose 25 entries are all
-// zero paints nothing. Tiles of a level below the camera are mostly like that already, and a
-// tile on the camera's level becomes like that once the layers a stage hides are zeroed. Read
-// inside the suppressed context, right before the repaint it can save.
-bool tile_paints_nothing(const df::graphic_viewportst *vp,int32_t index)
-{
-	return visit_tile_arrays(
-		vp,[index](const auto *array){return array==nullptr||array[index]==0;});
-}
-
-// While the camera glide repaints every tile of every viewport, one word per tile of each
-// viewport holds the bitwise OR of its 25 entries, so the word is zero exactly when the tile
-// paints nothing. Such a tile still paints nothing whatever layers a stage hides, since
-// hiding a layer only zeroes entries, so the stages skip it before hiding anything. The
-// words are filled once per viewport, array by array, and hold only for the glide's frame:
-// the game writes the arrays between frames, and the plugin restores every entry it writes.
-struct blank_summaryst
-{
-	const df::graphic_viewportst *viewport;
-	std::vector<uint64_t> nonzero;
-};
-std::vector<blank_summaryst> blank_summaries;
-
-void summarize_blank_tiles(const std::vector<viewport_renderst> &viewports)
-{
-	blank_summaries.clear();
-	for(const viewport_renderst &viewport:viewports)
-		{
-		const df::graphic_viewportst *vp=viewport.viewport;
-		const size_t tile_count=size_t(vp->dim_x)*size_t(vp->dim_y);
-		blank_summaryst &summary=blank_summaries.emplace_back();
-		summary.viewport=vp;
-		summary.nonzero.assign(tile_count,0);
-		visit_tile_arrays(vp,[&](const auto *array)
-			{
-			if(array!=nullptr)
-				for(size_t i=0;i<tile_count;++i)summary.nonzero[i]|=uint64_t(array[i]);
-			return true;
-			});
-		}
-}
-
-// Whether the glide's summary, if there is one, knows the tile paints nothing.
-bool tile_known_blank(const df::graphic_viewportst *vp,int32_t index)
-{
-	for(const blank_summaryst &summary:blank_summaries)
-		if(summary.viewport==vp)
-			return size_t(index)<summary.nonzero.size()&&summary.nonzero[size_t(index)]==0;
-	return false;
-}
+// The camera glide's per-tile blank summary, filled for the glide's frame and cleared after.
+blank_summariest<df::graphic_viewportst> blank_summaries;
 
 // A staged repaint: skipped when the tile, with the stage's layers hidden, has nothing to
 // paint.
@@ -787,39 +530,13 @@ void redraw_viewport_tile(
 {
 	df::graphic_viewportst *vp=viewport.viewport;
 	const int32_t index=x*vp->dim_y+y;
-	if(tile_known_blank(vp,index))return;
-	const auto redraw=[&]{staged_repaint(renderer,vp,x,y);};
-	const auto stage=[&]
-		{
-		with_suppressed_visual_layers(
-			visual_layers(vp),index,
-			selected_mask(viewport.coverage.selected,index),redraw);
-		};
-	// The interface layer is the shading for levels below the camera.
-	// A staged tile has a sprite drawn over it afterwards, so draw_interface_only places it instead.
-	if(!defer_interface||vp->screentexpos_interface==nullptr)stage();
-	else with_zeroed_values(stage,vp->screentexpos_interface[index]);
-}
-
-// Every buffer the interface-only pass zeroes has to exist before it can be zeroed.
-bool interface_pass_readable(const df::graphic_viewportst *vp)
-{
-	return vp!=nullptr&&
-		vp->screentexpos_interface!=nullptr&&
-		vp->screentexpos_background!=nullptr&&
-		vp->screentexpos_floor_flag!=nullptr&&
-		vp->screentexpos_background_two!=nullptr&&
-		vp->screentexpos_liquid_flag!=nullptr&&
-		vp->screentexpos_spatter_flag!=nullptr&&
-		vp->screentexpos_spatter!=nullptr&&
-		vp->screentexpos_ramp_flag!=nullptr&&
-		vp->screentexpos_shadow_flag!=nullptr&&
-		vp->screentexpos_building_one!=nullptr&&
-		vp->screentexpos_vermin!=nullptr&&
-		vp->screentexpos_building_two!=nullptr&&
-		vp->screentexpos_projectile!=nullptr&&
-		vp->screentexpos_high_flow!=nullptr&&
-		vp->screentexpos_signpost!=nullptr;
+	if(blank_summaries.known_blank(vp,index))return;
+	repaint_staged(
+		vp,x,y,selected_mask(viewport.coverage.selected,index),defer_interface,
+		[renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
+			{
+			staged_repaint(renderer,vp,x,y);
+			});
 }
 
 // Runs after the proxies so the shading covers them rather than sitting underneath.
@@ -830,33 +547,12 @@ void draw_interface_only(
 	int32_t y)
 {
 	if(!interface_pass_readable(vp))return;
-	const int32_t index=x*vp->dim_y+y;
-	if(tile_known_blank(vp,index))return;
-	const auto redraw=[&]{staged_repaint(renderer,vp,x,y);};
-	const auto without_visuals=[&]
-		{
-		with_suppressed_visual_layers(
-			visual_layers(vp),
-			index,
-			uint16_t((1U<<visual_layer_count)-1),
-			redraw);
-		};
-	with_zeroed_values(
-		without_visuals,
-		vp->screentexpos_background[index],
-		vp->screentexpos_floor_flag[index],
-		vp->screentexpos_background_two[index],
-		vp->screentexpos_liquid_flag[index],
-		vp->screentexpos_spatter_flag[index],
-		vp->screentexpos_spatter[index],
-		vp->screentexpos_ramp_flag[index],
-		vp->screentexpos_shadow_flag[index],
-		vp->screentexpos_building_one[index],
-		vp->screentexpos_vermin[index],
-		vp->screentexpos_building_two[index],
-		vp->screentexpos_projectile[index],
-		vp->screentexpos_high_flow[index],
-		vp->screentexpos_signpost[index]);
+	if(blank_summaries.known_blank(vp,x*vp->dim_y+y))return;
+	repaint_interface_only(
+		vp,x,y,[renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
+			{
+			staged_repaint(renderer,vp,x,y);
+			});
 }
 
 void redraw_world_tile(
@@ -876,16 +572,6 @@ void redraw_world_tile(
 		}
 }
 
-constexpr uint16_t visual_layers_through_group(visual_render_groupst group)
-{
-	uint16_t mask=0;
-	for(const auto &descriptor:visual_layer_descriptors)
-		if(descriptor.render_group!=visual_render_groupst::designation&&
-			static_cast<uint8_t>(descriptor.render_group)<=static_cast<uint8_t>(group))
-			mask|=visual_layer_bit(descriptor.layer);
-	return mask;
-}
-
 void redraw_above(
 	df::renderer_2d_base *renderer,
 	df::graphic_viewportst *vp,
@@ -895,29 +581,13 @@ void redraw_above(
 	const std::unordered_map<int32_t,uint16_t> &selected)
 {
 	const int32_t index=x*vp->dim_y+y;
-	if(tile_known_blank(vp,index))return;
-	const auto redraw=[&]{staged_repaint(renderer,vp,x,y);};
-	const auto suppress_visuals=[&]
-		{
-		const auto stage=[&]
+	if(blank_summaries.known_blank(vp,index))return;
+	repaint_above(
+		vp,x,y,group,selected_mask(selected,index),
+		[renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
 			{
-			with_suppressed_visual_layers(
-				visual_layers(vp),
-				index,
-				selected_mask(selected,index)|visual_layers_through_group(group),
-				redraw);
-			};
-		// The interface layer sits above every group, so each group's redraw would paint it again.
-		// draw_interface_only places it once, after the sprites.
-		if(vp->screentexpos_interface==nullptr)stage();
-		else with_zeroed_values(stage,vp->screentexpos_interface[index]);
-		};
-	if(group==visual_render_groupst::item||group==visual_render_groupst::vehicle)
-		with_base_suppressed(vp,index,suppress_visuals);
-	else if(group==visual_render_groupst::main)
-		with_main_suppressed(vp,index,suppress_visuals);
-	else
-		with_upper_suppressed(vp,index,suppress_visuals);
+			staged_repaint(renderer,vp,x,y);
+			});
 }
 
 SDL_Texture *cached_texture(
@@ -1651,7 +1321,8 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		const int32_t saved_origin_y=renderer->origin_y;
 		renderer->origin_x+=glide_x;
 		renderer->origin_y+=glide_y;
-		summarize_blank_tiles(viewport_renders);
+		blank_summaries.summarize(
+			viewport_renders,[](const viewport_renderst &v){return v.viewport;});
 		for(int32_t x=vp->clipx[0];x<=vp->clipx[1];++x)
 			{
 			for(int32_t y=vp->clipy[0];y<=vp->clipy[1];++y)
