@@ -92,8 +92,9 @@ A recording then serves as a real scene for comparing versions: replay two versi
 traces and run `compare.sh` on them. Repaint, copy and fill counts are the same on every run
 and are the figures that carry over to the game, where every repaint is real work. Renderer
 calls cost nothing here, so the wall-clock time a replay prints reflects only the plugin's own
-bookkeeping and is noisy. The in-game `smooth-movement stats` command remains the only measure
-of what a change saves.
+bookkeeping; it varies by about two percent between runs of one build on one machine, so a
+difference smaller than that says nothing. The in-game `smooth-movement stats` command
+remains the only measure of what a change saves.
 
 ## Limits
 
