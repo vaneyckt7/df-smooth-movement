@@ -93,3 +93,7 @@ is a different scene. The recorder writes only active viewports, so a viewport t
 allocated but inactive is absent from the replay; the plugin's per-frame context update sees
 the game's main viewport on such a frame and the replay does not, which can show up as a
 differing frame rather than a missed difference.
+The replay also fills the stub texture cache with every texture the recording mentions before
+the first frame, while the game fills its cache as it paints. A unit whose sprite first appears
+in the frame it starts moving has no cached texture in the game and is skipped there, but is
+drawn in the replay, which shows up as a differing frame in the same way.

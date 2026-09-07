@@ -370,7 +370,7 @@ int main(int argc,char **argv)
 	if(argc>=3&&!strcmp(argv[1],"replay"))
 		{
 		const int rc=run_replay(argv[2],argc>3&&strcmp(argv[3],"-")?argv[3]:nullptr);
-		if(trace)fclose(trace);
+		if(trace&&(ferror(trace)||fclose(trace)!=0)){fprintf(stderr,"trace write failed\n");return 2;}
 		return rc;
 		}
 	fprintf(stderr,"usage: bench replay <recording> [trace-out]\n  <recording>: file written by `smooth-movement record`\n  <trace-out>: file to write the trace to (`-` or omitted: no trace)\n");
