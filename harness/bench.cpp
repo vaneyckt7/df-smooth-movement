@@ -329,7 +329,7 @@ int run_replay(const char *record_path,const char *trace_path)
 				m.boulder_texpos1=u.texpos;
 				items.push_back({df::item_type::BOULDER,&m});
 				inventory.push_back({&items.back(),df::inv_item_role_type::Hauled});
-				unit.inventory={&inventory.back()};
+				unit.inventory.assign(1,&inventory.back());
 				}
 			DFHack::Units::harness_units.push_back(&unit);
 			}
