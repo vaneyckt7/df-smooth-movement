@@ -1173,6 +1173,34 @@ class visual_animation_managerst
 			return native_sprite_facing;
 			}
 
+		// The tiles of this viewport whose facing is not the native one, in the order the
+		// render code sweeps a viewport in: column by column, top to bottom within a column.
+		// The sweep visits only these instead of asking for the facing of every tile.
+		void collect_mirrored_tiles(
+			const void *viewport,
+			int32_t dim_x,
+			int32_t dim_y,
+			std::vector<std::array<int32_t,2>> &tiles) const
+			{
+			tiles.clear();
+			for(const viewport_animationst &state:viewports)
+				{
+				if(state.viewport!=viewport)continue;
+				if(!state.has_mirrored)break;
+				const int32_t last_x=std::min(dim_x,state.dim_x);
+				const int32_t last_y=std::min(dim_y,state.dim_y);
+				for(int32_t x=0;x<last_x;++x)
+					for(int32_t y=0;y<last_y;++y)
+						{
+						const size_t index=size_t(x)*size_t(state.dim_y)+size_t(y);
+						if(index>=state.facing.size())break;
+						if(state.facing[index]!=int8_t(native_sprite_facing))
+							tiles.push_back({x,y});
+						}
+				break;
+				}
+			}
+
 		bool has_mirrored_facing(const void *viewport) const
 			{
 			for(const viewport_animationst &state:viewports)
