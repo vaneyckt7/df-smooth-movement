@@ -7,12 +7,14 @@
 // Run:   ./bench replay <recording> [trace-out]
 //        Reads <recording>. Writes <trace-out>, one line per renderer call. Leave <trace-out>
 //        out, or pass `-`, to replay without a trace.
-// Exit:  0 every frame matched the game, 1 some frames differed, 2 the recording could not be
+// Exit:  0 the self-check passed on every frame, 1 it failed on some, 2 the recording could not be
 //        read or has no frames, the trace could not be written or the plugin could not be
 //        enabled, 3 usage error.
 //
 // Trace lines, one per renderer call the plugin makes, in order:
 //   # frame replay N t=<clock ms> w=<window x>,<window y>   start of frame N
+//   # end frame N painted <0|1> repaints <count>             end of frame N; the count includes
+//                                                            blank repaints, which leave no line
 //   R vp x y hash i<interface entry> o<origin x>,<origin y>  tile repaint; the hash covers the tile's
 //                                                            current entries in the 24 arrays other
 //                                                            than the interface array
@@ -296,7 +298,7 @@ int run_replay(const char *record_path,const char *trace_path)
 	size_t n=0;
 	// Pass two: replay the frames in order. Each one sets the globals the hook reads to the
 	// recorded values, rebuilds the units in view, runs the hook, and compares what it did
-	// with what the game's plugin did on that frame.
+	// with the self-check the recorder wrote: what the game's plugin did on that frame.
 	while(decode_frame(reader,slots,graphics,frame,nullptr))
 		{
 		const auto &h=frame.header;
@@ -341,6 +343,7 @@ int run_replay(const char *record_path,const char *trace_path)
 		us+=frame_us;us_max=std::max(us_max,frame_us);
 		const uint64_t repaints=repaint_calls-r0;
 		const bool painted=frame_stats.painted!=p0;
+		if(trace)fprintf(trace,"# end frame %zu painted %d repaints %llu\n",n,painted,(unsigned long long)repaints);
 		recorded_painted+=frame.result.painted;recorded_repaints+=frame.result.repaints;
 		replayed_painted+=painted;
 		unstable+=frame.result.changed_words!=0;
@@ -360,7 +363,7 @@ int run_replay(const char *record_path,const char *trace_path)
 		double(copy_calls)/double(n),double(fill_calls)/double(n),double(fill_rects)/double(n),n);
 	printf("game:   painted %llu of %zu frames, repaints %llu\n",(unsigned long long)recorded_painted,n,(unsigned long long)recorded_repaints);
 	printf("replay: painted %llu of %zu frames, repaints %llu\n",(unsigned long long)replayed_painted,n,(unsigned long long)repaint_calls);
-	printf("frames whose painted flag or repaint count differ from the game: %llu, of which %llu had array entries change under the hook\n",(unsigned long long)mismatched,(unsigned long long)unstable_mismatched);
+	printf("self-check: frames whose painted flag or repaint count differ from the game: %llu, of which %llu had array entries change under the hook\n",(unsigned long long)mismatched,(unsigned long long)unstable_mismatched);
 	printf("frames whose array entries changed under the hook in the game: %llu\n",(unsigned long long)unstable);
 	return mismatched==0?0:1;
 }

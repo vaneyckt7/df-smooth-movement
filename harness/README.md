@@ -27,9 +27,10 @@ the per-tile arrays of every active viewport, and the units in view with the tex
 hauled item. The per-tile arrays are what the game fills before it draws a viewport: 20
 texture slots and 5 flag words per tile, plus the game's copy of each from the previous frame.
 They change little between frames, so each array is written as runs of zero entries, entries
-equal to the previous frame, or literal values. At the end of the hook the recorder adds what
-the hook did: how many tiles it repainted, whether it painted at all, and how many array
-entries the game changed while the hook ran.
+equal to the previous frame, or literal values. At the end of the hook the recorder adds a
+self-check for the harness: how many tiles the hook repainted, whether it painted at all, and
+how many array entries the game changed while the hook ran. That is not part of the scene;
+see "What a replay tells you".
 
 Starting a recording resets the plugin's animation and camera state and asks the game for one
 full redraw, so a recording begins from a known state whenever it starts. A scroll glide or
@@ -48,8 +49,8 @@ or an export of another branch, for example
 `mkdir -p harness/out/src-base && git archive origin/release/v0.5.0 | tar -x -C harness/out/src-base`.
 
 - `replay.sh <plugin dir> <label> <recording>`: builds the harness against that source and
-  replays the recording, writing `out/<label>.trace` and comparing every frame's repaint count
-  and painted flag with what the game's plugin did.
+  replays the recording, writing `out/<label>.trace` and printing the repaint stats and the
+  self-check against the game.
 - `compare.sh <label> [baseline label]`: byte-for-byte trace comparison. Identical traces
   mean the two versions asked the renderer for exactly the same pixels. Exits non-zero when
   they differ or one is missing or empty.
@@ -58,12 +59,18 @@ or an export of another branch, for example
 - `build.sh <plugin dir> <label>`: just builds `out/bench-<label>`, for running `bench` by hand.
   `bench replay <recording> [trace-out]` replays a recording and writes the trace to
   `trace-out`. Leave `trace-out` out, or pass `-`, to replay without a trace. It exits 0 when
-  every frame matched the game, 1 when some differed, 2 when the recording could not be read
-  or has no frames, the trace could not be written, or the plugin would not enable, 3 on a
-  usage error.
+  the self-check passed on every frame, 1 when it failed on some, 2 when the recording could
+  not be read or has no frames, the trace could not be written, or the plugin would not
+  enable, 3 on a usage error.
   `replay.sh` passes that code through.
+- `digest.py <trace> [<trace>]`: one line per replayed frame: the frame number, whether the
+  hook painted, how many repaints it asked for including blank ones, how many trace lines it
+  wrote (its visible repaints and SDL draws) and a SHA-256 digest of those lines. With two
+  traces it prints the frames whose lines differ.
 - `test.sh <plugin dir>`: builds and runs the recording codec test, then replays every recording
-  in `recordings/` and fails when any frame differs from what the game's plugin did.
+  in `recordings/` and fails when any frame's digest differs from `expected/<name>.digest`.
+  It prints the replay's repaint total alongside the game's from the self-check, which
+  match only for the plugin version that made the recording.
 - `compile.sh <plugin dir>`: builds the plugin in DFHack's docker build image against the real
   headers. Needs `DFHACK_SRC` pointing at a DFHack checkout with `build/linux` configured,
   and touches nothing outside that build directory.
@@ -77,18 +84,30 @@ camera off, unpaused for all but two frames, with creatures moving. `fortress-ca
 is 183 frames with the free camera on, resting a little off the tile grid, with creatures
 walking left so their sprites are mirrored. Neither has hauled item icons, linear easing, a
 followed unit, a scroll or a zoom change; a change to those paths needs its own recording.
-`test.sh` replays both and requires zero differing frames, so a change to the plugin, the
-stubs or the replay that alters what the render hook does on these scenes fails the test
-without the game. A change that is meant to alter it needs a new recording made in the game
-with that version.
+The recordings are fixtures and stay fixed: every version of the plugin replays the same
+scenes. `expected/<name>.digest` holds, for each recording, one line per frame with the
+repaint count and the digest of the visible draws the current version asks for on it, made
+with `digest.py` from the trace of a replay. `test.sh` replays both recordings and requires
+every line to match, so a change to the plugin, the stubs or the replay that alters what the
+render hook draws, or how many repaints it asks for, on these scenes fails the test without
+the game. The rule for a change is by kind. A change that makes the plugin cheaper must
+change only the repaint count column of the file, with every frame's painted flag, draw
+count and digest the same, and that diff is its evidence. A change to what the plugin draws
+regenerates the file (`test.sh` prints the copy command) and shows what changed with
+`compare.sh` on traces of the two versions, since the digest only says which frames moved.
+Any other change, such as a refactor or a change to the stubs, must leave the file untouched.
+The game's repaint count in the recording's self-check then differs from the replay's and is
+only informative.
 
 ## What a replay tells you
 
-A recording of the plugin version that made it must replay with zero differing frames. That
-is the check that the stubs and the replay model what the hook reads. Each
-frame also records how many array entries the game changed while the hook ran. A frame with a
-non-zero count saw input the replay cannot reproduce, and the replay summary says how many of
-the differing frames were of that kind.
+The self-check: a recording of the plugin version that made it must replay with zero frames
+differing from the game's repaint count and painted flag. That is the proof that the stubs
+and the replay model what the hook reads, and it is meaningful only for that version; for a
+later version the game's count is a reference, not a verdict. Each frame also records how
+many array entries the game changed while the hook ran. A frame with a non-zero count saw
+input the replay cannot reproduce, and the replay summary says how many of the differing
+frames were of that kind.
 
 A recording then serves as a real scene for comparing versions: replay two versions with
 traces and run `compare.sh` on them. Repaint, copy and fill counts are the same on every run
