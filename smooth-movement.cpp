@@ -833,6 +833,38 @@ void game_repaint(df::renderer_2d_base *renderer,df::graphic_viewportst *vp,int3
 	renderer->update_viewport_tile(vp,x,y);
 }
 
+// Calls `visit` on each of the 25 per-tile arrays the game draws a tile from, the 20
+// texture slots and the 5 flag words, in the game's order, until one call returns false.
+template<typename Visit>
+bool visit_tile_arrays(const df::graphic_viewportst *vp,const Visit &visit)
+{
+	return visit(vp->screentexpos_background)&&
+		visit(vp->screentexpos_floor_flag)&&
+		visit(vp->screentexpos_background_two)&&
+		visit(vp->screentexpos_liquid_flag)&&
+		visit(vp->screentexpos_spatter_flag)&&
+		visit(vp->screentexpos_spatter)&&
+		visit(vp->screentexpos_ramp_flag)&&
+		visit(vp->screentexpos_shadow_flag)&&
+		visit(vp->screentexpos_building_one)&&
+		visit(vp->screentexpos_item)&&
+		visit(vp->screentexpos_vehicle)&&
+		visit(vp->screentexpos_vermin)&&
+		visit(vp->screentexpos_left_creature)&&
+		visit(vp->screentexpos)&&
+		visit(vp->screentexpos_right_creature)&&
+		visit(vp->screentexpos_building_two)&&
+		visit(vp->screentexpos_projectile)&&
+		visit(vp->screentexpos_high_flow)&&
+		visit(vp->screentexpos_top_shadow)&&
+		visit(vp->screentexpos_signpost)&&
+		visit(vp->screentexpos_upleft_creature)&&
+		visit(vp->screentexpos_up_creature)&&
+		visit(vp->screentexpos_upright_creature)&&
+		visit(vp->screentexpos_designation)&&
+		visit(vp->screentexpos_interface);
+}
+
 // Whether a repaint of the tile would paint anything. The game draws only the per-tile
 // arrays whose entry for the tile holds a texture or flag, so a tile whose 25 entries are all
 // zero paints nothing. Tiles of a level below the camera are mostly like that already, and a
@@ -840,32 +872,49 @@ void game_repaint(df::renderer_2d_base *renderer,df::graphic_viewportst *vp,int3
 // inside the suppressed context, right before the repaint it can save.
 bool tile_paints_nothing(const df::graphic_viewportst *vp,int32_t index)
 {
-	const auto zero=[index](const auto *array){return array==nullptr||array[index]==0;};
-	return zero(vp->screentexpos_background)&&
-		zero(vp->screentexpos_floor_flag)&&
-		zero(vp->screentexpos_background_two)&&
-		zero(vp->screentexpos_liquid_flag)&&
-		zero(vp->screentexpos_spatter_flag)&&
-		zero(vp->screentexpos_spatter)&&
-		zero(vp->screentexpos_ramp_flag)&&
-		zero(vp->screentexpos_shadow_flag)&&
-		zero(vp->screentexpos_building_one)&&
-		zero(vp->screentexpos_item)&&
-		zero(vp->screentexpos_vehicle)&&
-		zero(vp->screentexpos_vermin)&&
-		zero(vp->screentexpos_left_creature)&&
-		zero(vp->screentexpos)&&
-		zero(vp->screentexpos_right_creature)&&
-		zero(vp->screentexpos_building_two)&&
-		zero(vp->screentexpos_projectile)&&
-		zero(vp->screentexpos_high_flow)&&
-		zero(vp->screentexpos_top_shadow)&&
-		zero(vp->screentexpos_signpost)&&
-		zero(vp->screentexpos_upleft_creature)&&
-		zero(vp->screentexpos_up_creature)&&
-		zero(vp->screentexpos_upright_creature)&&
-		zero(vp->screentexpos_designation)&&
-		zero(vp->screentexpos_interface);
+	return visit_tile_arrays(
+		vp,[index](const auto *array){return array==nullptr||array[index]==0;});
+}
+
+// While the camera glide repaints every tile of every viewport, one word per tile of each
+// viewport holds the bitwise OR of its 25 entries, so the word is zero exactly when the tile
+// paints nothing. Such a tile still paints nothing whatever layers a stage hides, since
+// hiding a layer only zeroes entries, so the stages skip it before hiding anything. The
+// words are filled once per viewport, array by array, and hold only for the glide's frame:
+// the game writes the arrays between frames, and the plugin restores every entry it writes.
+struct blank_summaryst
+{
+	const df::graphic_viewportst *viewport;
+	std::vector<uint64_t> nonzero;
+};
+std::vector<blank_summaryst> blank_summaries;
+
+void summarize_blank_tiles(const std::vector<viewport_renderst> &viewports)
+{
+	blank_summaries.clear();
+	for(const viewport_renderst &viewport:viewports)
+		{
+		const df::graphic_viewportst *vp=viewport.viewport;
+		const size_t tile_count=size_t(vp->dim_x)*size_t(vp->dim_y);
+		blank_summaryst &summary=blank_summaries.emplace_back();
+		summary.viewport=vp;
+		summary.nonzero.assign(tile_count,0);
+		visit_tile_arrays(vp,[&](const auto *array)
+			{
+			if(array!=nullptr)
+				for(size_t i=0;i<tile_count;++i)summary.nonzero[i]|=uint64_t(array[i]);
+			return true;
+			});
+		}
+}
+
+// Whether the glide's summary, if there is one, knows the tile paints nothing.
+bool tile_known_blank(const df::graphic_viewportst *vp,int32_t index)
+{
+	for(const blank_summaryst &summary:blank_summaries)
+		if(summary.viewport==vp)
+			return size_t(index)<summary.nonzero.size()&&summary.nonzero[size_t(index)]==0;
+	return false;
 }
 
 // A staged repaint: skipped when the tile, with the stage's layers hidden, has nothing to
@@ -886,6 +935,7 @@ void redraw_viewport_tile(
 {
 	df::graphic_viewportst *vp=viewport.viewport;
 	const int32_t index=x*vp->dim_y+y;
+	if(tile_known_blank(vp,index))return;
 	const auto redraw=[&]{staged_repaint(renderer,vp,x,y);};
 	const auto stage=[&]
 		{
@@ -929,6 +979,7 @@ void draw_interface_only(
 {
 	if(!interface_pass_readable(vp))return;
 	const int32_t index=x*vp->dim_y+y;
+	if(tile_known_blank(vp,index))return;
 	const auto redraw=[&]{staged_repaint(renderer,vp,x,y);};
 	const auto without_visuals=[&]
 		{
@@ -992,6 +1043,7 @@ void redraw_above(
 	const std::unordered_map<int32_t,uint16_t> &selected)
 {
 	const int32_t index=x*vp->dim_y+y;
+	if(tile_known_blank(vp,index))return;
 	const auto redraw=[&]{staged_repaint(renderer,vp,x,y);};
 	const auto suppress_visuals=[&]
 		{
@@ -1793,6 +1845,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		const int32_t saved_origin_y=renderer->origin_y;
 		renderer->origin_x+=glide_x;
 		renderer->origin_y+=glide_y;
+		summarize_blank_tiles(viewport_renders);
 		for(int32_t x=vp->clipx[0];x<=vp->clipx[1];++x)
 			{
 			for(int32_t y=vp->clipy[0];y<=vp->clipy[1];++y)
@@ -1802,6 +1855,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 			renderer,viewport_renders,coverage,carried_items);
 		renderer->origin_x=saved_origin_x;
 		renderer->origin_y=saved_origin_y;
+		blank_summaries.clear();
 		render_set_clip_rect(sdl_renderer,nullptr);
 
 		// Everything was repainted; per-tile coverage bookkeeping restarts after the glide.

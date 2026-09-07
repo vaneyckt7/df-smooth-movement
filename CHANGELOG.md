@@ -32,6 +32,11 @@
 - Sweep only the tiles that face the mirrored way when repainting resting mirrored creatures.
   The sweep asked the movement tracker for the facing of every tile of a viewport that had
   any; the tracker now lists those tiles. What the hook draws is unchanged.
+- Skip blank tiles before hiding layers while the free camera is off the tile grid. That
+  glide visits every tile of every viewport each frame, and each visit first zeroed and
+  restored the entries of the layers it hides and then found the tile blank; the hook now
+  summarizes which tiles have any non-zero entry once per viewport per glide frame and skips
+  the blank ones before touching them. What the hook draws is unchanged.
 - Set smoothstep movement tweens to 150 ms. Add optional linear easing with
   adaptive 150–500 ms durations based on the cadence between consecutive steps
   (`smooth-movement linear on`) and icons for boulders, bars, and wood hauled by units
