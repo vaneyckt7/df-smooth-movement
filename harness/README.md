@@ -90,10 +90,14 @@ the differing frames were of that kind.
 
 A recording then serves as a real scene for comparing versions: replay two versions with
 traces and run `compare.sh` on them. Repaint, copy and fill counts are the same on every run
-and are the figures that carry over to the game, where every repaint is real work. Renderer
-calls cost nothing here, so the wall-clock time a replay prints reflects only the plugin's own
-bookkeeping and is noisy. The in-game `smooth-movement stats` command remains the only measure
-of what a change saves.
+and are the figures that carry over to the game, where every repaint is real work. The replay
+also prints the plugin's own frame timers, the `sync` and `render` means the in-game `stats`
+command prints: `sync` is the animation manager comparing every viewport's arrays with the
+previous frame's, `render` is everything after it. Renderer calls cost nothing here, so
+`render` is far below its in-game figure and the wall-clock time per frame reflects only the
+plugin's own bookkeeping. The means vary by about a percent between runs of one build on one
+machine, so they show what a change to the plugin's code costs or saves on a recorded scene.
+The in-game `stats` command remains the only measure of what a change saves in the game.
 
 ## Limits
 

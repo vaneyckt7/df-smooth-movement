@@ -283,6 +283,7 @@ int run_replay(const char *record_path,const char *trace_path)
 	if(rc!=DFHack::CR_OK){fprintf(stderr,"plugin_enable failed: %s",out.captured.c_str());return 2;}
 	// Disable the plugin on every way out, including the error returns below.
 	struct disablest{DFHack::color_ostream &out;~disablest(){plugin_enable(out,false);}} disable{out};
+	{std::vector<std::string> p{"stats","on"};status_command(out,p);}
 
 	std::vector<df::unit> units;
 	std::vector<df::item> items;
@@ -356,6 +357,17 @@ int run_replay(const char *record_path,const char *trace_path)
 	printf("replay %-12s %6.1f us/frame (max %.0f)  repaints %7.1f (blank %7.1f)  copies %6.1f  fill calls %5.1f  rects %6.1f  (frames %zu)\n",
 		"all",us/double(n),us_max,double(repaint_calls)/double(n),double(blank_repaint_calls)/double(n),
 		double(copy_calls)/double(n),double(fill_calls)/double(n),double(fill_rects)/double(n),n);
+	// The plugin's own frame timers, the split the in-game `stats` command prints.
+	out.captured.clear();
+	{std::vector<std::string> p{"stats"};status_command(out,p);}
+	for(size_t at=0;at<out.captured.size();)
+		{
+		const size_t end=out.captured.find('\n',at);
+		const std::string line=out.captured.substr(at,end==std::string::npos?std::string::npos:end-at);
+		if(line.rfind("sync:",0)==0||line.rfind("render:",0)==0)printf("plugin %s\n",line.c_str());
+		if(end==std::string::npos)break;
+		at=end+1;
+		}
 	printf("game:   painted %llu of %zu frames, repaints %llu\n",(unsigned long long)recorded_painted,n,(unsigned long long)recorded_repaints);
 	printf("replay: painted %llu of %zu frames, repaints %llu\n",(unsigned long long)replayed_painted,n,(unsigned long long)repaint_calls);
 	printf("frames whose painted flag or repaint count differ from the game: %llu, of which %llu had array entries change under the hook\n",(unsigned long long)mismatched,(unsigned long long)unstable_mismatched);
