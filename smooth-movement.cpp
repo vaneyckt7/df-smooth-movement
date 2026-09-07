@@ -23,18 +23,17 @@
 #include "df/viewport_spatter_flag.h"
 
 #include "frame_record.h"
+#include "frame_recorder.h"
+#include "frame_stats.h"
 #include "visual_animation.h"
 
 #include <SDL_render.h>
 
 #include <algorithm>
 #include <array>
-#include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <mutex>
 #include <set>
 #include <string>
 #include <type_traits>
@@ -59,158 +58,11 @@ namespace {
 
 constexpr const char *plugin_version="0.5.0";
 
-// Frame timing for `smooth-movement stats`. Counting is always on: one increment per frame,
-// one per painted frame, one per repaint by the game. The clock is read three times per frame while
-// enabled. Sync covers movement detection across every viewport; render covers everything
-// after it, including the camera update and carried-item lookup that feed the draw decision,
-// then proxy collection, tile blanking, repaints by the game and sprites. The render thread
-// writes, the console thread reads and clears, so the fields are relaxed atomics; a clear
-// that lands mid-frame skews that one frame and nothing else.
-struct frame_statsst
-{
-	std::atomic<bool> enabled{false};
-	std::atomic<uint64_t> frames{0};
-	std::atomic<uint64_t> painted{0};
-	std::atomic<uint64_t> repaints{0};
-	std::atomic<uint64_t> timed{0};
-	std::atomic<uint64_t> sync_us{0};
-	std::atomic<uint64_t> sync_max_us{0};
-	std::atomic<uint64_t> render_us{0};
-	std::atomic<uint64_t> render_max_us{0};
-
-	static uint64_t now_us()
-		{
-		return uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
-			std::chrono::steady_clock::now().time_since_epoch()).count());
-		}
-
-	void clear()
-		{
-		for(std::atomic<uint64_t> *counter:{&frames,&painted,&repaints,&timed,
-			&sync_us,&sync_max_us,&render_us,&render_max_us})
-			counter->store(0,std::memory_order_relaxed);
-		}
-
-	static void add(std::atomic<uint64_t> &total,std::atomic<uint64_t> &max,uint64_t us)
-		{
-		total.fetch_add(us,std::memory_order_relaxed);
-		uint64_t seen=max.load(std::memory_order_relaxed);
-		while(seen<us&&!max.compare_exchange_weak(seen,us,std::memory_order_relaxed)){}
-		}
-
-	void add_sync(uint64_t us){add(sync_us,sync_max_us,us);}
-	void add_render(uint64_t us){add(render_us,render_max_us,us);}
-};
-
 frame_statsst frame_stats;
 
-// Frame recorder for `smooth-movement record`: writes what the render hook reads before
-// each frame and what it did after it (see frame_record.h). Capture runs on the render thread
-// under the lock; the console thread only starts and stops it.
-// Animation and camera state that a freshly enabled plugin starts from; the recorder resets it
-// at its first frame so the replay, which starts from plugin_enable, sees the same start.
+// Animation and camera state that a freshly enabled plugin starts from; the recorder's first
+// frame resets to it so the replay, which starts from plugin_enable, sees the same start.
 void reset_visual_state();
-
-struct frame_recorderst
-{
-	std::mutex mutex;
-	FILE *file=nullptr;
-	std::string path;
-	uint32_t remaining=0;
-	uint32_t written=0;
-	bool failed=false;
-	bool reset_pending=false;   // first captured frame starts from fresh visual state
-	bool units_pending=false;   // capture wrote the viewports; the unit list is still owed
-	frame_record::writerst writer;
-	// Raw bytes of every per-tile array as of the last captured frame, per slot and array.
-	std::vector<uint8_t> previous[frame_record::slot_count*frame_record::buffer_count];
-
-	bool start(const std::string &to,uint32_t frames)
-		{
-		const std::lock_guard<std::mutex> lock(mutex);
-		close();
-		file=std::fopen(to.c_str(),"wb");
-		if(file==nullptr)return false;
-		path=to;
-		remaining=frames;
-		written=0;
-		failed=false;
-		reset_pending=true;
-		units_pending=false;
-		for(auto &p:previous)p.clear();
-		writer.bytes.clear();
-		frame_record::write_file_header(writer);
-		flush();
-		return !failed;
-		}
-
-	void stop()
-		{
-		const std::lock_guard<std::mutex> lock(mutex);
-		close();
-		}
-
-	bool running()
-		{
-		const std::lock_guard<std::mutex> lock(mutex);
-		return file!=nullptr;
-		}
-
-	// All called by the render hook: capture at its start, capture_units where the hook looks
-	// units up (after the camera update, which can move the window), finish at its end.
-	void capture(df::renderer_2d_base *renderer,uint32_t now_ms);
-	void capture_units(df::renderer_2d_base *renderer);
-	// Entries of the active viewports' per-tile arrays that differ from the captured copy: the game
-	// changed them while the hook ran, so the replay saw different input than the hook did.
-	uint32_t changed_since_capture() const;
-	void finish(uint32_t repaints,bool painted)
-		{
-		const std::lock_guard<std::mutex> lock(mutex);
-		if(file==nullptr||writer.bytes.empty())return;
-		if(units_pending){frame_record::write_units(writer,{});units_pending=false;}
-		frame_record::write_frame_result(writer,{repaints,painted,changed_since_capture()});
-		flush();
-		if(failed)return;
-		++written;
-		if(--remaining==0)close();
-		}
-
-	void status(color_ostream &out)
-		{
-		const std::lock_guard<std::mutex> lock(mutex);
-		if(file!=nullptr)
-			out.print("recording: {} of {} frames to {}\n",written,written+remaining,path);
-		else if(failed)
-			out.print("recording: failed writing {} after {} frames\n",path,written);
-		else if(written!=0)
-			out.print("recording: {} frames written to {}\n",written,path);
-		else
-			out.print("recording: off\n");
-		}
-
-private:
-	// Writes the pending bytes and pushes them to the file, so a crash of the game loses at
-	// most the frame in progress.
-	void flush()
-		{
-		if(!writer.bytes.empty()&&
-			(std::fwrite(writer.bytes.data(),1,writer.bytes.size(),file)!=writer.bytes.size()||
-			std::fflush(file)!=0))
-			{
-			failed=true;
-			close();
-			}
-		writer.bytes.clear();
-		}
-
-	void close()
-		{
-		if(file!=nullptr&&std::fclose(file)!=0)failed=true;
-		file=nullptr;
-		remaining=0;
-		writer.bytes.clear();
-		}
-};
 
 frame_recorderst frame_recorder;
 
@@ -1194,128 +1046,82 @@ int32_t item_texpos(df::item *item)
 		}
 }
 
-void frame_recorderst::capture(df::renderer_2d_base *renderer,uint32_t now_ms)
+// The active viewports with their recording slots, for the recorder.
+frame_recorderst::viewport_listst recorded_viewports()
 {
-	const std::lock_guard<std::mutex> lock(mutex);
-	if(file==nullptr)return;
-	if(reset_pending)
+	frame_recorderst::viewport_listst viewports;
+	if(gps==nullptr)return viewports;
+	for(int slot=0;slot<frame_record::main_slot;++slot)
 		{
-		reset_pending=false;
-		reset_visual_state();
-		if(gps!=nullptr)++gps->force_full_display_count;
+		const df::graphic_viewportst *vp=gps->lower_viewport[slot];
+		if(vp!=nullptr&&vp->flag.bits.active)viewports.emplace_back(slot,vp);
 		}
-	writer.bytes.clear();
-	frame_record::frame_headerst header;
-	header.flip=flip_enabled;
-	header.hauled=hauled_enabled;
-	header.camera=camera_enabled;
-	header.linear=animation_manager.is_linear();
-	header.tick_ms=now_ms;
-	header.window_x=window_x?*window_x:0;
-	header.window_y=window_y?*window_y:0;
-	header.window_z=window_z?*window_z:0;
-	header.paused=pause_state&&*pause_state;
-	header.follow_unit=plotinfo?plotinfo->follow_unit:-1;
-	header.mouse_x=gps?gps->precise_mouse_x:0;
-	header.mouse_y=gps?gps->precise_mouse_y:0;
-	header.mouse_mbut=enabler!=nullptr&&enabler->mouse_mbut;
-	header.zoom=renderer->viewport_zoom_factor;
-	header.origin_x=renderer->origin_x;
-	header.origin_y=renderer->origin_y;
-	header.dimx=gps?gps->dimx:0;
-	header.dimy=gps?gps->dimy:0;
-	header.rest_x=rest_x;
-	header.rest_y=rest_y;
-	frame_record::write_frame_header(writer,header);
+	const df::graphic_viewportst *vp=gps->main_viewport;
+	if(vp!=nullptr&&vp->flag.bits.active)viewports.emplace_back(frame_record::main_slot,vp);
+	return viewports;
+}
 
-	std::vector<std::pair<int,const df::graphic_viewportst *>> viewports;
-	if(gps!=nullptr)
+// Hands the recorder what the hook reads at the start of a frame.
+void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
+{
+	frame_recorder.capture([&](bool first)
 		{
-		for(int slot=0;slot<frame_record::main_slot;++slot)
+		if(first)
 			{
-			const df::graphic_viewportst *vp=gps->lower_viewport[slot];
-			if(vp!=nullptr&&vp->flag.bits.active)viewports.emplace_back(slot,vp);
+			reset_visual_state();
+			if(gps!=nullptr)++gps->force_full_display_count;
 			}
-		const df::graphic_viewportst *vp=gps->main_viewport;
-		if(vp!=nullptr&&vp->flag.bits.active)viewports.emplace_back(frame_record::main_slot,vp);
-		}
-	writer.u8(uint8_t(viewports.size()));
-	for(const auto &entry:viewports)
+		frame_recorderst::frame_inputst input;
+		frame_record::frame_headerst &header=input.header;
+		header.flip=flip_enabled;
+		header.hauled=hauled_enabled;
+		header.camera=camera_enabled;
+		header.linear=animation_manager.is_linear();
+		header.tick_ms=now_ms;
+		header.window_x=window_x?*window_x:0;
+		header.window_y=window_y?*window_y:0;
+		header.window_z=window_z?*window_z:0;
+		header.paused=pause_state&&*pause_state;
+		header.follow_unit=plotinfo?plotinfo->follow_unit:-1;
+		header.mouse_x=gps?gps->precise_mouse_x:0;
+		header.mouse_y=gps?gps->precise_mouse_y:0;
+		header.mouse_mbut=enabler!=nullptr&&enabler->mouse_mbut;
+		header.zoom=renderer->viewport_zoom_factor;
+		header.origin_x=renderer->origin_x;
+		header.origin_y=renderer->origin_y;
+		header.dimx=gps?gps->dimx:0;
+		header.dimy=gps?gps->dimy:0;
+		header.rest_x=rest_x;
+		header.rest_y=rest_y;
+		input.viewports=recorded_viewports();
+		return input;
+		});
+}
+
+// Hands the recorder the units in view, where the hook looks them up.
+void record_frame_units(df::renderer_2d_base *renderer)
+{
+	frame_recorder.capture_units([&]
 		{
-		const int slot=entry.first;
-		const df::graphic_viewportst *vp=entry.second;
-		frame_record::write_viewport_header(writer,{slot,vp->dim_x,vp->dim_y,
-			vp->clipx[0],vp->clipx[1],vp->clipy[0],vp->clipy[1],vp->screen_x,vp->screen_y});
-		const size_t count=size_t(vp->dim_x)*size_t(vp->dim_y);
-		int index=0;
-		frame_record::for_each_buffer(*vp,[&](auto pointer)
+		std::vector<frame_record::unit_recordst> records;
+		const df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
+		if(vp!=nullptr&&window_x!=nullptr&&window_y!=nullptr&&window_z!=nullptr)
 			{
-			using T=std::remove_cv_t<std::remove_pointer_t<decltype(pointer)>>;
-			std::vector<uint8_t> &last=previous[slot*frame_record::buffer_count+index++];
-			if(pointer==nullptr)
+			std::vector<df::unit *> units;
+			Units::getUnitsInBox(
+				units,
+				*window_x,*window_y,*window_z,
+				*window_x+vp->dim_x-1,*window_y+vp->dim_y-1,*window_z,
+				[](df::unit *unit){return !Units::isHidden(unit);});
+			for(const df::unit *unit:units)
 				{
-				writer.u8(0);
-				last.clear();
-				return;
+				const int32_t texpos=item_texpos(hauled_item(unit));
+				records.push_back({unit->pos.x,unit->pos.y,unit->pos.z,texpos,
+					texpos!=0&&cached_texture(renderer,texpos)!=nullptr});
 				}
-			writer.u8(1);
-			const T *previous_words=last.size()==count*sizeof(T)?
-				reinterpret_cast<const T *>(last.data()):nullptr;
-			writer.words(pointer,previous_words,count);
-			last.resize(count*sizeof(T));
-			std::memcpy(last.data(),pointer,count*sizeof(T));
-			});
-		}
-	units_pending=true;
-}
-
-void frame_recorderst::capture_units(df::renderer_2d_base *renderer)
-{
-	const std::lock_guard<std::mutex> lock(mutex);
-	if(file==nullptr||!units_pending)return;
-	units_pending=false;
-	std::vector<frame_record::unit_recordst> records;
-	const df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
-	if(vp!=nullptr&&window_x!=nullptr&&window_y!=nullptr&&window_z!=nullptr)
-		{
-		std::vector<df::unit *> units;
-		Units::getUnitsInBox(
-			units,
-			*window_x,*window_y,*window_z,
-			*window_x+vp->dim_x-1,*window_y+vp->dim_y-1,*window_z,
-			[](df::unit *unit){return !Units::isHidden(unit);});
-		for(const df::unit *unit:units)
-			{
-			const int32_t texpos=item_texpos(hauled_item(unit));
-			records.push_back({unit->pos.x,unit->pos.y,unit->pos.z,texpos,
-				texpos!=0&&cached_texture(renderer,texpos)!=nullptr});
 			}
-		}
-	frame_record::write_units(writer,records);
-}
-
-uint32_t frame_recorderst::changed_since_capture() const
-{
-	uint32_t changed=0;
-	if(gps==nullptr)return 0;
-	const auto scan=[&](int slot,const df::graphic_viewportst *vp)
-		{
-		if(vp==nullptr||!vp->flag.bits.active)return;
-		const size_t count=size_t(vp->dim_x)*size_t(vp->dim_y);
-		int index=0;
-		frame_record::for_each_buffer(*vp,[&](auto pointer)
-			{
-			using T=std::remove_cv_t<std::remove_pointer_t<decltype(pointer)>>;
-			const std::vector<uint8_t> &last=previous[slot*frame_record::buffer_count+index++];
-			if(pointer==nullptr||last.size()!=count*sizeof(T))return;
-			const T *words=reinterpret_cast<const T *>(last.data());
-			for(size_t i=0;i<count;++i)
-				if(std::memcmp(&pointer[i],&words[i],sizeof(T))!=0)++changed;
-			});
-		};
-	for(int slot=0;slot<frame_record::main_slot;++slot)scan(slot,gps->lower_viewport[slot]);
-	scan(frame_record::main_slot,gps->main_viewport);
-	return changed;
+		return records;
+		});
 }
 
 std::vector<carried_item_proxyst> collect_carried_item_proxies(
@@ -1739,7 +1545,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	const bool timing_enabled=frame_stats.enabled.load(std::memory_order_relaxed);
 	// The frame's clock, read once so that a recording carries the value the frame used.
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
-	frame_recorder.capture(renderer,now_ms);
+	record_frame_start(renderer,now_ms);
 	hook_repaints=0;
 	hook_painted=false;
 	const uint64_t frame_start_us=timing_enabled?frame_statsst::now_us():0;
@@ -1747,7 +1553,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	// Runs on every exit, including the early return for frames with nothing to draw.
 	const scope_guardst timing([&]
 		{
-		frame_recorder.finish(hook_repaints,hook_painted);
+		frame_recorder.finish(hook_repaints,hook_painted,recorded_viewports);
 		if(!timing_enabled)return;
 		const uint64_t end_us=frame_statsst::now_us();
 		frame_stats.timed.fetch_add(1,std::memory_order_relaxed);
@@ -1797,7 +1603,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		if(gps!=nullptr)++gps->force_full_display_count;
 		}
 	if(glide)camera_was_offset=true;
-	frame_recorder.capture_units(renderer);
+	record_frame_units(renderer);
 	std::vector<carried_item_proxyst> carried_items=
 		hauled_enabled?collect_carried_item_proxies(renderer,vp):
 		std::vector<carried_item_proxyst>{};
@@ -1971,36 +1777,6 @@ void reset_state()
 	frame_recorder.stop();
 }
 
-void print_frame_stats(color_ostream &out)
-{
-	const auto get=[](const std::atomic<uint64_t> &v){return v.load(std::memory_order_relaxed);};
-	const uint64_t frames=get(frame_stats.frames),painted=get(frame_stats.painted),
-		repaints=get(frame_stats.repaints),timed=get(frame_stats.timed),
-		sync_us=get(frame_stats.sync_us),render_us=get(frame_stats.render_us);
-	out.print("frame stats: {}\n",frame_stats.enabled?"on":"off");
-	if(frames==0)
-		{
-		out.print("no frames counted\n");
-		return;
-		}
-	const auto mean=[](uint64_t total,uint64_t count)
-		{
-		return count==0?0.0:double(total)/double(count);
-		};
-	out.print("frames: {} ({} painted, {:.0f}%)\n",
-		frames,painted,100.0*mean(painted,frames));
-	out.print("game tile repaints: {} ({:.1f} per frame, {:.1f} per painted frame)\n",
-		repaints,mean(repaints,frames),mean(repaints,painted));
-	if(timed==0)return;
-	out.print("timed frames: {}\n",timed);
-	out.print("sync: mean {:.0f} us, max {} us\n",
-		mean(sync_us,timed),get(frame_stats.sync_max_us));
-	out.print("render: mean {:.0f} us, max {} us\n",
-		mean(render_us,timed),get(frame_stats.render_max_us));
-	out.print("total: mean {:.0f} us per timed frame\n",
-		mean(sync_us+render_us,timed));
-}
-
 command_result status_command(
 	color_ostream &out,
 	std::vector<std::string> &parameters)
@@ -2027,7 +1803,7 @@ command_result status_command(
 		{
 		if(parameters.size()==1)
 			{
-			print_frame_stats(out);
+			frame_stats.print(out);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&
