@@ -10,8 +10,7 @@ c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-fra
 # as the recorder did, and must give the same draws.
 "$here/build.sh" "$src" selftest
 "$here/out/bench-selftest" selftest "$here/out/selftest.rec" "$here/out/selftest-record.trace" >/dev/null
-"$here/out/bench-selftest" replay "$here/out/selftest.rec" "$here/out/selftest-replay.trace" >"$here/out/selftest-replay.txt" || { cat "$here/out/selftest-replay.txt"; echo "record/replay round trip: frames differ"; exit 1; }
+"$here/out/bench-selftest" replay "$here/out/selftest.rec" "$here/out/selftest-replay.trace" >"$here/out/selftest-replay.txt" || { rc=$?; cat "$here/out/selftest-replay.txt"; echo "record/replay round trip: replay exited $rc"; exit 1; }
 tail -2 "$here/out/selftest-replay.txt"
-grep -v '^#' "$here/out/selftest-record.trace" >"$here/out/selftest-record.draws"
-grep -v '^#' "$here/out/selftest-replay.trace" >"$here/out/selftest-replay.draws"
+for side in record replay; do grep -v '^#' "$here/out/selftest-$side.trace" >"$here/out/selftest-$side.draws" || { echo "record/replay round trip: no draws in the $side trace"; exit 1; }; done
 if cmp -s "$here/out/selftest-record.draws" "$here/out/selftest-replay.draws"; then echo "record/replay round trip: OK ($(wc -l <"$here/out/selftest-record.draws" | tr -d ' ') draws)"; else echo "record/replay round trip: traces differ"; exit 1; fi

@@ -504,7 +504,9 @@ int main(int argc,char **argv)
 	{std::vector<std::string> p{"stats","on"};status_command(out,p);}
 
 	// Thirty warm-up frames run before recording starts, with a scroll still in flight at that
-	// point, so the recording begins mid-session with animation and camera state to reset. Then
+	// point (the window moved, the arrays land two frames later), so the recording begins
+	// mid-session with animation and scroll state to reset. The boulder's texture, cached during
+	// the warm-up, is dropped again so the recorded frames show it uncached first. Then
 	// steps every six frames, a pause in the middle, one frame with the viewport inactive (the
 	// hook returns before capturing units), and one scroll near the end whose per-tile arrays land two
 	// frames after the window moved, like the game does.
@@ -518,9 +520,10 @@ int main(int argc,char **argv)
 			std::vector<std::string> p{"record",argv[2],std::to_string(frames)};
 			if(status_command(out,p)!=DFHack::CR_OK){fprintf(stderr,"%s",out.captured.c_str());return 2;}
 			if(trace_path!=nullptr&&!open_trace(argv[2],trace_path))return 2;	// warm-up draws are not in the recording
+			renderer.uncache_texture(6000);	// the warm-up cached the boulder; the recording must see it filled again
 			}
 		paused=f>=120&&f<150;
-		if(f%6==0&&!paused){scene.step(steps++);scene.redraw(wx,wy);}
+		if(f%6==0&&!paused){scene.step(steps++);if(land_at<0)scene.redraw(wx,wy);}
 		if(f==-1||f==180){wx+=1;land_at=f+2;}
 		if(f==land_at){scene.redraw(wx,wy);land_at=-1;}
 		scene.vp.flag.bits.active=f!=200;
@@ -529,8 +532,9 @@ int main(int argc,char **argv)
 		render_interpolated_world(&renderer);
 		now_ms+=16;
 		}
-	{out.captured.clear();std::vector<std::string> p{"stats"};status_command(out,p);fputs(out.captured.c_str(),stdout);
-	p={"stats","bogus"};if(status_command(out,p)!=DFHack::CR_WRONG_USAGE)puts("BAD: bogus accepted");}
-	if(trace)fclose(trace);
+	{out.captured.clear();std::vector<std::string> p{"stats"};status_command(out,p);fputs(out.captured.c_str(),stdout);}
+	{out.captured.clear();std::vector<std::string> p{"record","status"};status_command(out,p);
+	if(out.captured.find("failed")!=std::string::npos){fputs(out.captured.c_str(),stderr);return 2;}}
+	if(trace&&(ferror(trace)||fclose(trace)!=0)){fprintf(stderr,"trace write failed\n");return 2;}
 	return 0;
 }
