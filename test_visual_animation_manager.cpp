@@ -995,4 +995,85 @@ int main()
 	assert(manager.get_movement(
 		viewport,viewport_visual_layer::center,2,2).active);
 	}
+
+	// The render code walks only the tiles the tracker lists for a viewport, so the list must
+	// hold every tile get_movement reports active on: the moved creature's own tile and, one
+	// tile around it, the tiles its other layers may inherit the movement on. A viewport with
+	// no movement lists nothing, and a finished movement drops out of the list.
+	{
+	constexpr int32_t dim=5;
+	int32_t empty[dim*dim]={};
+	int32_t source[dim*dim]={};
+	int32_t target[dim*dim]={};
+	const int tiles_token=0;
+	const void *viewport=&tiles_token;
+	source[1*dim+2]=91;
+	target[2*dim+2]=91;   // moved from (1,2) to (2,2)
+	visual_animation_managerst manager;
+	auto input=make_input(viewport,dim,empty);
+	set_layer(input,viewport_visual_layer::center,source,empty);
+	run_frame(manager,input,40000);
+	std::vector<std::array<int32_t,2>> tiles;
+	manager.collect_movement_tiles(viewport,dim,dim,tiles);
+	assert(tiles.empty());
+	set_layer(input,viewport_visual_layer::center,target,source);
+	run_frame(manager,input,40016);
+	manager.collect_movement_tiles(viewport,dim,dim,tiles);
+	assert(tiles.size()==9);
+	for(size_t i=1;i<tiles.size();++i)
+		assert(tiles[i-1][1]<tiles[i][1]||
+			(tiles[i-1][1]==tiles[i][1]&&tiles[i-1][0]<tiles[i][0]));
+	for(int32_t y=0;y<dim;++y)
+		for(int32_t x=0;x<dim;++x)
+			for(size_t layer=0;layer<size_t(viewport_visual_layer::count);++layer)
+				{
+				const auto movement=manager.get_movement(
+					viewport,static_cast<viewport_visual_layer>(layer),x,y);
+				const bool listed=std::find(tiles.begin(),tiles.end(),
+					std::array<int32_t,2>{x,y})!=tiles.end();
+				assert(!movement.active||listed);
+				}
+	run_frame(manager,input,40400);   // past the movement's duration
+	manager.collect_movement_tiles(viewport,dim,dim,tiles);
+	assert(tiles.empty());
+	}
+
+	// A creature at the corner of the viewport reaches only the three tiles beside it, and two
+	// creatures side by side share tiles that are listed once: the render code indexes the
+	// per-tile arrays with every listed tile, so one outside the viewport reads past an array
+	// and one listed twice draws twice.
+	{
+	constexpr int32_t dim=5;
+	int32_t empty[dim*dim]={};
+	int32_t source[dim*dim]={};
+	int32_t target[dim*dim]={};
+	const int edge_token=0;
+	const void *viewport=&edge_token;
+	source[1*dim+0]=92;
+	target[0*dim+0]=92;   // moved from (1,0) to the corner (0,0)
+	source[4*dim+4]=93;
+	target[3*dim+4]=93;   // moved from (4,4) to (3,4)
+	source[2*dim+4]=94;
+	target[3*dim+3]=94;   // moved from (2,4) to (3,3), next to the previous one
+	visual_animation_managerst manager;
+	auto input=make_input(viewport,dim,empty);
+	set_layer(input,viewport_visual_layer::center,source,empty);
+	run_frame(manager,input,41000);
+	set_layer(input,viewport_visual_layer::center,target,source);
+	run_frame(manager,input,41016);
+	std::vector<std::array<int32_t,2>> tiles;
+	manager.collect_movement_tiles(viewport,dim,dim,tiles);
+	size_t corner=0;
+	for(const auto &tile:tiles)
+		{
+		assert(tile[0]>=0&&tile[0]<dim&&tile[1]>=0&&tile[1]<dim);
+		if(tile[0]<=1&&tile[1]<=1)++corner;
+		}
+	assert(corner==4);
+	// (3,4) reaches x 2..4, y 3..4 once y 5 is clipped, and (3,3) reaches x 2..4, y 2..4,
+	// which covers those: 9 distinct tiles, and with the corner's 4 that is 13 in all.
+	assert(tiles.size()==13);
+	for(size_t i=1;i<tiles.size();++i)
+		assert(tiles[i-1]!=tiles[i]);
+	}
 }

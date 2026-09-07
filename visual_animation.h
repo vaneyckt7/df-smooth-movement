@@ -1188,6 +1188,36 @@ class visual_animation_managerst
 			return force_full_redraw;
 			}
 
+		// The tiles get_movement can report active on this viewport: the target of every
+		// active movement and, around a center movement's target, the eight tiles whose other
+		// layers may inherit it. Listed once each, top row first and left to right, the order
+		// the render code walks a viewport in, so it visits only these instead of every tile.
+		void collect_movement_tiles(
+			const void *viewport,
+			int32_t dim_x,
+			int32_t dim_y,
+			std::vector<std::array<int32_t,2>> &tiles) const
+			{
+			tiles.clear();
+			for(const viewport_animationst &state:viewports)
+				{
+				if(state.viewport!=viewport)continue;
+				for(const movementst &movement:state.movements)
+					{
+					if(!movement_active(movement))continue;
+					const int32_t reach=movement.layer==viewport_visual_layer::center?1:0;
+					for(int32_t y=movement.target_y-reach;y<=movement.target_y+reach;++y)
+						for(int32_t x=movement.target_x-reach;x<=movement.target_x+reach;++x)
+							if(x>=0&&x<dim_x&&y>=0&&y<dim_y)tiles.push_back({x,y});
+					}
+				break;
+				}
+			std::sort(tiles.begin(),tiles.end(),
+				[](const std::array<int32_t,2> &a,const std::array<int32_t,2> &b)
+					{return a[1]!=b[1]?a[1]<b[1]:a[0]<b[0];});
+			tiles.erase(std::unique(tiles.begin(),tiles.end()),tiles.end());
+			}
+
 		visual_movement_renderst get_movement(
 			const void *viewport,
 			viewport_visual_layer layer,

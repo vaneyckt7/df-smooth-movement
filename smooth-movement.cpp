@@ -1311,169 +1311,173 @@ std::vector<render_proxyst> collect_proxies(
 	df::graphic_viewportst *vp)
 {
 	std::vector<render_proxyst> proxies;
+	// Only a tile the movement tracker lists can have a movement, so the walk over every
+	// layer visits those instead of every tile of the viewport; a viewport with none is
+	// skipped before the resting-mirrored sweep, which does not depend on movements.
+	std::vector<std::array<int32_t,2>> tiles;
+	animation_manager.collect_movement_tiles(vp,vp->dim_x,vp->dim_y,tiles);
 	auto layers=visual_layers(vp);
 	auto previous_layers=visual_layers(vp,true);
-	for(uint8_t draw_order=0;draw_order<visual_layer_count;++draw_order)
+	for(uint8_t draw_order=0;draw_order<visual_layer_count&&!tiles.empty();++draw_order)
 		{
 		const viewport_visual_layer visual_layer=visual_layer_at_draw_order(draw_order);
 		const size_t layer=static_cast<size_t>(visual_layer);
-		for(int32_t y=0;y<vp->dim_y;++y)
+		for(const std::array<int32_t,2> &tile:tiles)
 			{
-			for(int32_t x=0;x<vp->dim_x;++x)
+			const int32_t x=tile[0];
+			const int32_t y=tile[1];
+			const int32_t index=x*vp->dim_y+y;
+			const int32_t texpos=layers[layer][index];
+			if(texpos==0)continue;
+			const auto movement=animation_manager.get_movement(
+				vp,static_cast<viewport_visual_layer>(layer),x,y);
+			if(!movement.active)continue;
+			const int32_t inherited_source_x=inherited_visual_source_tile(
+				x,movement.source_x,x);
+			const int32_t inherited_source_y=inherited_visual_source_tile(
+				y,movement.source_y,y);
+			const bool inherited_source_in_bounds=
+				inherited_source_x>=0&&inherited_source_x<vp->dim_x&&
+				inherited_source_y>=0&&inherited_source_y<vp->dim_y;
+			if(!visual_layer_moves_independently(visual_layer))
 				{
-				const int32_t index=x*vp->dim_y+y;
-				const int32_t texpos=layers[layer][index];
-				if(texpos==0)continue;
-				const auto movement=animation_manager.get_movement(
-					vp,static_cast<viewport_visual_layer>(layer),x,y);
-				if(!movement.active)continue;
-				const int32_t inherited_source_x=inherited_visual_source_tile(
-					x,movement.source_x,x);
-				const int32_t inherited_source_y=inherited_visual_source_tile(
-					y,movement.source_y,y);
-				const bool inherited_source_in_bounds=
-					inherited_source_x>=0&&inherited_source_x<vp->dim_x&&
-					inherited_source_y>=0&&inherited_source_y<vp->dim_y;
-				if(!visual_layer_moves_independently(visual_layer))
+				bool anchored=false;
+				for(const render_proxyst &anchor:proxies)
 					{
-					bool anchored=false;
-					for(const render_proxyst &anchor:proxies)
-						{
-						if(anchor.layer==viewport_visual_layer::center&&
-							std::abs(anchor.target_x-x)<=1&&
-							std::abs(anchor.target_y-y)<=1&&
-							anchor.source_x-anchor.target_x==movement.source_x-x&&
-							anchor.source_y-anchor.target_y==movement.source_y-y&&
-							anchor.progress==movement.progress)anchored=true;
-						}
-					if(!anchored)continue;
+					if(anchor.layer==viewport_visual_layer::center&&
+						std::abs(anchor.target_x-x)<=1&&
+						std::abs(anchor.target_y-y)<=1&&
+						anchor.source_x-anchor.target_x==movement.source_x-x&&
+						anchor.source_y-anchor.target_y==movement.source_y-y&&
+						anchor.progress==movement.progress)anchored=true;
 					}
-					if((visual_layer==viewport_visual_layer::item||
-						visual_layer==viewport_visual_layer::designation)&&
-						movement.inherited)
+				if(!anchored)continue;
+				}
+				if((visual_layer==viewport_visual_layer::item||
+					visual_layer==viewport_visual_layer::designation)&&
+					movement.inherited)
+				{
+				if(visual_layer==viewport_visual_layer::item&&
+					vp->screentexpos_old[index]!=0)continue;
+				if(!inherited_source_in_bounds)continue;
+				const int32_t source=
+					inherited_source_x*vp->dim_y+inherited_source_y;
+				if(!visual_moved_between_tiles(
+					visual_layer,
+						layers[layer],
+						previous_layers[layer],
+						source,
+						index))continue;
+				}
+			if(!visual_layer_moves_independently(visual_layer)&&
+				visual_layer!=viewport_visual_layer::designation&&movement.inherited)
+				{
+				const bool fragment_moved=inherited_source_in_bounds&&
+					visual_moved_between_tiles(
+						visual_layer,layers[layer],previous_layers[layer],
+						inherited_source_x*vp->dim_y+inherited_source_y,index);
+				if(!fragment_moved)
 					{
-					if(visual_layer==viewport_visual_layer::item&&
-						vp->screentexpos_old[index]!=0)continue;
-					if(!inherited_source_in_bounds)continue;
-					const int32_t source=
-						inherited_source_x*vp->dim_y+inherited_source_y;
-					if(!visual_moved_between_tiles(
-						visual_layer,
-							layers[layer],
-							previous_layers[layer],
-							source,
-							index))continue;
+				const auto &descriptor=visual_layer_descriptor(visual_layer);
+				bool owns_fragment=false;
+				for(const render_proxyst &anchor:proxies)
+					if(anchor.layer==viewport_visual_layer::center&&
+						anchor.target_x==x+descriptor.center_x&&
+						anchor.target_y==y+descriptor.center_y&&
+						anchor.source_x-anchor.target_x==movement.source_x-x&&
+						anchor.source_y-anchor.target_y==movement.source_y-y&&
+						anchor.progress==movement.progress)owns_fragment=true;
+				if(!owns_fragment)continue;
 					}
-				if(!visual_layer_moves_independently(visual_layer)&&
-					visual_layer!=viewport_visual_layer::designation&&movement.inherited)
-					{
-					const bool fragment_moved=inherited_source_in_bounds&&
-						visual_moved_between_tiles(
-							visual_layer,layers[layer],previous_layers[layer],
-							inherited_source_x*vp->dim_y+inherited_source_y,index);
-					if(!fragment_moved)
-						{
-					const auto &descriptor=visual_layer_descriptor(visual_layer);
-					bool owns_fragment=false;
-					for(const render_proxyst &anchor:proxies)
-						if(anchor.layer==viewport_visual_layer::center&&
-							anchor.target_x==x+descriptor.center_x&&
-							anchor.target_y==y+descriptor.center_y&&
-							anchor.source_x-anchor.target_x==movement.source_x-x&&
-							anchor.source_y-anchor.target_y==movement.source_y-y&&
-							anchor.progress==movement.progress)owns_fragment=true;
-					if(!owns_fragment)continue;
-						}
-					}
+				}
 
-				// Items, vehicles and designations keep their vanilla orientation.
-				const auto &mirror_descriptor=
-					visual_layer_descriptor(visual_layer);
-				const visual_render_groupst group=
-					visual_render_group(visual_layer);
-				const bool mirror_eligible=flip_enabled&&
-					(group==visual_render_groupst::main||
-					group==visual_render_groupst::upper);
-				// Facing is read from the anchor tile so every fragment of one creature agrees.
-				const bool mirrored=mirror_eligible&&
-					animation_manager.get_facing(
-						vp,
-						x+mirror_descriptor.center_x,
-						y+mirror_descriptor.center_y)!=native_sprite_facing;
-				// The anchor's own layer has center_x 0, so it flips in place.
-				const int32_t mirror_shift=
-					mirrored?
-					mirrored_tile_x(x,x+mirror_descriptor.center_x)-x:
-					0;
-				render_proxyst proxy=
+			// Items, vehicles and designations keep their vanilla orientation.
+			const auto &mirror_descriptor=
+				visual_layer_descriptor(visual_layer);
+			const visual_render_groupst group=
+				visual_render_group(visual_layer);
+			const bool mirror_eligible=flip_enabled&&
+				(group==visual_render_groupst::main||
+				group==visual_render_groupst::upper);
+			// Facing is read from the anchor tile so every fragment of one creature agrees.
+			const bool mirrored=mirror_eligible&&
+				animation_manager.get_facing(
+					vp,
+					x+mirror_descriptor.center_x,
+					y+mirror_descriptor.center_y)!=native_sprite_facing;
+			// The anchor's own layer has center_x 0, so it flips in place.
+			const int32_t mirror_shift=
+				mirrored?
+				mirrored_tile_x(x,x+mirror_descriptor.center_x)-x:
+				0;
+			render_proxyst proxy=
+				{
+				static_cast<viewport_visual_layer>(layer),
+				movement.source_x,
+				movement.source_y,
+				x,
+				y,
+				texpos,
+				movement.progress,
+				nullptr,
+				mirrored,
+				mirror_shift,
+				{}
+				};
+			bool blocked=false;
+			for(int32_t coverage_x=int32_t(std::floor(
+					std::min(proxy.source_x,float(x))));
+				coverage_x<=int32_t(std::ceil(
+					std::max(proxy.source_x,float(x))));++coverage_x)
+				{
+				for(int32_t coverage_y=int32_t(std::floor(
+						std::min(proxy.source_y,float(y))));
+					coverage_y<=int32_t(std::ceil(
+						std::max(proxy.source_y,float(y))));++coverage_y)
 					{
-					static_cast<viewport_visual_layer>(layer),
-					movement.source_x,
-					movement.source_y,
-					x,
-					y,
-					texpos,
-					movement.progress,
-					nullptr,
-					mirrored,
-					mirror_shift,
-					{}
-					};
-				bool blocked=false;
-				for(int32_t coverage_x=int32_t(std::floor(
-						std::min(proxy.source_x,float(x))));
-					coverage_x<=int32_t(std::ceil(
-						std::max(proxy.source_x,float(x))));++coverage_x)
-					{
-					for(int32_t coverage_y=int32_t(std::floor(
-							std::min(proxy.source_y,float(y))));
-						coverage_y<=int32_t(std::ceil(
-							std::max(proxy.source_y,float(y))));++coverage_y)
+					if(!inside_clip(vp,coverage_x,coverage_y))
 						{
-						if(!inside_clip(vp,coverage_x,coverage_y))
-							{
-							blocked=true;
-							break;
-							}
-						if(visual_render_group(proxy.layer)==visual_render_groupst::main&&
-							has_fire(vp,coverage_x,coverage_y))
-							{
-							blocked=true;
-							break;
-							}
-						proxy.coverage.emplace(coverage_x,coverage_y);
+						blocked=true;
+						break;
 						}
-					if(blocked)break;
+					if(visual_render_group(proxy.layer)==visual_render_groupst::main&&
+						has_fire(vp,coverage_x,coverage_y))
+						{
+						blocked=true;
+						break;
+						}
+					proxy.coverage.emplace(coverage_x,coverage_y);
+					}
+				if(blocked)break;
+				}
+			if(blocked)continue;
+			if(proxy.mirror_shift!=0)
+				{
+				std::set<std::pair<int32_t,int32_t>> mirrored_coverage;
+				for(const auto &tile:proxy.coverage)
+					mirrored_coverage.emplace(
+						tile.first+proxy.mirror_shift,tile.second);
+				for(const auto &tile:mirrored_coverage)
+					{
+					if(!inside_clip(vp,tile.first,tile.second))
+						{
+						blocked=true;
+						break;
+						}
+					if(visual_render_group(proxy.layer)==visual_render_groupst::main&&
+						has_fire(vp,tile.first,tile.second))
+						{
+						blocked=true;
+						break;
+						}
+					proxy.coverage.insert(tile);
 					}
 				if(blocked)continue;
-				if(proxy.mirror_shift!=0)
-					{
-					std::set<std::pair<int32_t,int32_t>> mirrored_coverage;
-					for(const auto &tile:proxy.coverage)
-						mirrored_coverage.emplace(
-							tile.first+proxy.mirror_shift,tile.second);
-					for(const auto &tile:mirrored_coverage)
-						{
-						if(!inside_clip(vp,tile.first,tile.second))
-							{
-							blocked=true;
-							break;
-							}
-						if(visual_render_group(proxy.layer)==visual_render_groupst::main&&
-							has_fire(vp,tile.first,tile.second))
-							{
-							blocked=true;
-							break;
-							}
-						proxy.coverage.insert(tile);
-						}
-					if(blocked)continue;
-					}
-
-				proxy.texture=cached_texture(renderer,texpos);
-				if(proxy.texture==nullptr)continue;
-				proxies.push_back(std::move(proxy));
 				}
+
+			proxy.texture=cached_texture(renderer,texpos);
+			if(proxy.texture==nullptr)continue;
+			proxies.push_back(std::move(proxy));
 			}
 		}
 
