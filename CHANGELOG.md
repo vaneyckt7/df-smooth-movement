@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `harness/test.sh` builds and runs the animation manager test with the other unit tests;
+  it prints a line when it passes, like them. Nothing the plugin does changes.
 - The match that makes a hauled item's icon bob with its carrier moved out of the render
   hook into `sprite_proxies.h`, beside the rule that decides which sprites bob, and is
   covered by the sprite proxy test. Nothing the plugin draws changes.

@@ -6,6 +6,7 @@
 #endif
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 
 #include "visual_animation.h"
@@ -1420,4 +1421,5 @@ int main()
 	assert(walk_bob_direction(0.6f,4.4f,2,4)==D::horizontal);
 	assert(walk_bob_direction(0.4f,5.0f,1,5)==D::horizontal);
 	}
+	printf("visual animation manager tests: OK\n");
 }

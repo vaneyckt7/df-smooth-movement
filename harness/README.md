@@ -70,7 +70,10 @@ such as the repository root (`.`) or an export of another branch, for example
   hook painted, how many repaints it asked for including blank ones, how many trace lines it
   wrote (its visible repaints and SDL draws) and a SHA-256 digest of those lines. With two
   traces it prints the frames whose lines differ.
-- `test.sh <plugin dir>`: builds and runs the recording codec test, the tile repaint test
+- `test.sh <plugin dir>`: builds and runs the animation manager test
+  (`test_visual_animation_manager.cpp` in the plugin directory, which steps creatures
+  through the animation manager and checks the transitions, easing, retargets and bob
+  decisions it makes), the recording codec test, the tile repaint test
   (`test_tile_repaint.cpp`, which checks against the stub viewport which of the 25 arrays
   each repaint pass zeroes and that every entry is restored) and the sprite proxy test
   (`test_sprite_proxies.cpp`, which steps a creature through the animation manager on the

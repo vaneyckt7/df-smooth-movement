@@ -1,6 +1,7 @@
 #!/bin/sh
-# Builds and runs the unit tests (the recording codec, tile repaint, sprite proxy, free
-# camera, view context and console command tests) against the stub headers in stubs/, then
+# Builds and runs the unit tests (the animation manager, recording codec, tile repaint,
+# sprite proxy, free camera, view context and console command tests) against the stub
+# headers in stubs/, then
 # replays every recording in recordings/ and requires that every frame's draws digest to
 # what expected/<name>.digest holds, and that recinfo.py reads the same number of frames.
 # Exits non-zero when any fails. The game's own repaint count from the recording's
@@ -9,6 +10,11 @@
 # Usage: harness/test.sh <plugin dir>
 set -eu
 src=$(cd "$1" && pwd); here=$(cd "$(dirname "$0")" && pwd); mkdir -p "$here/out"
+# The animation manager test lives with the plugin sources, as the CMake target
+# smooth-movement-test, which nothing else builds; it needs no stub.
+c++ -std=c++17 -O2 -Wall -Wextra -I"$src" -o "$here/out/test-visual-animation-manager" \
+    "$src/test_visual_animation_manager.cpp"
+"$here/out/test-visual-animation-manager"
 c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-frame-record" "$here/test_frame_record.cpp"
 "$here/out/test-frame-record"
 # recinfo.py must read a recording in the current format: the fixtures are older.
