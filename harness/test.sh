@@ -18,6 +18,9 @@ c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-spr
 c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-free-camera" \
     "$here/test_free_camera.cpp"
 "$here/out/test-free-camera"
+c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-view-context" \
+    "$here/test_view_context.cpp"
+"$here/out/test-view-context"
 "$here/build.sh" "$src" test
 status=0
 for rec in "$here"/recordings/*.rec; do
