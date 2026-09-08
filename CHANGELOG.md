@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fixed: a repaint while the game is paused can no longer be read as a step, so sprites do
+  not slide or flip with the simulation standing still. A redraw at a simulation tick the
+  per-tile arrays were already drawn at (the game showing the units sharing a tile in turn,
+  blinking markers) is presentation, not a step, and starts no movement.
+  The tick is read where the arrays are filled, in the map screens' render on the simulation
+  thread. Frame recordings carry it (format version 4); the harness reads versions 2 and 3
+  as well, with the tick unknown, which replays them as before.
 - Frame recordings carry the one-tile step time (format version 3), so a recording made at
   a `timestep` other than the default replays at that step. The harness reads version 2
   recordings as well, at the 150 ms they were made with.

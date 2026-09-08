@@ -10,7 +10,9 @@ Usage: recinfo.py <recording> [first frame] [last frame]
     frames 600
 
 Per line: frame number; t, the frame clock in ms; the plugin's four settings; step, the
-one-tile step time in ms (a version 2 recording has no field and was made at 150); w, the
+one-tile step time in ms (a version 2 recording has no field and was made at 150); sim, the
+simulation's frame counter when the game last filled the per-tile arrays, or -1 when no fill
+was seen since the previous frame or the recording is older than version 4; w, the
 window position x,y,z; P when the game was paused, - otherwise; follow, the followed unit id
 or -1;
 mouse, the mouse position with M when the middle button was down; zoom; o, the drawing origin
@@ -53,6 +55,11 @@ class Reader:
         self.p += 4
         return v
 
+    def i64(self):
+        v = struct.unpack_from('<q', self.d, self.p)[0]
+        self.p += 8
+        return v
+
     def f64(self):
         v = struct.unpack_from('<d', self.d, self.p)[0]
         self.p += 8
@@ -91,7 +98,7 @@ def main():
     assert data[:4] == b'SMRC', 'not a recording'
     r.p = 4
     version = r.u32()
-    assert version in (2, 3), f'recording version {version}, this script reads 2 and 3'
+    assert version in (2, 3, 4), f'recording version {version}, this script reads 2 to 4'
     print('version', version)
     n = 0
     while r.p < len(data):
@@ -99,6 +106,7 @@ def main():
         flags = [r.u8() for _ in range(4)]
         settings = ' '.join(f'{name}={value}' for name, value in zip(SETTINGS, flags))
         step = r.u32() if version >= 3 else 150
+        sim = r.i64() if version >= 4 else -1
         tick = r.u32()
         wx, wy, wz = r.i32(), r.i32(), r.i32()
         paused = r.u8()
@@ -124,7 +132,7 @@ def main():
         painted = r.u8()
         changed = r.u32()
         if first <= n <= last:
-            print(f'{n:5d} t={tick} {settings} step={step} w={wx},{wy},{wz} '
+            print(f'{n:5d} t={tick} {settings} step={step} sim={sim} w={wx},{wy},{wz} '
                   f'{"P" if paused else "-"} '
                   f'follow={follow} mouse={mx},{my}{"M" if mbut else ""} zoom={zoom} o={ox},{oy} '
                   f'grid={dimx}x{dimy} rest={rx:g},{ry:g} units={units} {"painted" if painted else "skipped"} '

@@ -138,6 +138,10 @@ struct viewport_visual_animation_inputst
 	// Only a hint: it changes at input time, the buffers shift on a later render frame.
 	int32_t pan_x=0;
 	int32_t pan_y=0;
+	// The simulation's frame counter, or -1 when unknown. Creatures only step when it
+	// advances; a change in the per-tile arrays at a standing counter is presentation:
+	// the units sharing a tile shown in turn, blinking markers, cursor highlights.
+	int64_t simulation_tick=-1;
 
 	bool valid() const
 		{
@@ -310,6 +314,8 @@ class visual_animation_managerst
 		int32_t pending_age=0;
 		// Redraws left in which new-movement detection stays suppressed after scroll activity.
 		int32_t suppress_frames=0;
+		// Simulation tick the per-tile arrays last changed at, to tell a step from a repaint.
+		int64_t buffer_tick=-1;
 		// Buffer contents last seen, to recognize a repeat of them.
 		uint64_t buffer_signature=0;
 		bool has_buffer_signature=false;
@@ -707,6 +713,11 @@ class visual_animation_managerst
 				state.buffer_signature!=signature;
 			state.buffer_signature=signature;
 			state.has_buffer_signature=true;
+			// A redraw at the tick the arrays last changed at shows the same world: whatever
+			// differs is presentation, not a step, and a paused game is nothing but such redraws.
+			const bool world_advanced=input.simulation_tick<0||
+				state.buffer_tick!=input.simulation_tick;
+			if(buffers_advanced)state.buffer_tick=input.simulation_tick;
 
 			if(context_changed)
 				{
@@ -868,7 +879,8 @@ class visual_animation_managerst
 				}
 
 			const bool suppress=(!buffers_advanced&&!translated)||crossed_views||
-				(!translated&&!state.pending.empty())||state.suppress_frames>0;
+				(!translated&&!state.pending.empty())||state.suppress_frames>0||
+				!world_advanced;
 			// The countdown measures redraws, not frames, so a repeated viewport must not spend it.
 			if(buffers_advanced&&state.suppress_frames>0)--state.suppress_frames;
 
