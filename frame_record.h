@@ -10,6 +10,8 @@
 //         i64 simulation_tick (the simulation's frame counter when the game last filled the
 //         per-tile arrays, -1 when no fill was seen since the previous frame; absent before
 //         version 4, which reads as -1 on every frame),
+//         u8 bob, f32 bob amount, f32 horizontal diagonal vertical multipliers, u8 hops (the
+//         walk bob settings; absent before version 5, which reads as the bob off),
 //         u32 tick_ms, i32 window x y z, u8 paused, i32 follow_unit, i32 mouse x y, u8 mbut,
 //         i32 zoom origin_x origin_y dimx dimy, f64 free-camera rest offset x y (tiles)
 //     u8 viewports; per viewport: u8 slot (0..7 lower, 8 main), i32 dim_x dim_y clipx0 clipx1
@@ -27,6 +29,7 @@
 #pragma once
 
 #include "df/graphic_viewportst.h"
+#include "visual_animation.h"
 
 #include <cstdint>
 #include <cstring>
@@ -36,9 +39,9 @@
 
 namespace frame_record {
 
-constexpr uint32_t version=4;
-// The oldest version the reader accepts; a version 2 frame header has no step field and a
-// version 3 header no simulation tick.
+constexpr uint32_t version=5;
+// The oldest version the reader accepts; a version 2 frame header has no step field, a
+// version 3 header no simulation tick and a version 4 header no walk bob settings.
 constexpr uint32_t oldest_version=2;
 constexpr int main_slot=8;
 constexpr int slot_count=9;
@@ -86,6 +89,7 @@ struct writerst
 	void u32(uint32_t v){for(int i=0;i<4;++i)bytes.push_back(uint8_t(v>>(8*i)));}
 	void i32(int32_t v){u32(uint32_t(v));}
 	void f64(double v){uint64_t bits;std::memcpy(&bits,&v,8);u32(uint32_t(bits));u32(uint32_t(bits>>32));}
+	void f32(float v){uint32_t bits;std::memcpy(&bits,&v,4);u32(bits);}
 	void i64(int64_t v)
 		{const uint64_t bits=uint64_t(v);u32(uint32_t(bits));u32(uint32_t(bits>>32));}
 	void varint(uint64_t v)
@@ -154,6 +158,7 @@ struct readerst
 	int32_t i32(){return int32_t(u32());}
 	double f64(){const uint64_t lo=u32(),hi=u32();const uint64_t bits=lo|hi<<32;double v;std::memcpy(&v,&bits,8);return v;}
 	int64_t i64(){const uint64_t lo=u32(),hi=u32();return int64_t(lo|hi<<32);}
+	float f32(){const uint32_t bits=u32();float v;std::memcpy(&v,&bits,4);return v;}
 	uint64_t varint()
 		{
 		uint64_t v=0;
@@ -206,6 +211,7 @@ struct frame_headerst
 	bool flip=false,hauled=false,camera=false,linear=false;
 	uint32_t step_ms=150; // a version 2 recording reads back as 150, what it was made with
 	int64_t simulation_tick=-1; // a recording before version 4 reads back as -1, unknown
+	walk_bob_settingst bob; // a recording before version 5 reads back with the bob off
 	uint32_t tick_ms=0;
 	int32_t window_x=0,window_y=0,window_z=0;
 	bool paused=false;
@@ -243,6 +249,10 @@ inline void write_frame_header(writerst &w,const frame_headerst &f)
 	w.u8(f.flip);w.u8(f.hauled);w.u8(f.camera);w.u8(f.linear);
 	w.u32(f.step_ms);
 	w.i64(f.simulation_tick);
+	w.u8(f.bob.enabled);
+	w.f32(f.bob.amplitude);
+	w.f32(f.bob.horizontal_mult);w.f32(f.bob.diagonal_mult);w.f32(f.bob.vertical_mult);
+	w.u8(uint8_t(f.bob.hops));
 	w.u32(f.tick_ms);
 	w.i32(f.window_x);w.i32(f.window_y);w.i32(f.window_z);
 	w.u8(f.paused);
@@ -294,6 +304,22 @@ inline bool read_frame_header(readerst &r,frame_headerst &f)
 	if(f.step_ms==0)r.fail("bad step time");
 	f.simulation_tick=r.version>=4?r.i64():-1;
 	if(f.simulation_tick<-1)r.fail("bad simulation tick");
+	f.bob=walk_bob_settingst{};
+	if(r.version>=5)
+		{
+		f.bob.enabled=r.u8()!=0;
+		f.bob.amplitude=r.f32();
+		f.bob.horizontal_mult=r.f32();f.bob.diagonal_mult=r.f32();f.bob.vertical_mult=r.f32();
+		f.bob.hops=r.u8();
+		// The bounds the commands enforce, written so that NaN fails too.
+		if(!(f.bob.amplitude>0.0f&&f.bob.amplitude<=max_walk_bob_lift)||
+			!(f.bob.horizontal_mult>=0.0f&&f.bob.horizontal_mult<=5.0f)||
+			!(f.bob.diagonal_mult>=0.0f&&f.bob.diagonal_mult<=5.0f)||
+			!(f.bob.vertical_mult>=0.0f&&f.bob.vertical_mult<=5.0f)||
+			!walk_bob_lift_fits(f.bob.amplitude,f.bob.horizontal_mult,f.bob.diagonal_mult,
+				f.bob.vertical_mult)||
+			(f.bob.hops!=1&&f.bob.hops!=2))r.fail("bad walk bob settings");
+		}
 	f.tick_ms=r.u32();
 	f.window_x=r.i32();f.window_y=r.i32();f.window_z=r.i32();
 	f.paused=r.u8()!=0;
