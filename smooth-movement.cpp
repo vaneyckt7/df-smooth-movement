@@ -249,7 +249,8 @@ void redraw_world_tile(
 	int32_t x,
 	int32_t y)
 {
-	// The stage pass repaints everything above the lowest across the staged tiles, after the proxies.
+	// The stage pass repaints everything above the lowest across the staged tiles, after the
+	// proxies.
 	const bool staged_tile=staged.count({x,y})!=0;
 	for(const viewport_renderst &viewport:viewports)
 		{
@@ -636,6 +637,16 @@ bool has_mirrored_viewport_facing(
 	return false;
 }
 
+// Paints black under the rectangles, keeping the game's draw colour.
+void fill_black(SDL_Renderer *sdl_renderer,const std::vector<SDL_Rect> &rects)
+{
+	Uint8 old_r=0,old_g=0,old_b=0,old_a=255;
+	state.sdl.get_render_draw_color(sdl_renderer,&old_r,&old_g,&old_b,&old_a);
+	state.sdl.set_render_draw_color(sdl_renderer,0,0,0,255);
+	for(const SDL_Rect &rect:rects)state.sdl.render_fill_rect(sdl_renderer,&rect);
+	state.sdl.set_render_draw_color(sdl_renderer,old_r,old_g,old_b,old_a);
+}
+
 void render_interpolated_world(df::renderer_2d_base *renderer)
 {
 	state.stats.frames.fetch_add(1,std::memory_order_relaxed);
@@ -695,7 +706,8 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	const bool glide=glide_x!=0||glide_y!=0;
 	if(!glide&&state.render.camera_was_offset)
 		{
-		// The camera just re-joined the grid: one engine redraw replaces the last shifted frame.
+		// The camera just re-joined the grid: one redraw by the game replaces the last shifted
+		// frame.
 		state.render.camera_was_offset=false;
 		if(gps!=nullptr)++gps->force_full_display_count;
 		}
@@ -738,7 +750,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	if(glide)
 		{
 		// Camera mid-glide: repaint the WHOLE map rect at the shifted origin so the world (and
-		// the creature proxies, which read origin at draw time) renders between tiles. The engine
+		// the creature proxies, which read origin at draw time) renders between tiles. The game
 		// already drew this frame at the snapped position; everything here overdraws it, clipped
 		// to the map rect so shifted tiles never spill over the UI. The uncovered strip on the
 		// trailing edge stays black until the glide lands.
@@ -752,12 +764,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 				tile_pixel(vp->clipy[0],renderer->origin_y,zoom)
 			};
 		state.sdl.render_set_clip_rect(sdl_renderer,&map_rect);
-		Uint8 old_r=0,old_g=0,old_b=0,old_a=255;
-		state.sdl.get_render_draw_color(sdl_renderer,&old_r,&old_g,&old_b,&old_a);
-		state.sdl.set_render_draw_color(sdl_renderer,0,0,0,255);
-		state.sdl.render_fill_rect(sdl_renderer,&map_rect);
-		state.sdl.set_render_draw_color(sdl_renderer,old_r,old_g,old_b,old_a);
-
+		fill_black(sdl_renderer,{map_rect});
 		const int32_t saved_origin_x=renderer->origin_x;
 		const int32_t saved_origin_y=renderer->origin_y;
 		renderer->origin_x+=glide_x;
@@ -784,22 +791,19 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	tile_coveragest redraw_coverage=coverage;
 	redraw_coverage.insert(
 		state.render.previous_coverage.begin(),state.render.previous_coverage.end());
-	Uint8 old_r=0,old_g=0,old_b=0,old_a=255;
-	state.sdl.get_render_draw_color(sdl_renderer,&old_r,&old_g,&old_b,&old_a);
-	state.sdl.set_render_draw_color(sdl_renderer,0,0,0,255);
+	std::vector<SDL_Rect> tile_rects;
 	for(const auto &[x,y]:redraw_coverage)
 		{
 		if(!inside_clip(vp,x,y))continue;
-		const SDL_Rect tile_rect=
+		tile_rects.push_back(
 			{
 			tile_pixel(x,renderer->origin_x,zoom),
 			tile_pixel(y,renderer->origin_y,zoom),
 			tile_size,
 			tile_size
-			};
-		state.sdl.render_fill_rect(sdl_renderer,&tile_rect);
+			});
 		}
-	state.sdl.set_render_draw_color(sdl_renderer,old_r,old_g,old_b,old_a);
+	fill_black(sdl_renderer,tile_rects);
 
 	for(const auto &[x,y]:redraw_coverage)
 		{
