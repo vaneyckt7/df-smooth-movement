@@ -45,8 +45,9 @@ format.
 The scripts build and write under `harness/out/`, which is ignored by git, with the `c++` on
 the path; clang and g++ both work. Run them from the repository root. `<plugin dir>` is a
 directory holding the plugin sources (`smooth-movement.cpp`, `visual_animation.h`,
-`frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `free_camera.h`, `sprite_proxies.h`,
-`tile_coverage.h`, `tile_repaint.h`, `view_context.h` and the unit test),
+`frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `free_camera.h`, `plugin_commands.h`,
+`plugin_state.h`, `sprite_proxies.h`, `tile_coverage.h`, `tile_repaint.h`, `view_context.h`
+and the unit test),
 such as the repository root (`.`) or an export of another branch, for example
 `mkdir -p harness/out/src-base && git archive origin/release/v0.5.0 | tar -x -C harness/out/src-base`.
 
@@ -80,7 +81,10 @@ such as the repository root (`.`) or an export of another branch, for example
   render offset a landed scroll, a window jump, a followed movement, a normalization write
   and a middle-mouse drag give) and the view context test (`test_view_context.cpp`, which
   checks which changes of the main viewport's signature reset the animation context and
-  that a map scroll only pans), then replays every recording
+  that a map scroll only pans) and the console command test (`test_plugin_commands.cpp`,
+  which runs every `smooth-movement` command word with valid and invalid arguments against
+  a plugin state and checks the outcome, what each sets and prints, and when it asks the
+  game for a full redraw), then replays every recording
   in `recordings/` and fails when any frame's digest differs from `expected/<name>.digest`
   or `recinfo.py` reads a different number of frames than the replay.
   It prints the replay's repaint total alongside the game's from the self-check, which

@@ -1,9 +1,11 @@
 #!/bin/sh
-# Builds and runs the frame recording codec test and the tile repaint test against the stub
-# viewport header in stubs/, then replays every recording in recordings/ and requires that
-# every frame's draws digest to what expected/<name>.digest holds, and that recinfo.py reads
-# the same number of frames. Exits non-zero when any fails. The game's own repaint count from the recording's self-check is printed for
-# information: it matches only for the plugin version that made the recording.
+# Builds and runs the unit tests (the recording codec, tile repaint, sprite proxy, free
+# camera, view context and console command tests) against the stub headers in stubs/, then
+# replays every recording in recordings/ and requires that every frame's draws digest to
+# what expected/<name>.digest holds, and that recinfo.py reads the same number of frames.
+# Exits non-zero when any fails. The game's own repaint count from the recording's
+# self-check is printed for information: it matches only for the plugin version that made
+# the recording.
 # Usage: harness/test.sh <plugin dir>
 set -eu
 src=$(cd "$1" && pwd); here=$(cd "$(dirname "$0")" && pwd); mkdir -p "$here/out"
@@ -31,6 +33,9 @@ c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-fre
 c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-view-context" \
     "$here/test_view_context.cpp"
 "$here/out/test-view-context"
+c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-plugin-commands" \
+    "$here/test_plugin_commands.cpp"
+"$here/out/test-plugin-commands"
 "$here/build.sh" "$src" test
 status=0
 for rec in "$here"/recordings/*.rec; do

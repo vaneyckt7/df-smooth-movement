@@ -29,6 +29,8 @@
 #include "frame_recorder.h"
 #include "frame_stats.h"
 #include "free_camera.h"
+#include "plugin_commands.h"
+#include "plugin_state.h"
 #include "sprite_proxies.h"
 #include "tile_coverage.h"
 #include "tile_repaint.h"
@@ -39,11 +41,9 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <set>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -68,10 +68,6 @@ namespace {
 
 constexpr const char *plugin_version="0.5.0";
 
-// Animation and camera state that a freshly enabled plugin starts from; the recorder's first
-// frame resets to it so the replay, which starts from plugin_enable, sees the same start.
-void reset_visual_state();
-
 // Runs a callback when the scope ends, whichever return path is taken.
 template<typename Callback>
 struct scope_guardst
@@ -81,88 +77,6 @@ struct scope_guardst
 	~scope_guardst(){callback();}
 	scope_guardst(const scope_guardst &)=delete;
 	scope_guardst &operator=(const scope_guardst &)=delete;
-};
-
-// Runtime harness for the engine-owned visual state; gameplay data is never read.
-struct sdl_apist
-{
-	decltype(&SDL_RenderCopyF) render_copy_f=nullptr;
-	decltype(&SDL_RenderCopyExF) render_copy_ex_f=nullptr;
-	decltype(&SDL_RenderFillRect) render_fill_rect=nullptr;
-	decltype(&SDL_RenderSetClipRect) render_set_clip_rect=nullptr;
-	decltype(&SDL_GetRenderDrawColor) get_render_draw_color=nullptr;
-	decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
-};
-
-// When the game last filled the viewports' per-tile arrays. The simulation thread fills them
-// inside the map screens' render and runs on while the render thread paints them, so the
-// simulation's frame counter is read there, not at paint time when it may already have
-// moved on. Draw serial in the high half, tick in the low half, in one word so the paint side
-// reads both as they were stored.
-struct drawn_buffersst
-{
-	std::atomic<uint64_t> drawn{0};
-	uint32_t draw_serial=0;         // simulation thread
-	uint32_t painted_draw_serial=0; // render thread
-	// Tick of the arrays about to be painted, or -1 when no fill was seen since the last
-	// frame; the frame's animation input. A visual reset leaves it alone: the arrays on
-	// screen keep the tick they were filled at, and the frame that resets is painting them.
-	int64_t frame_simulation_tick=-1;
-
-	// Simulation thread: the arrays were just filled at the current frame counter.
-	void note_drawn()
-		{
-		if(world==nullptr)return;
-		++draw_serial;
-		drawn.store((uint64_t(draw_serial)<<32)|uint32_t(world->frame_counter),
-			std::memory_order_release);
-		}
-
-	// Render thread: the tick of a fill not yet painted, or -1.
-	int64_t take_tick()
-		{
-		const uint64_t value=drawn.load(std::memory_order_acquire);
-		const uint32_t serial=uint32_t(value>>32);
-		if(serial==painted_draw_serial)return -1;
-		painted_draw_serial=serial;
-		return int64_t(int32_t(uint32_t(value)));
-		}
-};
-
-// The state the render hook reads and writes each frame.
-struct render_statest
-{
-	visual_animation_managerst animation_manager;
-	std::set<std::pair<int32_t,int32_t>> previous_coverage;
-	view_context_trackerst view_context;
-
-	// The camera itself lives in free_camera.h; the plugin file hands it what it reads from
-	// the game each frame and writes the window position for it.
-	free_camerast camera;
-	bool camera_was_offset=false;             // edge-detects offset->0 for one cleanup redraw
-	int32_t native_follow_id=-1;
-
-	// The camera glide's per-tile blank summary, filled for the glide's frame and cleared
-	// after.
-	blank_summariest<df::graphic_viewportst> blank_summaries;
-
-	drawn_buffersst drawn_buffers;
-
-	// What the hook did on the frame in progress, for the recorder. Render thread only, so
-	// a `stats reset` from the console cannot skew them.
-	uint32_t hook_repaints=0;
-	bool hook_painted=false;
-};
-
-struct plugin_statest
-{
-	sdl_apist sdl;
-	frame_statsst stats;
-	frame_recorderst recorder;
-	bool flip_enabled=false;
-	bool hauled_enabled=false;
-	walk_bob_settingst bob;
-	render_statest render;
 };
 
 plugin_statest state;
@@ -522,7 +436,7 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 		{
 		if(first)
 			{
-			reset_visual_state();
+			state.reset_visual();
 			if(gps!=nullptr)++gps->force_full_display_count;
 			}
 		frame_recorderst::frame_inputst input;
@@ -920,7 +834,7 @@ struct dwarfmode_hook : df::viewscreen_dwarfmodest
 	typedef df::viewscreen_dwarfmodest interpose_base;
 	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
 		{
-		state.render.drawn_buffers.note_drawn();
+		if(world!=nullptr)state.render.drawn_buffers.note_drawn(world->frame_counter);
 		INTERPOSE_NEXT(render)(curtick);
 		}
 };
@@ -930,7 +844,7 @@ struct dungeonmode_hook : df::viewscreen_dungeonmodest
 	typedef df::viewscreen_dungeonmodest interpose_base;
 	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
 		{
-		state.render.drawn_buffers.note_drawn();
+		if(world!=nullptr)state.render.drawn_buffers.note_drawn(world->frame_counter);
 		INTERPOSE_NEXT(render)(curtick);
 		}
 };
@@ -938,25 +852,15 @@ struct dungeonmode_hook : df::viewscreen_dungeonmodest
 IMPLEMENT_VMETHOD_INTERPOSE(dwarfmode_hook,render);
 IMPLEMENT_VMETHOD_INTERPOSE(dungeonmode_hook,render);
 
-void clear_sdl_bindings()
-{
-	state.sdl.render_copy_f=nullptr;
-	state.sdl.render_copy_ex_f=nullptr;
-	state.sdl.render_fill_rect=nullptr;
-	state.sdl.render_set_clip_rect=nullptr;
-	state.sdl.get_render_draw_color=nullptr;
-	state.sdl.set_render_draw_color=nullptr;
-}
-
 bool load_sdl(color_ostream &out)
 {
-	clear_sdl_bindings();
+	state.sdl.clear();
 	DFLibrary *sdl_handle=DFSDL::obtain_library_handle();
 	#define bind(name,target) \
 		target=reinterpret_cast<decltype(target)>(LookupPlugin(sdl_handle,#name)); \
 		if(target==nullptr) { \
 			out.printerr("smooth-movement: SDL2 function unavailable: " #name "\n"); \
-			clear_sdl_bindings(); \
+			state.sdl.clear(); \
 			return false; \
 		}
 	bind(SDL_RenderCopyF,state.sdl.render_copy_f);
@@ -969,378 +873,22 @@ bool load_sdl(color_ostream &out)
 	return true;
 }
 
-// The step time a `timestep` argument names, or -1 when it is not a whole number of
-// milliseconds from 20 to 2000.
-int32_t parse_step_ms(const std::string &text)
+// What the console commands need from the game.
+void full_redraw()
 {
-	if(text.empty()||text.size()>4||
-		text.find_first_not_of("0123456789")!=std::string::npos)return -1;
-	const int32_t ms=int32_t(std::stoul(text));
-	return ms>=20&&ms<=2000?ms:-1;
-}
-
-// A bob amount or multiplier: decimal digits with at most one point, so that a stray
-// character is a usage error rather than a number cut short at it. Negative when the text
-// is not one.
-float parse_bob_value(const std::string &text)
-{
-	if(text.empty()||text.size()>8||
-		text.find_first_not_of("0123456789.")!=std::string::npos||
-		text.find('.')!=text.rfind('.')||
-		text.find_first_of("0123456789")==std::string::npos)return -1.0f;
-	return std::stof(text);
-}
-
-void reset_visual_state()
-{
-	const bool linear=state.render.animation_manager.is_linear();
-	const uint32_t step_ms=state.render.animation_manager.step_duration_ms();
-	state.render.animation_manager=visual_animation_managerst();
-	state.render.animation_manager.set_linear(linear);
-	state.render.animation_manager.set_step_duration_ms(step_ms);
-	state.render.previous_coverage.clear();
-	state.render.view_context=view_context_trackerst();
-	state.render.camera.restart();
-	state.render.camera_was_offset=false;
-	state.render.native_follow_id=-1;
-}
-
-void reset_state()
-{
-	reset_visual_state();
-	state.render.camera.set_rest(0.0,0.0);
-	state.render.camera.set_enabled(false);
-	state.render.animation_manager.set_step_duration_ms(
-		visual_animation_managerst::default_step_duration_ms);
-	state.flip_enabled=false;
-	state.hauled_enabled=false;
-	state.bob=walk_bob_settingst{};
-	state.stats.enabled=false;
-	state.stats.clear();
-	state.recorder.stop();
+	if(gps!=nullptr)++gps->force_full_display_count;
 }
 
 command_result status_command(
 	color_ostream &out,
 	std::vector<std::string> &parameters)
 {
-	if(parameters.empty())
+	const command_hostst host={plugin_version,is_enabled,full_redraw,scroll_window};
+	switch(run_command(out,parameters,state,host))
 		{
-		out.print(
-			"smooth-movement {}: {}\n",
-			plugin_version,
-			is_enabled?"enabled":"disabled");
-		out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
-			state.render.camera.is_enabled()?"on":"off",
-			-state.render.camera.rest_offset_x(),-state.render.camera.rest_offset_y());
-		out.print("sprite flipping: {}\n",
-			state.flip_enabled?"on":"off");
-		out.print("linear movement: {}\n",
-			state.render.animation_manager.is_linear()?"on":"off");
-		out.print("time step: {} ms\n",
-			state.render.animation_manager.step_duration_ms());
-		out.print("hauled item icons: {}\n",
-			state.hauled_enabled?"on":"off");
-		out.print("walk bob: {}, amount {:.2f}\n",state.bob.enabled?"on":"off",
-			state.bob.amplitude);
-		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-			state.bob.horizontal_mult,state.bob.diagonal_mult,state.bob.vertical_mult);
-		out.print("hops per step: {}\n",state.bob.hops);
-		out.print("frame stats: {}\n",
-			state.stats.enabled?"on":"off");
-		return CR_OK;
-		}
-	if(parameters[0]=="stats")
-		{
-		if(parameters.size()==1)
-			{
-			state.stats.print(out);
-			return CR_OK;
-			}
-		if(parameters.size()==2&&
-			(parameters[1]=="on"||parameters[1]=="off"))
-			{
-			const bool on=parameters[1]=="on";
-			if(on)state.stats.clear();
-			state.stats.enabled=on;
-			out.print("smooth-movement: frame stats {}\n",parameters[1]);
-			return CR_OK;
-			}
-		if(parameters.size()==2&&parameters[1]=="reset")
-			{
-			state.stats.clear();
-			out.print("smooth-movement: frame stats reset\n");
-			return CR_OK;
-			}
-		return CR_WRONG_USAGE;
-		}
-	if(parameters[0]=="record")
-		{
-		if(parameters.size()==1)return CR_WRONG_USAGE;
-		if(parameters[1]=="status")
-			{
-			if(parameters.size()!=2)return CR_WRONG_USAGE;
-			state.recorder.status(out);
-			return CR_OK;
-			}
-		if(parameters[1]=="stop")
-			{
-			if(parameters.size()!=2)return CR_WRONG_USAGE;
-			state.recorder.stop();
-			out.print("smooth-movement: recording stopped\n");
-			return CR_OK;
-			}
-		if(parameters.size()>3)return CR_WRONG_USAGE;
-		if(!is_enabled)
-			{
-			out.printerr("smooth-movement: enable the plugin before recording\n");
-			return CR_FAILURE;
-			}
-		if(state.recorder.running())
-			{
-			out.printerr("smooth-movement: a recording is running; `record stop` ends it\n");
-			return CR_FAILURE;
-			}
-		uint32_t frames=900;
-		if(parameters.size()==3)
-			{
-			const std::string &count=parameters[2];
-			if(count.empty()||count.size()>9||
-				count.find_first_not_of("0123456789")!=std::string::npos)
-				return CR_WRONG_USAGE;
-			frames=uint32_t(std::stoul(count));
-			if(frames==0)return CR_WRONG_USAGE;
-			}
-		if(!state.recorder.start(parameters[1],frames))
-			{
-			out.printerr("smooth-movement: cannot write {}\n",parameters[1]);
-			return CR_FAILURE;
-			}
-		out.print("smooth-movement: recording {} frames to {}\n",frames,parameters[1]);
-		return CR_OK;
-		}
-	if(parameters[0]=="all")
-		{
-		if(parameters.size()!=2||
-			(parameters[1]!="on"&&parameters[1]!="off"))return CR_WRONG_USAGE;
-		const bool enabled=parameters[1]=="on";
-		state.flip_enabled=enabled;
-		state.render.animation_manager.set_linear(enabled);
-		state.hauled_enabled=enabled;
-		if(gps!=nullptr)++gps->force_full_display_count;
-		out.print("smooth-movement: flip, linear and hauled {}\n",parameters[1]);
-		return CR_OK;
-		}
-	if(parameters[0]=="camera")
-		{
-		if(parameters.size()==1)
-			{
-			out.print("free camera: {}, offset {:.3f} {:.3f}\n",
-				state.render.camera.is_enabled()?"on":"off",
-			-state.render.camera.rest_offset_x(),-state.render.camera.rest_offset_y());
-			return CR_OK;
-			}
-		if(parameters.size()==2&&parameters[1]=="on")
-			{
-			state.render.camera.set_enabled(true);
-			return CR_OK;
-			}
-		if(parameters.size()==2&&parameters[1]=="off")
-			{
-			state.render.camera.set_enabled(false);
-			return CR_OK;
-			}
-		if(parameters.size()==2&&parameters[1]=="reset")
-			{
-			state.render.camera.set_rest(0.0,0.0);
-			return CR_OK;
-			}
-		if(parameters.size()==3)
-			{
-			try
-				{
-				const double fx=std::stod(parameters[1]);
-				const double fy=std::stod(parameters[2]);
-				if(fx<-0.99||fx>0.99||fy<-0.99||fy>0.99)
-					{
-					out.printerr("offsets must be within -0.99..0.99 tiles\n");
-					return CR_FAILURE;
-					}
-				// User-facing: positive = view sits east/south of the grid position.
-				state.render.camera.set_enabled(true);
-				state.render.camera.set_rest(-fx,-fy);
-				state.render.camera.normalize_rest(scroll_window);
-				return CR_OK;
-				}
-			catch(...)
-				{
-				return CR_WRONG_USAGE;
-				}
-			}
-		return CR_WRONG_USAGE;
-		}
-	if(parameters[0]=="flip")
-		{
-		if(parameters.size()==1)
-			{
-			out.print("sprite flipping: {}\n",
-				state.flip_enabled?"on":"off");
-			return CR_OK;
-			}
-		// A toggle changes the screen without changing anything DF knows, so DF will not repaint.
-		// OFF matters most: the render path stops touching tiles it painted every frame.
-		// The last mirrored frame would persist.
-		// Same flush plugin_enable(false) uses.
-		if(parameters.size()==2&&parameters[1]=="on")
-			{
-			state.flip_enabled=true;
-			if(gps!=nullptr)++gps->force_full_display_count;
-			out.print("smooth-movement: sprite flipping enabled\n");
-			return CR_OK;
-			}
-		if(parameters.size()==2&&parameters[1]=="off")
-			{
-			state.flip_enabled=false;
-			if(gps!=nullptr)++gps->force_full_display_count;
-			out.print("smooth-movement: sprite flipping disabled\n");
-			return CR_OK;
-			}
-		return CR_WRONG_USAGE;
-		}
-	if(parameters[0]=="linear")
-		{
-		if(parameters.size()==1)
-			{
-			out.print("linear movement: {}\n",
-				state.render.animation_manager.is_linear()?"on":"off");
-			return CR_OK;
-			}
-		if(parameters.size()==2&&
-			(parameters[1]=="on"||parameters[1]=="off"))
-			{
-			state.render.animation_manager.set_linear(parameters[1]=="on");
-			out.print("smooth-movement: linear movement {}\n",parameters[1]);
-			return CR_OK;
-			}
-		return CR_WRONG_USAGE;
-		}
-	if(parameters[0]=="timestep")
-		{
-		if(parameters.size()==1)
-			{
-			out.print("time step: {} ms\n",
-				state.render.animation_manager.step_duration_ms());
-			return CR_OK;
-			}
-		if(parameters.size()==2)
-			{
-			const int32_t ms=parse_step_ms(parameters[1]);
-			if(ms<0)return CR_WRONG_USAGE;
-			state.render.animation_manager.set_step_duration_ms(uint32_t(ms));
-			out.print("smooth-movement: time step {} ms\n",ms);
-			return CR_OK;
-			}
-		return CR_WRONG_USAGE;
-		}
-	if(parameters[0]=="hauled")
-		{
-		if(parameters.size()==1)
-			{
-			out.print("hauled item icons: {}\n",state.hauled_enabled?"on":"off");
-			return CR_OK;
-			}
-		if(parameters.size()==2&&
-			(parameters[1]=="on"||parameters[1]=="off"))
-			{
-			state.hauled_enabled=parameters[1]=="on";
-			if(gps!=nullptr)++gps->force_full_display_count;
-			out.print("smooth-movement: hauled item icons {}\n",parameters[1]);
-			return CR_OK;
-			}
-		return CR_WRONG_USAGE;
-		}
-	if(parameters[0]=="bob")
-		{
-		if(parameters.size()==1)
-			{
-			out.print("walk bob: {}, amount {:.2f}\n",state.bob.enabled?"on":"off",
-				state.bob.amplitude);
-			return CR_OK;
-			}
-		if(parameters.size()!=2)return CR_WRONG_USAGE;
-		if(parameters[1]=="on"||parameters[1]=="off")
-			{
-			state.bob.enabled=parameters[1]=="on";
-			if(gps!=nullptr)++gps->force_full_display_count;
-			out.print("smooth-movement: walk bob {}\n",parameters[1]);
-			return CR_OK;
-			}
-		// Anything else is an amount, in tiles. It only sets the height: turning the bob off
-		// is `bob off`, so zero is rejected with the rest.
-		const float amount=parse_bob_value(parameters[1]);
-		if(amount<0.0f)return CR_WRONG_USAGE;
-		if(amount==0.0f||amount>max_walk_bob_lift)
-			{
-			out.printerr("bob amount must be within 0..{:.2f} tile\n",max_walk_bob_lift);
-			return CR_FAILURE;
-			}
-		if(!walk_bob_lift_fits(amount,state.bob.horizontal_mult,state.bob.diagonal_mult,
-				state.bob.vertical_mult))
-			{
-			out.printerr("bob {:.2f} times the current multipliers lifts more than {:.2f} "
-				"tile; lower the multipliers first\n",amount,max_walk_bob_lift);
-			return CR_FAILURE;
-			}
-		state.bob.amplitude=amount;
-		if(gps!=nullptr)++gps->force_full_display_count;
-		out.print("smooth-movement: bob amount {:.2f}\n",state.bob.amplitude);
-		return CR_OK;
-		}
-	if(parameters[0]=="bobmult")
-		{
-		if(parameters.size()==1)
-			{
-			out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-				state.bob.horizontal_mult,state.bob.diagonal_mult,state.bob.vertical_mult);
-			return CR_OK;
-			}
-		if(parameters.size()!=4)return CR_WRONG_USAGE;
-		const float horizontal=parse_bob_value(parameters[1]);
-		const float diagonal=parse_bob_value(parameters[2]);
-		const float vertical=parse_bob_value(parameters[3]);
-		if(horizontal<0.0f||diagonal<0.0f||vertical<0.0f)return CR_WRONG_USAGE;
-		if(horizontal>5.0f||diagonal>5.0f||vertical>5.0f)
-			{
-			out.printerr("bob multipliers must be within 0..5\n");
-			return CR_FAILURE;
-			}
-		if(!walk_bob_lift_fits(state.bob.amplitude,horizontal,diagonal,vertical))
-			{
-			out.printerr("bob {:.2f} times that multiplier lifts more than {:.2f} tile; "
-				"lower one of them\n",state.bob.amplitude,max_walk_bob_lift);
-			return CR_FAILURE;
-			}
-		state.bob.horizontal_mult=horizontal;
-		state.bob.diagonal_mult=diagonal;
-		state.bob.vertical_mult=vertical;
-		out.print("smooth-movement: bob multipliers horizontal {:.2f}, diagonal {:.2f}, "
-			"vertical {:.2f}\n",horizontal,diagonal,vertical);
-		return CR_OK;
-		}
-	if(parameters[0]=="hops")
-		{
-		if(parameters.size()==1)
-			{
-			out.print("hops per step: {}\n",state.bob.hops);
-			return CR_OK;
-			}
-		if(parameters.size()==2&&(parameters[1]=="1"||parameters[1]=="2"))
-			{
-			state.bob.hops=parameters[1]=="1"?1:2;
-			out.print("smooth-movement: hops per step {}\n",state.bob.hops);
-			return CR_OK;
-			}
-		return CR_WRONG_USAGE;
+		case command_outcomest::ok:return CR_OK;
+		case command_outcomest::failed:return CR_FAILURE;
+		case command_outcomest::wrong_usage:break;
 		}
 	return CR_WRONG_USAGE;
 }
@@ -1370,7 +918,7 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 	if(is_enabled==enable)return CR_OK;
 	if(enable)
 		{
-		reset_state();
+		state.reset();
 		if(!load_sdl(out))return CR_FAILURE;
 		if(!INTERPOSE_HOOK(dwarfmode_hook,render).apply()||
 			!INTERPOSE_HOOK(dungeonmode_hook,render).apply()||
@@ -1380,7 +928,7 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 			INTERPOSE_HOOK(dwarfmode_hook,render).remove();
 			INTERPOSE_HOOK(dungeonmode_hook,render).remove();
 			INTERPOSE_HOOK(renderer_hook,update_all).remove();
-			clear_sdl_bindings();
+			state.sdl.clear();
 			return CR_FAILURE;
 			}
 		}
@@ -1389,8 +937,8 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 		INTERPOSE_HOOK(renderer_hook,update_all).remove();
 		INTERPOSE_HOOK(dwarfmode_hook,render).remove();
 		INTERPOSE_HOOK(dungeonmode_hook,render).remove();
-		reset_state();
-		clear_sdl_bindings();
+		state.reset();
+		state.sdl.clear();
 		if(gps!=nullptr)++gps->force_full_display_count;
 		}
 	is_enabled=enable;

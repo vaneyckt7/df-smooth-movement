@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The plugin's state and its console commands moved out of `smooth-movement.cpp` into
+  `plugin_state.h` and `plugin_commands.h`; the commands are now covered by a harness test.
+  Nothing the plugin draws or prints changes.
 - Frame recordings carry the walk bob settings (format version 5), so a recording made
   with the bob on replays with it. The harness reads versions 2 to 4 as well, with the bob
   off, which replays them as before.
