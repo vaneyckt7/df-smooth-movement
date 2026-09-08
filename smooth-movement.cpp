@@ -871,11 +871,23 @@ bool load_sdl(color_ostream &out)
 	return true;
 }
 
+// The step time a `timestep` argument names, or -1 when it is not a whole number of
+// milliseconds from 20 to 2000.
+int32_t parse_step_ms(const std::string &text)
+{
+	if(text.empty()||text.size()>4||
+		text.find_first_not_of("0123456789")!=std::string::npos)return -1;
+	const int32_t ms=int32_t(std::stoul(text));
+	return ms>=20&&ms<=2000?ms:-1;
+}
+
 void reset_visual_state()
 {
 	const bool linear=state.render.animation_manager.is_linear();
+	const uint32_t step_ms=state.render.animation_manager.step_duration_ms();
 	state.render.animation_manager=visual_animation_managerst();
 	state.render.animation_manager.set_linear(linear);
+	state.render.animation_manager.set_step_duration_ms(step_ms);
 	state.render.previous_coverage.clear();
 	state.render.view_context=view_context_trackerst();
 	state.render.camera.restart();
@@ -888,6 +900,8 @@ void reset_state()
 	reset_visual_state();
 	state.render.camera.set_rest(0.0,0.0);
 	state.render.camera.set_enabled(false);
+	state.render.animation_manager.set_step_duration_ms(
+		visual_animation_managerst::default_step_duration_ms);
 	state.flip_enabled=false;
 	state.hauled_enabled=false;
 	state.stats.enabled=false;
@@ -912,6 +926,8 @@ command_result status_command(
 			state.flip_enabled?"on":"off");
 		out.print("linear movement: {}\n",
 			state.render.animation_manager.is_linear()?"on":"off");
+		out.print("time step: {} ms\n",
+			state.render.animation_manager.step_duration_ms());
 		out.print("hauled item icons: {}\n",
 			state.hauled_enabled?"on":"off");
 		out.print("frame stats: {}\n",
@@ -1092,6 +1108,24 @@ command_result status_command(
 			}
 		return CR_WRONG_USAGE;
 		}
+	if(parameters[0]=="timestep")
+		{
+		if(parameters.size()==1)
+			{
+			out.print("time step: {} ms\n",
+				state.render.animation_manager.step_duration_ms());
+			return CR_OK;
+			}
+		if(parameters.size()==2)
+			{
+			const int32_t ms=parse_step_ms(parameters[1]);
+			if(ms<0)return CR_WRONG_USAGE;
+			state.render.animation_manager.set_step_duration_ms(uint32_t(ms));
+			out.print("smooth-movement: time step {} ms\n",ms);
+			return CR_OK;
+			}
+		return CR_WRONG_USAGE;
+		}
 	if(parameters[0]=="hauled")
 		{
 		if(parameters.size()==1)
@@ -1122,6 +1156,7 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 		"Smooth movement status; free camera: camera on|off|reset|<fx> <fy>; "
 		"flip, linear and hauled together: all on|off; "
 		"sprite flipping: flip on|off; linear movement: linear on|off; "
+		"one-tile step time: timestep <ms> (20-2000); "
 		"hauled item icons: hauled on|off; "
 		"frame timing: stats [on|off|reset]; "
 		"frame recording: record <file> [frames] | record stop | record status.",

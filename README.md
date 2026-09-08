@@ -7,6 +7,7 @@ A visual plugin for Dwarf Fortress that makes movement smoother.
 - **Smooth movement:** creatures, hauled raw materials, and vehicles glide between tiles.
 - **Sprites flip** creatures can optionally face the direction they are walking.
 - **Smooth native follow:** Dwarf Fortress's unit follow glides automatically.
+- **Adjustable step time:** how long a one-tile glide takes is a runtime setting.
 - **Free camera:** the camera can optionally glide and be dragged with the mouse (WIP).
 
 ## Installation
@@ -32,7 +33,8 @@ smooth-movement all on      # enable flip, linear and hauled (not the WIP free c
 smooth-movement all off     # disable flip, linear and hauled
 smooth-movement flip on     # enable sprites flip
 smooth-movement camera on   # enable the free camera
-smooth-movement linear on   # use linear easing with adaptive 150–500 ms movement tweens
+smooth-movement linear on   # use linear easing with adaptive <timestep>–500 ms movement tweens
+smooth-movement timestep 200 # a one-tile glide takes 200 ms (default 150, range 20-2000)
 smooth-movement hauled on   # show icons for carried boulders, bars, and wood
 smooth-movement stats on    # time the render hook; `smooth-movement stats` prints the numbers
 smooth-movement record f.rec # write what the render hook sees for the next 900 frames to f.rec

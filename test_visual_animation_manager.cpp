@@ -604,6 +604,130 @@ int main()
 		viewport,viewport_visual_layer::center,2,1).progress==0.5f); // fixed 150 ms
 	}
 
+	// The step time is a runtime setting; a movement keeps the one it started with.
+	{
+	std::array<int32_t,9> at_zero{};
+	std::array<int32_t,9> at_one{};
+	std::array<int32_t,9> at_two{};
+	at_zero[0*3+1]=42;
+	at_one[1*3+1]=42;
+	at_two[2*3+1]=42;
+
+	visual_animation_managerst stepped;
+	assert(stepped.step_duration_ms()==150);
+	assert(visual_animation_managerst::default_step_duration_ms==150);
+	stepped.set_step_duration_ms(200);
+	assert(stepped.step_duration_ms()==200);
+	stepped.set_step_duration_ms(0);
+	assert(stepped.step_duration_ms()==1);
+	stepped.set_step_duration_ms(200);
+	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
+	run_frame(stepped,input,6000);
+	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
+	run_frame(stepped,input,6010);
+	set_layer(input,viewport_visual_layer::center,at_one.data(),at_one.data());
+	stepped.set_step_duration_ms(50); // mid-flight: the 200 ms movement is unaffected
+	run_frame(stepped,input,6110);
+	assert(stepped.get_movement(
+		viewport,viewport_visual_layer::center,1,1).progress==0.5f);
+	run_frame(stepped,input,6209);
+	assert(stepped.get_movement(viewport,viewport_visual_layer::center,1,1).active);
+	run_frame(stepped,input,6210);
+	assert(!stepped.get_movement(viewport,viewport_visual_layer::center,1,1).active);
+	assert(stepped.requires_full_redraw());
+	set_layer(input,viewport_visual_layer::center,at_two.data(),at_one.data());
+	run_frame(stepped,input,6300); // the next movement takes the new 50 ms
+	set_layer(input,viewport_visual_layer::center,at_two.data(),at_two.data());
+	run_frame(stepped,input,6325);
+	assert(stepped.get_movement(
+		viewport,viewport_visual_layer::center,2,1).progress==0.5f);
+	run_frame(stepped,input,6350);
+	assert(!stepped.get_movement(viewport,viewport_visual_layer::center,2,1).active);
+
+	// With linear on, the step time is the adaptive duration's floor, and a step longer
+	// than 500 ms lifts the ceiling with it so the movement is neither clamped nor cut short.
+	visual_animation_managerst long_linear;
+	long_linear.set_linear(true);
+	long_linear.set_step_duration_ms(800);
+	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
+	run_frame(long_linear,input,7000);
+	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
+	run_frame(long_linear,input,7010);
+	set_layer(input,viewport_visual_layer::center,at_one.data(),at_one.data());
+	run_frame(long_linear,input,7410);
+	assert(long_linear.get_movement(
+		viewport,viewport_visual_layer::center,1,1).progress==0.5f); // first: 800 ms
+	run_frame(long_linear,input,7610); // past 500 ms, still in flight
+	assert(long_linear.get_movement(
+		viewport,viewport_visual_layer::center,1,1).progress==0.75f);
+	// The next step follows a predecessor older than 500 ms: its visual source is where
+	// that movement is, and its duration is the 600 ms cadence raised to the 800 ms floor.
+	set_layer(input,viewport_visual_layer::center,at_two.data(),at_one.data());
+	run_frame(long_linear,input,7610);
+	assert(long_linear.get_movement(
+		viewport,viewport_visual_layer::center,2,1).source_x==0.75f);
+	set_layer(input,viewport_visual_layer::center,at_two.data(),at_two.data());
+	run_frame(long_linear,input,8010);
+	assert(long_linear.get_movement(
+		viewport,viewport_visual_layer::center,2,1).progress==0.5f);
+	run_frame(long_linear,input,8410);
+	assert(!long_linear.get_movement(viewport,viewport_visual_layer::center,2,1).active);
+	// A step back at an 800 ms cadence lasts 800 ms, the floor; the predecessor filter
+	// has already kept the cadence within the 800 ms limit.
+	set_layer(input,viewport_visual_layer::center,at_one.data(),at_two.data());
+	run_frame(long_linear,input,8410);
+	set_layer(input,viewport_visual_layer::center,at_one.data(),at_one.data());
+	run_frame(long_linear,input,8810);
+	assert(long_linear.get_movement(
+		viewport,viewport_visual_layer::center,1,1).progress==0.5f);
+
+	// Lowering the step time while a longer linear movement is in flight leaves that
+	// movement its own duration: it is neither erased at the new 500 ms limit nor
+	// dropped as a predecessor, and only the movements that start after it are shorter.
+	visual_animation_managerst lowered_linear;
+	lowered_linear.set_linear(true);
+	lowered_linear.set_step_duration_ms(2000);
+	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
+	run_frame(lowered_linear,input,10000);
+	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
+	run_frame(lowered_linear,input,10010);
+	set_layer(input,viewport_visual_layer::center,at_one.data(),at_one.data());
+	run_frame(lowered_linear,input,10310);
+	lowered_linear.set_step_duration_ms(150);
+	run_frame(lowered_linear,input,11010); // 1000 ms in, past the 500 ms limit
+	assert(lowered_linear.get_movement(
+		viewport,viewport_visual_layer::center,1,1).progress==0.5f);
+	run_frame(lowered_linear,input,11510);
+	assert(lowered_linear.get_movement(
+		viewport,viewport_visual_layer::center,1,1).progress==0.75f);
+	// The next step still follows it as its predecessor, and its 1500 ms cadence is
+	// clamped to the new 500 ms ceiling.
+	set_layer(input,viewport_visual_layer::center,at_two.data(),at_one.data());
+	run_frame(lowered_linear,input,11510);
+	assert(lowered_linear.get_movement(
+		viewport,viewport_visual_layer::center,2,1).source_x==0.75f);
+	set_layer(input,viewport_visual_layer::center,at_two.data(),at_two.data());
+	run_frame(lowered_linear,input,11760);
+	assert(lowered_linear.get_movement(
+		viewport,viewport_visual_layer::center,2,1).progress==0.5f);
+	run_frame(lowered_linear,input,12010);
+	assert(!lowered_linear.get_movement(viewport,viewport_visual_layer::center,2,1).active);
+
+	visual_animation_managerst short_linear;
+	short_linear.set_linear(true);
+	short_linear.set_step_duration_ms(100);
+	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
+	run_frame(short_linear,input,9000);
+	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
+	run_frame(short_linear,input,9010);
+	set_layer(input,viewport_visual_layer::center,at_two.data(),at_one.data());
+	run_frame(short_linear,input,9040); // cadence 30 ms, clamped up to the 100 ms step
+	set_layer(input,viewport_visual_layer::center,at_two.data(),at_two.data());
+	run_frame(short_linear,input,9090);
+	assert(short_linear.get_movement(
+		viewport,viewport_visual_layer::center,2,1).progress==0.5f);
+	}
+
 	visual_animation_managerst ambiguous;
 	assert(!ambiguous.is_linear());
 	ambiguous.set_linear(true);
