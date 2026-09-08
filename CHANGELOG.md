@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The render hook's two paint paths, the camera glide and the incremental frame, share one
+  black fill under the tiles they repaint, with the game's draw colour saved and restored
+  around it, instead of a copy each. Nothing the plugin draws changes.
 - The plugin's state and its console commands moved out of `smooth-movement.cpp` into
   `plugin_state.h` and `plugin_commands.h`; the commands are now covered by a harness test.
   Nothing the plugin draws or prints changes.
