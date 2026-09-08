@@ -45,8 +45,8 @@ format.
 The scripts build and write under `harness/out/`, which is ignored by git, with the `c++` on
 the path; clang and g++ both work. Run them from the repository root. `<plugin dir>` is a
 directory holding the plugin sources (`smooth-movement.cpp`, `visual_animation.h`,
-`frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `sprite_proxies.h`, `tile_coverage.h`,
-`tile_repaint.h` and the unit test),
+`frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `free_camera.h`, `sprite_proxies.h`,
+`tile_coverage.h`, `tile_repaint.h` and the unit test),
 such as the repository root (`.`) or an export of another branch, for example
 `mkdir -p harness/out/src-base && git archive origin/release/v0.5.0 | tar -x -C harness/out/src-base`.
 
@@ -74,7 +74,10 @@ such as the repository root (`.`) or an export of another branch, for example
   each repaint pass zeroes and that every entry is restored) and the sprite proxy test
   (`test_sprite_proxies.cpp`, which steps a creature through the animation manager on the
   stub viewport and checks which sprites get a proxy, what tiles each covers, and that fire,
-  the clip and a missing texture block one), then replays every recording
+  the clip and a missing texture block one) and the free camera test
+  (`test_free_camera.cpp`, which drives the camera with a stand-in manager and checks the
+  render offset a landed scroll, a window jump, a followed movement, a normalization write
+  and a middle-mouse drag give), then replays every recording
   in `recordings/` and fails when any frame's digest differs from `expected/<name>.digest`.
   It prints the replay's repaint total alongside the game's from the self-check, which
   match only for the plugin version that made the recording.

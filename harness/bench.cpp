@@ -304,8 +304,8 @@ int run_replay(const char *record_path,const char *trace_path)
 		const auto &h=frame.header;
 		flip_enabled=h.flip;
 		hauled_enabled=h.hauled;
-		set_camera_enabled(h.camera);
-		rest_x=h.rest_x;rest_y=h.rest_y;
+		free_camera.set_enabled(h.camera);
+		free_camera.set_rest(h.rest_x,h.rest_y);
 		animation_manager.set_linear(h.linear);
 		wx=h.window_x;wy=h.window_y;wz=h.window_z;paused=h.paused;
 		plot.follow_unit=h.follow_unit;
