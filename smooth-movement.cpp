@@ -25,6 +25,7 @@
 #include "frame_record.h"
 #include "frame_recorder.h"
 #include "frame_stats.h"
+#include "free_camera.h"
 #include "sprite_proxies.h"
 #include "tile_coverage.h"
 #include "tile_repaint.h"
@@ -109,41 +110,10 @@ bool flip_enabled=false;
 bool hauled_enabled=false;
 
 // --- free camera -------------------------------------------------------------------------------
-// The camera is visually unbound from the tile grid. Two layered offsets:
-//   rest      -- a PERSISTENT sub-tile offset in tiles: the free camera. Set by pixel-perfect
-//                middle-mouse drag panning (the view rests wherever released, mid-tile or not)
-//                and by the `smooth-movement camera <fx> <fy>` console command. Survives zoom
-//                and z-level changes. Kept in [-0.5,0.5] by normalization: whole-tile parts are
-//                folded into window_x/window_y (a plain UI scroll write -- NEVER the viewport
-//                dims, which crash DF; the sub-tile strip this leaves at one screen edge has no
-//                buffer data and stays black).
-//   transient -- the decaying scroll glide from before, in pixels, layered on top.
-// Render offset = transient + rest*tile. window_x/window_y remain the game's own tile camera.
-bool camera_enabled=false;                    // OFF by default: plain `enable smooth-movement`
-                                              // keeps upstream behavior (creature interpolation
-                                              // only); `smooth-movement camera on` opts in.
-constexpr int32_t camera_max_glide_tiles=3;   // per-jump: farther than this snaps instantly
-constexpr double camera_tau_ms=35.0;          // transient catch-up (~95% done after 100ms)
-double transient_x=0.0;                       // decaying glide offset, pixels
-double transient_y=0.0;
-double rest_x=0.0;                            // persistent free-camera offset, tiles
-double rest_y=0.0;                            // (positive = view sits WEST/NORTH of window)
-int32_t self_scroll_x=0;                      // window deltas WE wrote: visual no-ops when landing
-int32_t self_scroll_y=0;
-visual_movement_idst camera_follow_id=no_visual_movement;
-const void *camera_follow_viewport=nullptr;
-double camera_follow_x=0.0;
-double camera_follow_y=0.0;
-bool camera_ignore_pending=false;
-bool drag_active=false;
-double drag_anchor_vx=0.0;                    // visual camera at drag start, tiles
-double drag_anchor_vy=0.0;
-int32_t drag_anchor_mx=0;                     // precise mouse at drag start, pixels
-int32_t drag_anchor_my=0;
+// The camera itself lives in free_camera.h; the plugin file hands it what it reads from the
+// game each frame and writes the window position for it.
+free_camerast free_camera;
 bool camera_was_offset=false;                 // edge-detects offset->0 for one cleanup redraw
-int32_t camera_prev_wx=0;                     // window-scroll observation baseline
-int32_t camera_prev_wy=0;
-bool camera_has_prev=false;
 int32_t native_follow_id=-1;
 
 double tile_px(const df::renderer_2d_base *renderer)
@@ -152,212 +122,42 @@ double tile_px(const df::renderer_2d_base *renderer)
 	return double(zoom==128?32:std::max(1,zoom*32/128));
 }
 
-// Match ratio of "buffers shifted by (dwx,dwy)" on the background layer: 0..1, or -1 when there
-// is nothing to compare (empty background).
-// Cancel everything except the persistent rest offset (the camera keeps its sub-tile position
-// across zoom/z/resize; only the in-flight animation state is unfollowable).
-void clear_camera_tracking()
+// Scrolls the game's window position by whole tiles for the camera and says which axes it
+// applied: an axis without a window, or that would go negative, is left alone.
+std::array<bool,2> scroll_window(int32_t kx,int32_t ky)
 {
-	self_scroll_x=0;
-	self_scroll_y=0;
-	camera_follow_id=no_visual_movement;
-	camera_follow_viewport=nullptr;
-	camera_follow_x=0.0;
-	camera_follow_y=0.0;
-	camera_ignore_pending=false;
-}
-
-void cancel_camera_transients()
-{
-	transient_x=0.0;
-	transient_y=0.0;
-	clear_camera_tracking();
-	drag_active=false;
-}
-
-void set_camera_enabled(bool enable)
-{
-	if(camera_enabled==enable)return;
-	camera_enabled=enable;
-	cancel_camera_transients();
-	rest_x=0.0;
-	rest_y=0.0;
-	camera_has_prev=false;   // fresh observation baseline; no phantom scroll on re-enable
-	// camera_was_offset stays: the render path issues one cleanup redraw if we were mid-offset.
-}
-
-// Fold whole tiles of rest into window_x/window_y so |rest| <= 0.5 (minimal edge strip). The
-// visual position is unchanged: the window write is attributed via self_scroll when it lands.
-void normalize_rest()
-{
-	const int32_t kx=int32_t(-std::llround(rest_x));
-	const int32_t ky=int32_t(-std::llround(rest_y));
+	std::array<bool,2> applied={false,false};
 	if(kx!=0&&window_x!=nullptr&&*window_x+kx>=0)
 		{
 		*window_x+=kx;
-		self_scroll_x+=kx;
+		applied[0]=true;
 		}
 	if(ky!=0&&window_y!=nullptr&&*window_y+ky>=0)
 		{
 		*window_y+=ky;
-		self_scroll_y+=ky;
+		applied[1]=true;
 		}
+	return applied;
 }
 
-// Per-frame camera bookkeeping: observe window scrolls, attribute them when the buffers apply
-// them (glide vs our own normalization writes), drive the drag, decay the transient.
-void update_camera(
-	df::renderer_2d_base *renderer,
+// What the camera observes on this frame.
+camera_framest camera_frame(
 	const df::graphic_viewportst *vp,
+	double tile,
 	uint32_t delta_ms,
 	bool native_follow_active)
 {
-	if(!camera_glide_enabled(camera_enabled,native_follow_active))return;
-	const double tile=tile_px(renderer);
-	const double k=std::exp(-double(delta_ms)/camera_tau_ms);
-	transient_x*=k;
-	transient_y*=k;
-	const int32_t wx=window_x?*window_x:0;
-	const int32_t wy=window_y?*window_y:0;
-	if(camera_has_prev&&(wx!=camera_prev_wx||wy!=camera_prev_wy))
-		{
-		const int32_t dx=wx-camera_prev_wx;
-		const int32_t dy=wy-camera_prev_wy;
-		if((std::abs(dx)>camera_max_glide_tiles||std::abs(dy)>camera_max_glide_tiles)&&
-			!drag_active)
-			{
-			transient_x=0.0;
-			transient_y=0.0;
-			camera_follow_id=no_visual_movement;
-			camera_follow_x=0.0;
-			camera_follow_y=0.0;
-			camera_ignore_pending=true;
-			}
-		}
-	camera_prev_wx=wx;
-	camera_prev_wy=wy;
-	camera_has_prev=true;
-
-	const visual_scroll_renderst scroll=animation_manager.get_scroll(vp);
-	if(scroll.abandoned)
-		{
-		clear_camera_tracking();
-		}
-	if(scroll.landed)
-		{
-		int32_t sx=0;
-		if(self_scroll_x!=0&&scroll.landed_x!=0&&
-			(self_scroll_x>0)==(scroll.landed_x>0))
-			sx=std::abs(self_scroll_x)<=std::abs(scroll.landed_x)?
-				self_scroll_x:scroll.landed_x;
-		int32_t sy=0;
-		if(self_scroll_y!=0&&scroll.landed_y!=0&&
-			(self_scroll_y>0)==(scroll.landed_y>0))
-			sy=std::abs(self_scroll_y)<=std::abs(scroll.landed_y)?
-				self_scroll_y:scroll.landed_y;
-		self_scroll_x-=sx;
-		self_scroll_y-=sy;
-		rest_x+=sx;
-		rest_y+=sy;
-		const int32_t gx=scroll.landed_x-sx;
-		const int32_t gy=scroll.landed_y-sy;
-		const bool ignore=camera_ignore_pending;
-		if(!scroll.pending)camera_ignore_pending=false;
-		if(drag_active)
-			{
-			rest_x+=gx;
-			rest_y+=gy;
-			}
-		else if((gx!=0||gy!=0)&&!ignore&&native_follow_active&&sx==0&&sy==0&&
-			scroll.follow_candidate!=no_visual_movement)
-			{
-			camera_follow_id=scroll.follow_candidate;
-			camera_follow_viewport=vp;
-			transient_x=0.0;
-			transient_y=0.0;
-			}
-		else if((gx!=0||gy!=0)&&!ignore)
-			{
-			camera_follow_id=no_visual_movement;
-			camera_follow_viewport=nullptr;
-			camera_follow_x=0.0;
-			camera_follow_y=0.0;
-			const double cap=tile*(camera_max_glide_tiles+0.5);
-			transient_x=std::clamp(transient_x+gx*tile,-cap,cap);
-			transient_y=std::clamp(transient_y+gy*tile,-cap,cap);
-			}
-		}
-	if(camera_follow_id!=no_visual_movement)
-		{
-		const auto follow=animation_manager.get_follow(
-			camera_follow_viewport,camera_follow_id);
-		if(follow.active)
-			{
-			camera_follow_x=follow.offset_x*tile;
-			camera_follow_y=follow.offset_y*tile;
-			}
-		else
-			{
-			camera_follow_id=no_visual_movement;
-			camera_follow_viewport=nullptr;
-			camera_follow_x=0.0;
-			camera_follow_y=0.0;
-			}
-		}
-
-	// --- pixel-perfect middle-mouse drag: the view follows the mouse 1:1 and rests where
-	// released. DF's own drag still moves window in tile steps; rest carries the remainder.
-	// Positions are tracked against the CONTENT window (window minus unlanded jumps) so the
-	// buffer lag never causes a visible stutter.
-	const bool mbut=camera_enabled&&enabler!=nullptr&&enabler->mouse_mbut;
-	const double content_wx=double(wx-scroll.pending_x);
-	const double content_wy=double(wy-scroll.pending_y);
-	if(mbut&&!drag_active&&gps!=nullptr)
-		{
-		drag_active=true;
-		drag_anchor_vx=content_wx-rest_x-(transient_x+camera_follow_x)/tile;
-		drag_anchor_vy=content_wy-rest_y-(transient_y+camera_follow_y)/tile;
-		drag_anchor_mx=gps->precise_mouse_x;
-		drag_anchor_my=gps->precise_mouse_y;
-		transient_x=0.0;
-		transient_y=0.0;
-		camera_follow_id=no_visual_movement;
-		camera_follow_viewport=nullptr;
-		camera_follow_x=0.0;
-		camera_follow_y=0.0;
-		}
-	if(drag_active)
-		{
-		if(!mbut)
-			{
-			drag_active=false;
-			normalize_rest();
-			}
-		else if(gps!=nullptr)
-			{
-			double vx=drag_anchor_vx-double(gps->precise_mouse_x-drag_anchor_mx)/tile;
-			double vy=drag_anchor_vy-double(gps->precise_mouse_y-drag_anchor_my)/tile;
-			rest_x=content_wx-vx;
-			rest_y=content_wy-vy;
-			// If DF's own drag disagrees by more than a tile and a half, rebase on its view.
-			const double lim=1.5;
-			if(rest_x<-lim||rest_x>lim||rest_y<-lim||rest_y>lim)
-				{
-				rest_x=std::clamp(rest_x,-lim,lim);
-				rest_y=std::clamp(rest_y,-lim,lim);
-				drag_anchor_vx=content_wx-rest_x+
-					double(gps->precise_mouse_x-drag_anchor_mx)/tile;
-				drag_anchor_vy=content_wy-rest_y+
-					double(gps->precise_mouse_y-drag_anchor_my)/tile;
-				}
-			}
-		}
-
-	if(std::abs(transient_x)<0.5&&std::abs(transient_y)<0.5)
-		{
-		transient_x=0.0;
-		transient_y=0.0;
-		}
+	return {
+		vp,
+		window_x?*window_x:0,
+		window_y?*window_y:0,
+		enabler!=nullptr&&enabler->mouse_mbut,
+		gps?gps->precise_mouse_x:0,
+		gps?gps->precise_mouse_y:0,
+		tile,
+		delta_ms,
+		native_follow_active
+		};
 }
 
 void update_visual_context(
@@ -387,7 +187,7 @@ void update_visual_context(
 		{
 		++visual_context_revision;
 		previous_coverage.clear();
-		cancel_camera_transients();
+		free_camera.cancel_transients();
 		}
 	previous_viewport=vp;
 	previous_view_signature=signature;
@@ -683,7 +483,7 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 		frame_record::frame_headerst &header=input.header;
 		header.flip=flip_enabled;
 		header.hauled=hauled_enabled;
-		header.camera=camera_enabled;
+		header.camera=free_camera.is_enabled();
 		header.linear=animation_manager.is_linear();
 		header.tick_ms=now_ms;
 		header.window_x=window_x?*window_x:0;
@@ -699,8 +499,8 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 		header.origin_y=renderer->origin_y;
 		header.dimx=gps?gps->dimx:0;
 		header.dimy=gps?gps->dimy:0;
-		header.rest_x=rest_x;
-		header.rest_y=rest_y;
+		header.rest_x=free_camera.rest_offset_x();
+		header.rest_y=free_camera.rest_offset_y();
 		input.viewports=recorded_viewports();
 		return input;
 		});
@@ -906,8 +706,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		native_follow_id=follow_id;
 		++visual_context_revision;
 		previous_coverage.clear();
-		cancel_camera_transients();
-		camera_has_prev=false;
+		free_camera.restart();
 		}
 	animation_manager.begin_frame(now_ms);
 	for(df::graphic_viewportst *viewport:viewports)
@@ -918,19 +717,16 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	if(!viewport_readable(vp)||renderer->sdl_renderer==nullptr)
 		return;
 	const bool paused=pause_state&&*pause_state;
-	if(paused)
-		{
-		cancel_camera_transients();
-		camera_has_prev=false;
-		}
+	if(paused)free_camera.restart();
 	const bool native_follow_active=follow_id>=0;
-	if(!paused)
-		update_camera(renderer,vp,animation_manager.get_frame_delta_ms(),native_follow_active);
 	const double cam_tile=tile_px(renderer);
-	const int32_t glide_x=int32_t(std::lround(
-		transient_x+camera_follow_x+rest_x*cam_tile));
-	const int32_t glide_y=int32_t(std::lround(
-		transient_y+camera_follow_y+rest_y*cam_tile));
+	if(!paused)
+		free_camera.update(
+			camera_frame(vp,cam_tile,animation_manager.get_frame_delta_ms(),
+				native_follow_active),
+			animation_manager,scroll_window);
+	const int32_t glide_x=free_camera.glide_x(cam_tile);
+	const int32_t glide_y=free_camera.glide_y(cam_tile);
 	const bool glide=glide_x!=0||glide_y!=0;
 	if(!glide&&camera_was_offset)
 		{
@@ -1095,8 +891,7 @@ void reset_visual_state()
 	previous_pan_x=0;
 	previous_pan_y=0;
 	has_pan_context=false;
-	cancel_camera_transients();
-	camera_has_prev=false;
+	free_camera.restart();
 	camera_was_offset=false;
 	native_follow_id=-1;
 }
@@ -1104,9 +899,8 @@ void reset_visual_state()
 void reset_state()
 {
 	reset_visual_state();
-	rest_x=0.0;
-	rest_y=0.0;
-	camera_enabled=false;
+	free_camera.set_rest(0.0,0.0);
+	free_camera.set_enabled(false);
 	flip_enabled=false;
 	hauled_enabled=false;
 	frame_stats.enabled=false;
@@ -1125,7 +919,8 @@ command_result status_command(
 			plugin_version,
 			is_enabled?"enabled":"disabled");
 		out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
-			camera_enabled?"on":"off",-rest_x,-rest_y);
+			free_camera.is_enabled()?"on":"off",
+			-free_camera.rest_offset_x(),-free_camera.rest_offset_y());
 		out.print("sprite flipping: {}\n",
 			flip_enabled?"on":"off");
 		out.print("linear movement: {}\n",
@@ -1222,23 +1017,23 @@ command_result status_command(
 		if(parameters.size()==1)
 			{
 			out.print("free camera: {}, offset {:.3f} {:.3f}\n",
-				camera_enabled?"on":"off",-rest_x,-rest_y);
+				free_camera.is_enabled()?"on":"off",
+			-free_camera.rest_offset_x(),-free_camera.rest_offset_y());
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="on")
 			{
-			set_camera_enabled(true);
+			free_camera.set_enabled(true);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="off")
 			{
-			set_camera_enabled(false);
+			free_camera.set_enabled(false);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="reset")
 			{
-			rest_x=0.0;
-			rest_y=0.0;
+			free_camera.set_rest(0.0,0.0);
 			return CR_OK;
 			}
 		if(parameters.size()==3)
@@ -1253,10 +1048,9 @@ command_result status_command(
 					return CR_FAILURE;
 					}
 				// User-facing: positive = view sits east/south of the grid position.
-				set_camera_enabled(true);
-				rest_x=-fx;
-				rest_y=-fy;
-				normalize_rest();
+				free_camera.set_enabled(true);
+				free_camera.set_rest(-fx,-fy);
+				free_camera.normalize_rest(scroll_window);
 				return CR_OK;
 				}
 			catch(...)
