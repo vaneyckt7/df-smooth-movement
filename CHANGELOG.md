@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add `smooth-movement timestep <ms>`: how long a one-tile glide takes, 20 to 2000 ms,
+  150 by default as before. A movement keeps the time it started with, so a change applies
+  to the movements that start after it. With `linear` on, the adaptive duration's floor is
+  the step time and its 500 ms ceiling rises to the step time when that is longer, and a
+  movement in flight keeps its own duration as the ceiling when the step time is lowered.
+  The setting returns to its default when the plugin is disabled or enabled, like `linear`.
 - Add `smooth-movement stats [on|off|reset]`: counts frames, frames that reached the draw
   stage and tile repaints by the game, and (while on) times the render hook split into movement
   detection and drawing. Timing is off by default; counting costs one increment per frame,

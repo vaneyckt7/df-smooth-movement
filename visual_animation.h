@@ -329,7 +329,9 @@ class visual_animation_managerst
 	visual_movement_idst next_movement_id=1;
 	std::vector<viewport_animationst> viewports;
 
-	static constexpr uint32_t movement_duration_ms=150;
+	// How long a one-tile step takes, a runtime setting ('timestep <ms>'). A movement keeps
+	// the duration it started with, so a change applies to the movements that start after it.
+	uint32_t movement_duration_ms=default_step_duration_ms;
 	// Scrolling faster than detection keeps up: give up rather than test ever more prefixes.
 	static constexpr size_t max_pending_shifts=8;
 	static constexpr int32_t max_pending_shift_debt=6;
@@ -559,15 +561,27 @@ class visual_animation_managerst
 	float movement_progress(const movementst &movement) const
 		{
 		return animation_progress(
-			frame_time_ms,movement.start_time_ms,
-			linear?movement.duration_ms:movement_duration_ms,linear);
+			frame_time_ms,movement.start_time_ms,movement.duration_ms,linear);
 		}
 
 	bool movement_active(const movementst &movement) const
 		{
 		return !movement.historical&&
-			frame_time_ms-movement.start_time_ms<
-			(linear?movement.duration_ms:movement_duration_ms);
+			frame_time_ms-movement.start_time_ms<movement.duration_ms;
+		}
+
+	// The longest a linear movement lasts and the oldest predecessor its cadence follows:
+	// 500 ms, or the step time when that is longer, so a long step is never cut short.
+	uint32_t linear_limit_ms() const
+		{
+		return std::max(500U,movement_duration_ms);
+		}
+
+	// The same limit for a movement already in flight: its own duration is kept as the
+	// floor, so lowering the step time never cuts a longer movement short.
+	uint32_t linear_limit_ms(const movementst &movement) const
+		{
+		return std::max(linear_limit_ms(),movement.duration_ms);
 		}
 
 	visual_movement_idst allocate_movement_id()
@@ -578,7 +592,19 @@ class visual_animation_managerst
 		}
 
 	public:
+		static constexpr uint32_t default_step_duration_ms=150;
+
 		visual_animation_managerst()=default;
+
+		uint32_t step_duration_ms() const
+			{
+			return movement_duration_ms;
+			}
+
+		void set_step_duration_ms(uint32_t ms)
+			{
+			movement_duration_ms=std::max(1U,ms);
+			}
 
 		void set_linear(bool enabled)
 			{
@@ -969,7 +995,8 @@ class visual_animation_managerst
 									static_cast<viewport_visual_layer>(layer)||
 									movement.target_x!=visual_source_x||
 									movement.target_y!=visual_source_y||
-									(linear&&frame_time_ms-movement.start_time_ms>500))continue;
+									(linear&&frame_time_ms-movement.start_time_ms>
+										linear_limit_ms(movement)))continue;
 								if(predecessor==nullptr||
 									frame_time_ms-movement.start_time_ms<
 									frame_time_ms-predecessor->start_time_ms)
@@ -988,7 +1015,7 @@ class visual_animation_managerst
 									}
 								if(linear)duration_ms=std::clamp(
 									frame_time_ms-predecessor->start_time_ms,
-									movement_duration_ms,500U);
+									movement_duration_ms,linear_limit_ms());
 								}
 							const visual_movement_idst movement_id=allocate_movement_id();
 							state.movements.push_back(
@@ -1066,9 +1093,9 @@ class visual_animation_managerst
 							{
 							if(invalid||frame_time_ms-movement.start_time_ms>=movement.duration_ms)
 								movement.historical=true;
-							return frame_time_ms-movement.start_time_ms>500;
+							return frame_time_ms-movement.start_time_ms>linear_limit_ms(movement);
 							}
-						return frame_time_ms-movement.start_time_ms>=movement_duration_ms||invalid;
+						return frame_time_ms-movement.start_time_ms>=movement.duration_ms||invalid;
 						}),
 				state.movements.end());
 			// has_mirrored is recomputed here rather than maintained at every write site.
