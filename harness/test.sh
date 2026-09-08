@@ -12,6 +12,9 @@ c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-fra
 c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-tile-repaint" \
     "$here/test_tile_repaint.cpp"
 "$here/out/test-tile-repaint"
+c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-sprite-proxies" \
+    "$here/test_sprite_proxies.cpp"
+"$here/out/test-sprite-proxies"
 "$here/build.sh" "$src" test
 status=0
 for rec in "$here"/recordings/*.rec; do
