@@ -342,7 +342,7 @@ int run_replay(const char *record_path,const char *trace_path)
 		if(h.simulation_tick>=0)
 			{
 			world.frame_counter=int32_t(h.simulation_tick);
-			state.render.drawn_buffers.note_drawn();
+			state.render.drawn_buffers.note_drawn(world.frame_counter);
 			}
 		const uint64_t r0=repaint_calls,p0=state.stats.painted;
 		if(trace)fprintf(trace,"# frame replay %zu t=%u w=%d,%d\n",n,h.tick_ms,wx,wy);
