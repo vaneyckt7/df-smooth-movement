@@ -75,8 +75,9 @@ such as the repository root (`.`) or an export of another branch, for example
   each repaint pass zeroes and that every entry is restored) and the sprite proxy test
   (`test_sprite_proxies.cpp`, which steps a creature through the animation manager on the
   stub viewport and checks which sprites get a proxy, what tiles each covers, that fire,
-  the clip and a missing texture block one, and which proxies bob with the walk bob on and
-  the row above each then covers) and the free camera test
+  the clip and a missing texture block one, which proxies bob with the walk bob on and
+  the row above each then covers, and which hauled icons bob with their carrier) and the
+  free camera test
   (`test_free_camera.cpp`, which drives the camera with a stand-in manager and checks the
   render offset a landed scroll, a window jump, a followed movement, a normalization write
   and a middle-mouse drag give) and the view context test (`test_view_context.cpp`, which

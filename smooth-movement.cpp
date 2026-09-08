@@ -719,20 +719,10 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	std::vector<viewport_renderst> viewport_renders=
 		collect_viewport_renders(renderer,viewports);
 	tile_coveragest coverage=collect_viewport_coverage(viewport_renders);
-	// A hauled icon bobs with the creature under it: the main viewport's centre proxy on the
-	// same tile at the same point of the same step. That proxy's coverage already holds the
-	// row the lift reaches into, so the icon adds nothing to it.
-	if(state.bob.enabled&&!carried_items.empty()&&!viewport_renders.empty())
-		for(carried_item_proxyst &item:carried_items)
-			for(const render_proxyst &proxy:viewport_renders.back().proxies)
-				if(proxy.bob&&proxy.layer==viewport_visual_layer::center&&
-					proxy.target_x==item.target_x&&proxy.target_y==item.target_y&&
-					proxy.source_x==item.source_x&&proxy.source_y==item.source_y&&
-					proxy.progress==item.progress)
-					{
-					item.bob=true;
-					break;
-					}
+	// A hauled icon bobs with the creature under it, found among the main viewport's
+	// proxies; the icons are drawn over that viewport, the last one collected.
+	if(!viewport_renders.empty())
+		mark_carried_item_bobs(carried_items,viewport_renders.back().proxies);
 	for(const carried_item_proxyst &proxy:carried_items)
 		coverage.insert(proxy.coverage.begin(),proxy.coverage.end());
 

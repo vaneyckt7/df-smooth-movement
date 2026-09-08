@@ -518,6 +518,54 @@ void test_bob()
 	}
 }
 
+// A carried item bobs only with a bobbing centre proxy on its own tile moving the same
+// way: the same source and progress. Each field a step off on its own, a fragment on the
+// tile, or a centre proxy that does not bob leaves it still.
+void test_carried_item_bob()
+{
+	scenest scene;
+	scene.bob=true;
+	const auto proxies=scene.collect(false);
+	const render_proxyst *centre=find(proxies,L::center);
+	if(centre==nullptr){printf("carried item: no centre proxy\n");++failures;return;}
+	auto item=[&](int32_t target_x,int32_t target_y,float source_x,float source_y,
+		float progress)
+		{
+		return carried_item_proxyst{source_x,source_y,target_x,target_y,progress,
+			centre->texture,false,{}};
+		};
+	std::vector<carried_item_proxyst> items={
+		item(centre->target_x,centre->target_y,centre->source_x,centre->source_y,
+			centre->progress),
+		item(centre->target_x,centre->target_y,centre->source_x,centre->source_y,
+			centre->progress+0.25f),
+		item(centre->target_x,centre->target_y,centre->source_x-1.0f,centre->source_y,
+			centre->progress),
+		item(centre->target_x,centre->target_y,centre->source_x,centre->source_y-1.0f,
+			centre->progress),
+		item(centre->target_x+1,centre->target_y,centre->source_x,centre->source_y,
+			centre->progress),
+		item(centre->target_x,centre->target_y+1,centre->source_x,centre->source_y,
+			centre->progress),
+		item(to_x+1,row,float(from_x+1),float(row),centre->progress)};
+	mark_carried_item_bobs(items,proxies);
+	if(!items[0].bob)printf("carried item on its bobbing carrier: still\n"),++failures;
+	if(items[1].bob)printf("carried item a different progress: bobs\n"),++failures;
+	if(items[2].bob)printf("carried item from a different source: bobs\n"),++failures;
+	if(items[3].bob)printf("carried item from a different source row: bobs\n"),++failures;
+	if(items[4].bob)printf("carried item a column off the carrier: bobs\n"),++failures;
+	if(items[5].bob)printf("carried item a row off the carrier: bobs\n"),++failures;
+	if(items[6].bob)printf("carried item on a fragment's tile: bobs\n"),++failures;
+	// The same carrier with the bob off, or no proxies at all, marks nothing.
+	std::vector<render_proxyst> still=proxies;
+	for(render_proxyst &proxy:still)proxy.bob=false;
+	items[0].bob=false;
+	mark_carried_item_bobs(items,still);
+	if(items[0].bob)printf("carried item on a still carrier: bobs\n"),++failures;
+	mark_carried_item_bobs(items,{});
+	if(items[0].bob)printf("carried item with no proxies: bobs\n"),++failures;
+}
+
 void test_tile_checks()
 {
 	viewportst v;
@@ -548,6 +596,7 @@ int main()
 	test_resting();
 	test_coverage();
 	test_bob();
+	test_carried_item_bob();
 	test_tile_checks();
 	if(failures!=0){printf("sprite proxy tests: %d failures\n",failures);return 1;}
 	printf("sprite proxy tests: OK\n");

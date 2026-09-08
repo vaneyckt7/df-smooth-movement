@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The match that makes a hauled item's icon bob with its carrier moved out of the render
+  hook into `sprite_proxies.h`, beside the rule that decides which sprites bob, and is
+  covered by the sprite proxy test. Nothing the plugin draws changes.
 - The plugin's settings are one value, `plugin_settingsst` in `plugin_settings.h`, that the
   state hands out and takes back whole; a frame recording stores it with every frame and the
   harness restores it before replaying the frame. The recording format is unchanged.
