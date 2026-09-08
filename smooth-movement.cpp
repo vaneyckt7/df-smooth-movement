@@ -63,18 +63,9 @@ namespace {
 
 constexpr const char *plugin_version="0.5.0";
 
-frame_statsst frame_stats;
-
 // Animation and camera state that a freshly enabled plugin starts from; the recorder's first
 // frame resets to it so the replay, which starts from plugin_enable, sees the same start.
 void reset_visual_state();
-
-frame_recorderst frame_recorder;
-
-// What the hook did on the frame in progress, for the recorder. Render thread only, so a
-// `stats reset` from the console cannot skew them.
-uint32_t hook_repaints=0;
-bool hook_painted=false;
 
 // Runs a callback when the scope ends, whichever return path is taken.
 template<typename Callback>
@@ -88,25 +79,50 @@ struct scope_guardst
 };
 
 // Runtime harness for the engine-owned visual state; gameplay data is never read.
-decltype(&SDL_RenderCopyF) render_copy_f=nullptr;
-decltype(&SDL_RenderCopyExF) render_copy_ex_f=nullptr;
-decltype(&SDL_RenderFillRect) render_fill_rect=nullptr;
-decltype(&SDL_RenderSetClipRect) render_set_clip_rect=nullptr;
-decltype(&SDL_GetRenderDrawColor) get_render_draw_color=nullptr;
-decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
+struct sdl_apist
+{
+	decltype(&SDL_RenderCopyF) render_copy_f=nullptr;
+	decltype(&SDL_RenderCopyExF) render_copy_ex_f=nullptr;
+	decltype(&SDL_RenderFillRect) render_fill_rect=nullptr;
+	decltype(&SDL_RenderSetClipRect) render_set_clip_rect=nullptr;
+	decltype(&SDL_GetRenderDrawColor) get_render_draw_color=nullptr;
+	decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
+};
 
-visual_animation_managerst animation_manager;
-std::set<std::pair<int32_t,int32_t>> previous_coverage;
-view_context_trackerst view_context;
-bool flip_enabled=false;
-bool hauled_enabled=false;
+// The state the render hook reads and writes each frame.
+struct render_statest
+{
+	visual_animation_managerst animation_manager;
+	std::set<std::pair<int32_t,int32_t>> previous_coverage;
+	view_context_trackerst view_context;
 
-// --- free camera -------------------------------------------------------------------------------
-// The camera itself lives in free_camera.h; the plugin file hands it what it reads from the
-// game each frame and writes the window position for it.
-free_camerast free_camera;
-bool camera_was_offset=false;                 // edge-detects offset->0 for one cleanup redraw
-int32_t native_follow_id=-1;
+	// The camera itself lives in free_camera.h; the plugin file hands it what it reads from
+	// the game each frame and writes the window position for it.
+	free_camerast camera;
+	bool camera_was_offset=false;             // edge-detects offset->0 for one cleanup redraw
+	int32_t native_follow_id=-1;
+
+	// The camera glide's per-tile blank summary, filled for the glide's frame and cleared
+	// after.
+	blank_summariest<df::graphic_viewportst> blank_summaries;
+
+	// What the hook did on the frame in progress, for the recorder. Render thread only, so
+	// a `stats reset` from the console cannot skew them.
+	uint32_t hook_repaints=0;
+	bool hook_painted=false;
+};
+
+struct plugin_statest
+{
+	sdl_apist sdl;
+	frame_statsst stats;
+	frame_recorderst recorder;
+	bool flip_enabled=false;
+	bool hauled_enabled=false;
+	render_statest render;
+};
+
+plugin_statest state;
 
 double tile_px(const df::renderer_2d_base *renderer)
 {
@@ -176,10 +192,10 @@ void update_visual_context(
 	const df::renderer_2d_base *renderer,
 	const df::graphic_viewportst *vp)
 {
-	const view_context_changest change=view_context.observe(
+	const view_context_changest change=state.render.view_context.observe(
 		vp,view_signature(renderer,vp),window_x?*window_x:0,window_y?*window_y:0);
-	if(change.reset)free_camera.cancel_transients();
-	if(change.panned)previous_coverage.clear();
+	if(change.reset)state.render.camera.cancel_transients();
+	if(change.panned)state.render.previous_coverage.clear();
 }
 
 viewport_visual_animation_inputst animation_input(df::graphic_viewportst *vp)
@@ -189,7 +205,7 @@ viewport_visual_animation_inputst animation_input(df::graphic_viewportst *vp)
 		vp,
 		vp->dim_x,
 		vp->dim_y,
-		view_context.revision(),
+		state.render.view_context.revision(),
 		visual_layers(const_viewport),
 		visual_layers(const_viewport,true),
 		vp->screentexpos_background,
@@ -220,13 +236,10 @@ struct viewport_renderst
 // Every tile repaint the plugin asks the game for goes through here so `stats` can count them.
 void game_repaint(df::renderer_2d_base *renderer,df::graphic_viewportst *vp,int32_t x,int32_t y)
 {
-	frame_stats.repaints.fetch_add(1,std::memory_order_relaxed);
-	++hook_repaints;
+	state.stats.repaints.fetch_add(1,std::memory_order_relaxed);
+	++state.render.hook_repaints;
 	renderer->update_viewport_tile(vp,x,y);
 }
-
-// The camera glide's per-tile blank summary, filled for the glide's frame and cleared after.
-blank_summariest<df::graphic_viewportst> blank_summaries;
 
 // A staged repaint: skipped when the tile, with the stage's layers hidden, has nothing to
 // paint.
@@ -246,7 +259,7 @@ void redraw_viewport_tile(
 {
 	df::graphic_viewportst *vp=viewport.viewport;
 	const int32_t index=x*vp->dim_y+y;
-	if(blank_summaries.known_blank(vp,index))return;
+	if(state.render.blank_summaries.known_blank(vp,index))return;
 	repaint_staged(
 		vp,x,y,selected_mask(viewport.coverage.selected,index),defer_interface,
 		[renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
@@ -263,7 +276,7 @@ void draw_interface_only(
 	int32_t y)
 {
 	if(!interface_pass_readable(vp))return;
-	if(blank_summaries.known_blank(vp,x*vp->dim_y+y))return;
+	if(state.render.blank_summaries.known_blank(vp,x*vp->dim_y+y))return;
 	repaint_interface_only(
 		vp,x,y,[renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
 			{
@@ -297,7 +310,7 @@ void redraw_above(
 	const std::unordered_map<int32_t,uint16_t> &selected)
 {
 	const int32_t index=x*vp->dim_y+y;
-	if(blank_summaries.known_blank(vp,index))return;
+	if(state.render.blank_summaries.known_blank(vp,index))return;
 	repaint_above(
 		vp,x,y,group,selected_mask(selected,index),
 		[renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
@@ -333,14 +346,14 @@ void render_copy_maybe_mirrored(
 	const SDL_FRect &destination,
 	bool mirrored)
 {
-	if(mirrored&&render_copy_ex_f!=nullptr)
+	if(mirrored&&state.sdl.render_copy_ex_f!=nullptr)
 		{
-		render_copy_ex_f(
+		state.sdl.render_copy_ex_f(
 			renderer,texture,nullptr,&destination,
 			0.0,nullptr,SDL_FLIP_HORIZONTAL);
 		return;
 		}
-	render_copy_f(renderer,texture,nullptr,&destination);
+	state.sdl.render_copy_f(renderer,texture,nullptr,&destination);
 }
 
 void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
@@ -381,7 +394,7 @@ void draw_carried_item_proxy(
 		source_y+(target_y-source_y)*proxy.progress,
 		tile_size);
 	const SDL_FRect destination={icon.x,icon.y,icon.width,icon.height};
-	render_copy_f(
+	state.sdl.render_copy_f(
 		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
 		proxy.texture,nullptr,&destination);
 }
@@ -450,7 +463,7 @@ frame_recorderst::viewport_listst recorded_viewports()
 // Hands the recorder what the hook reads at the start of a frame.
 void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 {
-	frame_recorder.capture([&](bool first)
+	state.recorder.capture([&](bool first)
 		{
 		if(first)
 			{
@@ -459,10 +472,10 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 			}
 		frame_recorderst::frame_inputst input;
 		frame_record::frame_headerst &header=input.header;
-		header.flip=flip_enabled;
-		header.hauled=hauled_enabled;
-		header.camera=free_camera.is_enabled();
-		header.linear=animation_manager.is_linear();
+		header.flip=state.flip_enabled;
+		header.hauled=state.hauled_enabled;
+		header.camera=state.render.camera.is_enabled();
+		header.linear=state.render.animation_manager.is_linear();
 		header.tick_ms=now_ms;
 		header.window_x=window_x?*window_x:0;
 		header.window_y=window_y?*window_y:0;
@@ -477,8 +490,8 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 		header.origin_y=renderer->origin_y;
 		header.dimx=gps?gps->dimx:0;
 		header.dimy=gps?gps->dimy:0;
-		header.rest_x=free_camera.rest_offset_x();
-		header.rest_y=free_camera.rest_offset_y();
+		header.rest_x=state.render.camera.rest_offset_x();
+		header.rest_y=state.render.camera.rest_offset_y();
 		input.viewports=recorded_viewports();
 		return input;
 		});
@@ -487,7 +500,7 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 // Hands the recorder the units in view, where the hook looks them up.
 void record_frame_units(df::renderer_2d_base *renderer)
 {
-	frame_recorder.capture_units([&]
+	state.recorder.capture_units([&]
 		{
 		std::vector<frame_record::unit_recordst> records;
 		const df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
@@ -533,7 +546,7 @@ std::vector<carried_item_proxyst> collect_carried_item_proxies(
 		const int32_t texpos=item_texpos(hauled_item(unit));
 		SDL_Texture *texture=cached_viewport_texture(renderer,vp,index,texpos);
 		if(texture==nullptr)continue;
-		const auto movement=animation_manager.get_movement(
+		const auto movement=state.render.animation_manager.get_movement(
 			vp,viewport_visual_layer::center,x,y);
 		const float source_x=movement.active?movement.source_x:float(x);
 		const float source_y=movement.active?movement.source_y:float(y);
@@ -576,7 +589,7 @@ std::vector<viewport_renderst> collect_viewport_renders(
 			{
 			vp,
 			collect_proxies(
-				vp,animation_manager,flip_enabled,
+				vp,state.render.animation_manager,state.flip_enabled,
 				[renderer](int32_t texpos){return cached_texture(renderer,texpos);}),
 			{}
 			};
@@ -647,82 +660,83 @@ bool has_mirrored_viewport_facing(
 	const std::vector<df::graphic_viewportst *> &viewports)
 {
 	for(const df::graphic_viewportst *vp:viewports)
-		if(animation_manager.has_mirrored_facing(vp))return true;
+		if(state.render.animation_manager.has_mirrored_facing(vp))return true;
 	return false;
 }
 
 void render_interpolated_world(df::renderer_2d_base *renderer)
 {
-	frame_stats.frames.fetch_add(1,std::memory_order_relaxed);
+	state.stats.frames.fetch_add(1,std::memory_order_relaxed);
 	// Read once: if the console flipped the flag on mid-frame, the guard would subtract a
 	// start time of zero.
-	const bool timing_enabled=frame_stats.enabled.load(std::memory_order_relaxed);
+	const bool timing_enabled=state.stats.enabled.load(std::memory_order_relaxed);
 	// The frame's clock, read once so that a recording carries the value the frame used.
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
 	record_frame_start(renderer,now_ms);
-	hook_repaints=0;
-	hook_painted=false;
+	state.render.hook_repaints=0;
+	state.render.hook_painted=false;
 	const uint64_t frame_start_us=timing_enabled?frame_statsst::now_us():0;
 	uint64_t sync_end_us=frame_start_us;
 	// Runs on every exit, including the early return for frames with nothing to draw.
 	const scope_guardst timing([&]
 		{
-		frame_recorder.finish(hook_repaints,hook_painted,recorded_viewports);
+		state.recorder.finish(
+			state.render.hook_repaints,state.render.hook_painted,recorded_viewports);
 		if(!timing_enabled)return;
 		const uint64_t end_us=frame_statsst::now_us();
-		frame_stats.timed.fetch_add(1,std::memory_order_relaxed);
-		frame_stats.add_sync(sync_end_us-frame_start_us);
-		frame_stats.add_render(end_us-sync_end_us);
+		state.stats.timed.fetch_add(1,std::memory_order_relaxed);
+		state.stats.add_sync(sync_end_us-frame_start_us);
+		state.stats.add_render(end_us-sync_end_us);
 		});
 	df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
 	const std::vector<df::graphic_viewportst *> viewports=active_viewports();
 
 	if(vp!=nullptr)update_visual_context(renderer,vp);
 	const int32_t follow_id=plotinfo?plotinfo->follow_unit:-1;
-	if(native_follow_changed(native_follow_id,follow_id))
+	if(native_follow_changed(state.render.native_follow_id,follow_id))
 		{
-		native_follow_id=follow_id;
-		view_context.bump();
-		previous_coverage.clear();
-		free_camera.restart();
+		state.render.native_follow_id=follow_id;
+		state.render.view_context.bump();
+		state.render.previous_coverage.clear();
+		state.render.camera.restart();
 		}
-	animation_manager.begin_frame(now_ms);
+	state.render.animation_manager.begin_frame(now_ms);
 	for(df::graphic_viewportst *viewport:viewports)
-		animation_manager.synchronize_viewport(animation_input(viewport));
-	animation_manager.end_frame();
+		state.render.animation_manager.synchronize_viewport(animation_input(viewport));
+	state.render.animation_manager.end_frame();
 	if(timing_enabled)sync_end_us=frame_statsst::now_us();
 
 	if(!viewport_readable(vp)||renderer->sdl_renderer==nullptr)
 		return;
 	const bool paused=pause_state&&*pause_state;
-	if(paused)free_camera.restart();
+	if(paused)state.render.camera.restart();
 	const bool native_follow_active=follow_id>=0;
 	const double cam_tile=tile_px(renderer);
 	if(!paused)
-		free_camera.update(
-			camera_frame(vp,cam_tile,animation_manager.get_frame_delta_ms(),
+		state.render.camera.update(
+			camera_frame(vp,cam_tile,state.render.animation_manager.get_frame_delta_ms(),
 				native_follow_active),
-			animation_manager,scroll_window);
-	const int32_t glide_x=free_camera.glide_x(cam_tile);
-	const int32_t glide_y=free_camera.glide_y(cam_tile);
+			state.render.animation_manager,scroll_window);
+	const int32_t glide_x=state.render.camera.glide_x(cam_tile);
+	const int32_t glide_y=state.render.camera.glide_y(cam_tile);
 	const bool glide=glide_x!=0||glide_y!=0;
-	if(!glide&&camera_was_offset)
+	if(!glide&&state.render.camera_was_offset)
 		{
 		// The camera just re-joined the grid: one engine redraw replaces the last shifted frame.
-		camera_was_offset=false;
+		state.render.camera_was_offset=false;
 		if(gps!=nullptr)++gps->force_full_display_count;
 		}
-	if(glide)camera_was_offset=true;
+	if(glide)state.render.camera_was_offset=true;
 	record_frame_units(renderer);
 	std::vector<carried_item_proxyst> carried_items=
-		hauled_enabled?collect_carried_item_proxies(renderer,vp):
+		state.hauled_enabled?collect_carried_item_proxies(renderer,vp):
 		std::vector<carried_item_proxyst>{};
-	if(!glide&&!animation_manager.requires_full_redraw()&&
-		(!flip_enabled||!has_mirrored_viewport_facing(viewports))&&
-		carried_items.empty()&&previous_coverage.empty())
+	if(!glide&&!state.render.animation_manager.requires_full_redraw()&&
+		(!state.flip_enabled||!has_mirrored_viewport_facing(viewports))&&
+		carried_items.empty()&&state.render.previous_coverage.empty())
 		return;
-	frame_stats.painted.fetch_add(1,std::memory_order_relaxed);
-	hook_painted=true;
+	state.stats.painted.fetch_add(1,std::memory_order_relaxed);
+	state.render.hook_painted=true;
 
 	std::vector<viewport_renderst> viewport_renders=
 		collect_viewport_renders(renderer,viewports);
@@ -750,18 +764,18 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 			tile_pixel(vp->clipy[1]+1,renderer->origin_y,zoom)-
 				tile_pixel(vp->clipy[0],renderer->origin_y,zoom)
 			};
-		render_set_clip_rect(sdl_renderer,&map_rect);
+		state.sdl.render_set_clip_rect(sdl_renderer,&map_rect);
 		Uint8 old_r=0,old_g=0,old_b=0,old_a=255;
-		get_render_draw_color(sdl_renderer,&old_r,&old_g,&old_b,&old_a);
-		set_render_draw_color(sdl_renderer,0,0,0,255);
-		render_fill_rect(sdl_renderer,&map_rect);
-		set_render_draw_color(sdl_renderer,old_r,old_g,old_b,old_a);
+		state.sdl.get_render_draw_color(sdl_renderer,&old_r,&old_g,&old_b,&old_a);
+		state.sdl.set_render_draw_color(sdl_renderer,0,0,0,255);
+		state.sdl.render_fill_rect(sdl_renderer,&map_rect);
+		state.sdl.set_render_draw_color(sdl_renderer,old_r,old_g,old_b,old_a);
 
 		const int32_t saved_origin_x=renderer->origin_x;
 		const int32_t saved_origin_y=renderer->origin_y;
 		renderer->origin_x+=glide_x;
 		renderer->origin_y+=glide_y;
-		blank_summaries.summarize(
+		state.render.blank_summaries.summarize(
 			viewport_renders,[](const viewport_renderst &v){return v.viewport;});
 		for(int32_t x=vp->clipx[0];x<=vp->clipx[1];++x)
 			{
@@ -772,19 +786,20 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 			renderer,viewport_renders,coverage,carried_items);
 		renderer->origin_x=saved_origin_x;
 		renderer->origin_y=saved_origin_y;
-		blank_summaries.clear();
-		render_set_clip_rect(sdl_renderer,nullptr);
+		state.render.blank_summaries.clear();
+		state.sdl.render_set_clip_rect(sdl_renderer,nullptr);
 
 		// Everything was repainted; per-tile coverage bookkeeping restarts after the glide.
-		previous_coverage.clear();
+		state.render.previous_coverage.clear();
 		return;
 		}
 
 	tile_coveragest redraw_coverage=coverage;
-	redraw_coverage.insert(previous_coverage.begin(),previous_coverage.end());
+	redraw_coverage.insert(
+		state.render.previous_coverage.begin(),state.render.previous_coverage.end());
 	Uint8 old_r=0,old_g=0,old_b=0,old_a=255;
-	get_render_draw_color(sdl_renderer,&old_r,&old_g,&old_b,&old_a);
-	set_render_draw_color(sdl_renderer,0,0,0,255);
+	state.sdl.get_render_draw_color(sdl_renderer,&old_r,&old_g,&old_b,&old_a);
+	state.sdl.set_render_draw_color(sdl_renderer,0,0,0,255);
 	for(const auto &[x,y]:redraw_coverage)
 		{
 		if(!inside_clip(vp,x,y))continue;
@@ -795,9 +810,9 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 			tile_size,
 			tile_size
 			};
-		render_fill_rect(sdl_renderer,&tile_rect);
+		state.sdl.render_fill_rect(sdl_renderer,&tile_rect);
 		}
-	set_render_draw_color(sdl_renderer,old_r,old_g,old_b,old_a);
+	state.sdl.set_render_draw_color(sdl_renderer,old_r,old_g,old_b,old_a);
 
 	for(const auto &[x,y]:redraw_coverage)
 		{
@@ -807,7 +822,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	draw_viewport_interpolation_stages(
 		renderer,viewport_renders,coverage,carried_items);
 
-	previous_coverage=std::move(coverage);
+	state.render.previous_coverage=std::move(coverage);
 }
 
 struct renderer_hook : df::renderer_2d_base
@@ -827,12 +842,12 @@ void renderer_hook::interpose_fn_update_all()
 
 void clear_sdl_bindings()
 {
-	render_copy_f=nullptr;
-	render_copy_ex_f=nullptr;
-	render_fill_rect=nullptr;
-	render_set_clip_rect=nullptr;
-	get_render_draw_color=nullptr;
-	set_render_draw_color=nullptr;
+	state.sdl.render_copy_f=nullptr;
+	state.sdl.render_copy_ex_f=nullptr;
+	state.sdl.render_fill_rect=nullptr;
+	state.sdl.render_set_clip_rect=nullptr;
+	state.sdl.get_render_draw_color=nullptr;
+	state.sdl.set_render_draw_color=nullptr;
 }
 
 bool load_sdl(color_ostream &out)
@@ -846,38 +861,38 @@ bool load_sdl(color_ostream &out)
 			clear_sdl_bindings(); \
 			return false; \
 		}
-	bind(SDL_RenderCopyF,render_copy_f);
-	bind(SDL_RenderCopyExF,render_copy_ex_f);
-	bind(SDL_RenderFillRect,render_fill_rect);
-	bind(SDL_RenderSetClipRect,render_set_clip_rect);
-	bind(SDL_GetRenderDrawColor,get_render_draw_color);
-	bind(SDL_SetRenderDrawColor,set_render_draw_color);
+	bind(SDL_RenderCopyF,state.sdl.render_copy_f);
+	bind(SDL_RenderCopyExF,state.sdl.render_copy_ex_f);
+	bind(SDL_RenderFillRect,state.sdl.render_fill_rect);
+	bind(SDL_RenderSetClipRect,state.sdl.render_set_clip_rect);
+	bind(SDL_GetRenderDrawColor,state.sdl.get_render_draw_color);
+	bind(SDL_SetRenderDrawColor,state.sdl.set_render_draw_color);
 	#undef bind
 	return true;
 }
 
 void reset_visual_state()
 {
-	const bool linear=animation_manager.is_linear();
-	animation_manager=visual_animation_managerst();
-	animation_manager.set_linear(linear);
-	previous_coverage.clear();
-	view_context=view_context_trackerst();
-	free_camera.restart();
-	camera_was_offset=false;
-	native_follow_id=-1;
+	const bool linear=state.render.animation_manager.is_linear();
+	state.render.animation_manager=visual_animation_managerst();
+	state.render.animation_manager.set_linear(linear);
+	state.render.previous_coverage.clear();
+	state.render.view_context=view_context_trackerst();
+	state.render.camera.restart();
+	state.render.camera_was_offset=false;
+	state.render.native_follow_id=-1;
 }
 
 void reset_state()
 {
 	reset_visual_state();
-	free_camera.set_rest(0.0,0.0);
-	free_camera.set_enabled(false);
-	flip_enabled=false;
-	hauled_enabled=false;
-	frame_stats.enabled=false;
-	frame_stats.clear();
-	frame_recorder.stop();
+	state.render.camera.set_rest(0.0,0.0);
+	state.render.camera.set_enabled(false);
+	state.flip_enabled=false;
+	state.hauled_enabled=false;
+	state.stats.enabled=false;
+	state.stats.clear();
+	state.recorder.stop();
 }
 
 command_result status_command(
@@ -891,37 +906,37 @@ command_result status_command(
 			plugin_version,
 			is_enabled?"enabled":"disabled");
 		out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
-			free_camera.is_enabled()?"on":"off",
-			-free_camera.rest_offset_x(),-free_camera.rest_offset_y());
+			state.render.camera.is_enabled()?"on":"off",
+			-state.render.camera.rest_offset_x(),-state.render.camera.rest_offset_y());
 		out.print("sprite flipping: {}\n",
-			flip_enabled?"on":"off");
+			state.flip_enabled?"on":"off");
 		out.print("linear movement: {}\n",
-			animation_manager.is_linear()?"on":"off");
+			state.render.animation_manager.is_linear()?"on":"off");
 		out.print("hauled item icons: {}\n",
-			hauled_enabled?"on":"off");
+			state.hauled_enabled?"on":"off");
 		out.print("frame stats: {}\n",
-			frame_stats.enabled?"on":"off");
+			state.stats.enabled?"on":"off");
 		return CR_OK;
 		}
 	if(parameters[0]=="stats")
 		{
 		if(parameters.size()==1)
 			{
-			frame_stats.print(out);
+			state.stats.print(out);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&
 			(parameters[1]=="on"||parameters[1]=="off"))
 			{
 			const bool on=parameters[1]=="on";
-			if(on)frame_stats.clear();
-			frame_stats.enabled=on;
+			if(on)state.stats.clear();
+			state.stats.enabled=on;
 			out.print("smooth-movement: frame stats {}\n",parameters[1]);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="reset")
 			{
-			frame_stats.clear();
+			state.stats.clear();
 			out.print("smooth-movement: frame stats reset\n");
 			return CR_OK;
 			}
@@ -933,13 +948,13 @@ command_result status_command(
 		if(parameters[1]=="status")
 			{
 			if(parameters.size()!=2)return CR_WRONG_USAGE;
-			frame_recorder.status(out);
+			state.recorder.status(out);
 			return CR_OK;
 			}
 		if(parameters[1]=="stop")
 			{
 			if(parameters.size()!=2)return CR_WRONG_USAGE;
-			frame_recorder.stop();
+			state.recorder.stop();
 			out.print("smooth-movement: recording stopped\n");
 			return CR_OK;
 			}
@@ -949,7 +964,7 @@ command_result status_command(
 			out.printerr("smooth-movement: enable the plugin before recording\n");
 			return CR_FAILURE;
 			}
-		if(frame_recorder.running())
+		if(state.recorder.running())
 			{
 			out.printerr("smooth-movement: a recording is running; `record stop` ends it\n");
 			return CR_FAILURE;
@@ -964,7 +979,7 @@ command_result status_command(
 			frames=uint32_t(std::stoul(count));
 			if(frames==0)return CR_WRONG_USAGE;
 			}
-		if(!frame_recorder.start(parameters[1],frames))
+		if(!state.recorder.start(parameters[1],frames))
 			{
 			out.printerr("smooth-movement: cannot write {}\n",parameters[1]);
 			return CR_FAILURE;
@@ -977,9 +992,9 @@ command_result status_command(
 		if(parameters.size()!=2||
 			(parameters[1]!="on"&&parameters[1]!="off"))return CR_WRONG_USAGE;
 		const bool enabled=parameters[1]=="on";
-		flip_enabled=enabled;
-		animation_manager.set_linear(enabled);
-		hauled_enabled=enabled;
+		state.flip_enabled=enabled;
+		state.render.animation_manager.set_linear(enabled);
+		state.hauled_enabled=enabled;
 		if(gps!=nullptr)++gps->force_full_display_count;
 		out.print("smooth-movement: flip, linear and hauled {}\n",parameters[1]);
 		return CR_OK;
@@ -989,23 +1004,23 @@ command_result status_command(
 		if(parameters.size()==1)
 			{
 			out.print("free camera: {}, offset {:.3f} {:.3f}\n",
-				free_camera.is_enabled()?"on":"off",
-			-free_camera.rest_offset_x(),-free_camera.rest_offset_y());
+				state.render.camera.is_enabled()?"on":"off",
+			-state.render.camera.rest_offset_x(),-state.render.camera.rest_offset_y());
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="on")
 			{
-			free_camera.set_enabled(true);
+			state.render.camera.set_enabled(true);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="off")
 			{
-			free_camera.set_enabled(false);
+			state.render.camera.set_enabled(false);
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="reset")
 			{
-			free_camera.set_rest(0.0,0.0);
+			state.render.camera.set_rest(0.0,0.0);
 			return CR_OK;
 			}
 		if(parameters.size()==3)
@@ -1020,9 +1035,9 @@ command_result status_command(
 					return CR_FAILURE;
 					}
 				// User-facing: positive = view sits east/south of the grid position.
-				free_camera.set_enabled(true);
-				free_camera.set_rest(-fx,-fy);
-				free_camera.normalize_rest(scroll_window);
+				state.render.camera.set_enabled(true);
+				state.render.camera.set_rest(-fx,-fy);
+				state.render.camera.normalize_rest(scroll_window);
 				return CR_OK;
 				}
 			catch(...)
@@ -1037,7 +1052,7 @@ command_result status_command(
 		if(parameters.size()==1)
 			{
 			out.print("sprite flipping: {}\n",
-				flip_enabled?"on":"off");
+				state.flip_enabled?"on":"off");
 			return CR_OK;
 			}
 		// A toggle changes the screen without changing anything DF knows, so DF will not repaint.
@@ -1046,14 +1061,14 @@ command_result status_command(
 		// Same flush plugin_enable(false) uses.
 		if(parameters.size()==2&&parameters[1]=="on")
 			{
-			flip_enabled=true;
+			state.flip_enabled=true;
 			if(gps!=nullptr)++gps->force_full_display_count;
 			out.print("smooth-movement: sprite flipping enabled\n");
 			return CR_OK;
 			}
 		if(parameters.size()==2&&parameters[1]=="off")
 			{
-			flip_enabled=false;
+			state.flip_enabled=false;
 			if(gps!=nullptr)++gps->force_full_display_count;
 			out.print("smooth-movement: sprite flipping disabled\n");
 			return CR_OK;
@@ -1065,13 +1080,13 @@ command_result status_command(
 		if(parameters.size()==1)
 			{
 			out.print("linear movement: {}\n",
-				animation_manager.is_linear()?"on":"off");
+				state.render.animation_manager.is_linear()?"on":"off");
 			return CR_OK;
 			}
 		if(parameters.size()==2&&
 			(parameters[1]=="on"||parameters[1]=="off"))
 			{
-			animation_manager.set_linear(parameters[1]=="on");
+			state.render.animation_manager.set_linear(parameters[1]=="on");
 			out.print("smooth-movement: linear movement {}\n",parameters[1]);
 			return CR_OK;
 			}
@@ -1081,13 +1096,13 @@ command_result status_command(
 		{
 		if(parameters.size()==1)
 			{
-			out.print("hauled item icons: {}\n",hauled_enabled?"on":"off");
+			out.print("hauled item icons: {}\n",state.hauled_enabled?"on":"off");
 			return CR_OK;
 			}
 		if(parameters.size()==2&&
 			(parameters[1]=="on"||parameters[1]=="off"))
 			{
-			hauled_enabled=parameters[1]=="on";
+			state.hauled_enabled=parameters[1]=="on";
 			if(gps!=nullptr)++gps->force_full_display_count;
 			out.print("smooth-movement: hauled item icons {}\n",parameters[1]);
 			return CR_OK;
