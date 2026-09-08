@@ -476,6 +476,7 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 		header.hauled=state.hauled_enabled;
 		header.camera=state.render.camera.is_enabled();
 		header.linear=state.render.animation_manager.is_linear();
+		header.step_ms=state.render.animation_manager.step_duration_ms();
 		header.tick_ms=now_ms;
 		header.window_x=window_x?*window_x:0;
 		header.window_y=window_y?*window_y:0;

@@ -6,6 +6,7 @@
 //   "SMRC" u32 version
 //   per frame:
 //     'F' u8 flip, u8 hauled, u8 camera, u8 linear (the plugin's settings for this frame),
+//         u32 step_ms (the one-tile step time; absent in version 2, where it was 150),
 //         u32 tick_ms, i32 window x y z, u8 paused, i32 follow_unit, i32 mouse x y, u8 mbut,
 //         i32 zoom origin_x origin_y dimx dimy, f64 free-camera rest offset x y (tiles)
 //     u8 viewports; per viewport: u8 slot (0..7 lower, 8 main), i32 dim_x dim_y clipx0 clipx1
@@ -32,7 +33,9 @@
 
 namespace frame_record {
 
-constexpr uint32_t version=2;
+constexpr uint32_t version=3;
+// The oldest version the reader accepts; a version 2 frame header has no step field.
+constexpr uint32_t oldest_version=2;
 constexpr int main_slot=8;
 constexpr int slot_count=9;
 
@@ -123,6 +126,7 @@ struct readerst
 	size_t size=0;
 	size_t pos=0;
 	std::string error;
+	uint32_t version=0; // the file's version, set by read_file_header
 
 	bool ok() const{return error.empty();}
 	bool at_end() const{return pos>=size;}
@@ -193,6 +197,7 @@ struct unit_recordst
 struct frame_headerst
 {
 	bool flip=false,hauled=false,camera=false,linear=false;
+	uint32_t step_ms=150; // a version 2 recording reads back as 150, what it was made with
 	uint32_t tick_ms=0;
 	int32_t window_x=0,window_y=0,window_z=0;
 	bool paused=false;
@@ -228,6 +233,7 @@ inline void write_frame_header(writerst &w,const frame_headerst &f)
 {
 	w.u8('F');
 	w.u8(f.flip);w.u8(f.hauled);w.u8(f.camera);w.u8(f.linear);
+	w.u32(f.step_ms);
 	w.u32(f.tick_ms);
 	w.i32(f.window_x);w.i32(f.window_y);w.i32(f.window_z);
 	w.u8(f.paused);
@@ -265,7 +271,9 @@ inline bool read_file_header(readerst &r)
 	if(!r.need(8))return false;
 	if(std::memcmp(r.data,"SMRC",4)!=0){r.fail("not a frame recording");return false;}
 	r.pos=4;
-	if(r.u32()!=version){r.fail("unsupported recording version");return false;}
+	r.version=r.u32();
+	if(r.version<oldest_version||r.version>version)
+		{r.fail("unsupported recording version");return false;}
 	return r.ok();
 }
 
@@ -273,6 +281,8 @@ inline bool read_frame_header(readerst &r,frame_headerst &f)
 {
 	if(r.u8()!='F'){r.fail("expected frame");return false;}
 	f.flip=r.u8()!=0;f.hauled=r.u8()!=0;f.camera=r.u8()!=0;f.linear=r.u8()!=0;
+	f.step_ms=r.version>=3?r.u32():150;
+	if(f.step_ms==0)r.fail("bad step time");
 	f.tick_ms=r.u32();
 	f.window_x=r.i32();f.window_y=r.i32();f.window_z=r.i32();
 	f.paused=r.u8()!=0;
