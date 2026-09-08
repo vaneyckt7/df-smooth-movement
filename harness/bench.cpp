@@ -302,11 +302,11 @@ int run_replay(const char *record_path,const char *trace_path)
 	while(decode_frame(reader,slots,graphics,frame,nullptr))
 		{
 		const auto &h=frame.header;
-		flip_enabled=h.flip;
-		hauled_enabled=h.hauled;
-		free_camera.set_enabled(h.camera);
-		free_camera.set_rest(h.rest_x,h.rest_y);
-		animation_manager.set_linear(h.linear);
+		state.flip_enabled=h.flip;
+		state.hauled_enabled=h.hauled;
+		state.render.camera.set_enabled(h.camera);
+		state.render.camera.set_rest(h.rest_x,h.rest_y);
+		state.render.animation_manager.set_linear(h.linear);
 		wx=h.window_x;wy=h.window_y;wz=h.window_z;paused=h.paused;
 		plot.follow_unit=h.follow_unit;
 		graphics.precise_mouse_x=h.mouse_x;graphics.precise_mouse_y=h.mouse_y;
@@ -334,7 +334,7 @@ int run_replay(const char *record_path,const char *trace_path)
 			DFHack::Units::harness_units.push_back(&unit);
 			}
 
-		const uint64_t r0=repaint_calls,p0=frame_stats.painted;
+		const uint64_t r0=repaint_calls,p0=state.stats.painted;
 		if(trace)fprintf(trace,"# frame replay %zu t=%u w=%d,%d\n",n,h.tick_ms,wx,wy);
 		const auto t0=clock::now();
 		render_interpolated_world(&renderer);
@@ -342,7 +342,7 @@ int run_replay(const char *record_path,const char *trace_path)
 		const double frame_us=std::chrono::duration<double,std::micro>(t1-t0).count();
 		us+=frame_us;us_max=std::max(us_max,frame_us);
 		const uint64_t repaints=repaint_calls-r0;
-		const bool painted=frame_stats.painted!=p0;
+		const bool painted=state.stats.painted!=p0;
 		if(trace)fprintf(trace,"# end frame %zu painted %d repaints %llu\n",n,painted,(unsigned long long)repaints);
 		recorded_painted+=frame.result.painted;recorded_repaints+=frame.result.repaints;
 		replayed_painted+=painted;
