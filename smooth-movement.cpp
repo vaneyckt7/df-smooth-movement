@@ -29,6 +29,7 @@
 #include "sprite_proxies.h"
 #include "tile_coverage.h"
 #include "tile_repaint.h"
+#include "view_context.h"
 #include "visual_animation.h"
 
 #include <SDL_render.h>
@@ -96,16 +97,7 @@ decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
 
 visual_animation_managerst animation_manager;
 std::set<std::pair<int32_t,int32_t>> previous_coverage;
-uint64_t visual_context_revision=0;
-const void *previous_viewport=nullptr;
-std::array<int32_t,12> previous_view_signature{};
-bool has_view_signature=false;
-// Map scroll (window_x/window_y) is tracked separately from the reset signature: a pure pan is
-// followed (movements are translated) instead of triggering a full reset, so it must NOT bump the
-// context revision. It only invalidates the viewport-space blackout coverage from the prior frame.
-int32_t previous_pan_x=0;
-int32_t previous_pan_y=0;
-bool has_pan_context=false;
+view_context_trackerst view_context;
 bool flip_enabled=false;
 bool hauled_enabled=false;
 
@@ -160,14 +152,11 @@ camera_framest camera_frame(
 		};
 }
 
-void update_visual_context(
+view_signaturest view_signature(
 	const df::renderer_2d_base *renderer,
 	const df::graphic_viewportst *vp)
 {
-	// window_x/window_y are deliberately excluded: a horizontal/vertical scroll is followed, not
-	// reset. window_z (z-level) stays, since a z change is not followable.
-	const std::array<int32_t,12> signature=
-		{
+	return {
 		window_z?*window_z:0,
 		vp->dim_x,
 		vp->dim_y,
@@ -181,27 +170,16 @@ void update_visual_context(
 		gps->dimx,
 		gps->dimy
 		};
-	const bool changed=!has_view_signature||previous_viewport!=vp||
-		previous_view_signature!=signature;
-	if(changed)
-		{
-		++visual_context_revision;
-		previous_coverage.clear();
-		free_camera.cancel_transients();
-		}
-	previous_viewport=vp;
-	previous_view_signature=signature;
-	has_view_signature=true;
+}
 
-	// On a pure pan the reset signature is unchanged, but last frame's blackout coverage is in the
-	// old viewport frame, so discard it (the engine repaints the whole scrolled viewport anyway).
-	const int32_t pan_x=window_x?*window_x:0;
-	const int32_t pan_y=window_y?*window_y:0;
-	if(!has_pan_context||previous_pan_x!=pan_x||previous_pan_y!=pan_y)
-		previous_coverage.clear();
-	previous_pan_x=pan_x;
-	previous_pan_y=pan_y;
-	has_pan_context=true;
+void update_visual_context(
+	const df::renderer_2d_base *renderer,
+	const df::graphic_viewportst *vp)
+{
+	const view_context_changest change=view_context.observe(
+		vp,view_signature(renderer,vp),window_x?*window_x:0,window_y?*window_y:0);
+	if(change.reset)free_camera.cancel_transients();
+	if(change.panned)previous_coverage.clear();
 }
 
 viewport_visual_animation_inputst animation_input(df::graphic_viewportst *vp)
@@ -211,7 +189,7 @@ viewport_visual_animation_inputst animation_input(df::graphic_viewportst *vp)
 		vp,
 		vp->dim_x,
 		vp->dim_y,
-		visual_context_revision,
+		view_context.revision(),
 		visual_layers(const_viewport),
 		visual_layers(const_viewport,true),
 		vp->screentexpos_background,
@@ -704,7 +682,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	if(native_follow_changed(native_follow_id,follow_id))
 		{
 		native_follow_id=follow_id;
-		++visual_context_revision;
+		view_context.bump();
 		previous_coverage.clear();
 		free_camera.restart();
 		}
@@ -884,13 +862,7 @@ void reset_visual_state()
 	animation_manager=visual_animation_managerst();
 	animation_manager.set_linear(linear);
 	previous_coverage.clear();
-	visual_context_revision=0;
-	previous_viewport=nullptr;
-	previous_view_signature={};
-	has_view_signature=false;
-	previous_pan_x=0;
-	previous_pan_y=0;
-	has_pan_context=false;
+	view_context=view_context_trackerst();
 	free_camera.restart();
 	camera_was_offset=false;
 	native_follow_id=-1;
