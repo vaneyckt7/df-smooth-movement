@@ -307,6 +307,7 @@ int run_replay(const char *record_path,const char *trace_path)
 		state.render.camera.set_enabled(h.camera);
 		state.render.camera.set_rest(h.rest_x,h.rest_y);
 		state.render.animation_manager.set_linear(h.linear);
+		state.render.animation_manager.set_step_duration_ms(h.step_ms);
 		wx=h.window_x;wy=h.window_y;wz=h.window_z;paused=h.paused;
 		plot.follow_unit=h.follow_unit;
 		graphics.precise_mouse_x=h.mouse_x;graphics.precise_mouse_y=h.mouse_y;

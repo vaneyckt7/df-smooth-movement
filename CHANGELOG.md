@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Frame recordings carry the one-tile step time (format version 3), so a recording made at
+  a `timestep` other than the default replays at that step. The harness reads version 2
+  recordings as well, at the 150 ms they were made with.
 - Add `smooth-movement timestep <ms>`: how long a one-tile glide takes, 20 to 2000 ms,
   150 by default as before. A movement keeps the time it started with, so a change applies
   to the movements that start after it. With `linear` on, the adaptive duration's floor is

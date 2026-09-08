@@ -80,7 +80,8 @@ such as the repository root (`.`) or an export of another branch, for example
   and a middle-mouse drag give) and the view context test (`test_view_context.cpp`, which
   checks which changes of the main viewport's signature reset the animation context and
   that a map scroll only pans), then replays every recording
-  in `recordings/` and fails when any frame's digest differs from `expected/<name>.digest`.
+  in `recordings/` and fails when any frame's digest differs from `expected/<name>.digest`
+  or `recinfo.py` reads a different number of frames than the replay.
   It prints the replay's repaint total alongside the game's from the self-check, which
   match only for the plugin version that made the recording.
 - `compile.sh <plugin dir>`: builds the plugin in DFHack's docker build image against the real

@@ -4,13 +4,15 @@ Usage: recinfo.py <recording> [first frame] [last frame]
 
     $ harness/recinfo.py harness/recordings/fortress-600.rec 0 9
     version 2
-        0 t=706920620 flip=1 hauled=0 camera=0 linear=0 w=76,83,158 P follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
-        2 t=706921277 flip=1 hauled=0 camera=0 linear=0 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
-        9 t=706921460 flip=1 hauled=0 camera=0 linear=0 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 painted repaints=38 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
+        0 t=706920620 flip=1 hauled=0 camera=0 linear=0 step=150 w=76,83,158 P follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
+        2 t=706921277 flip=1 hauled=0 camera=0 linear=0 step=150 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
+        9 t=706921460 flip=1 hauled=0 camera=0 linear=0 step=150 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 painted repaints=38 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
     frames 600
 
-Per line: frame number; t, the frame clock in ms; the plugin's four settings; w, the window
-position x,y,z; P when the game was paused, - otherwise; follow, the followed unit id or -1;
+Per line: frame number; t, the frame clock in ms; the plugin's four settings; step, the
+one-tile step time in ms (a version 2 recording has no field and was made at 150); w, the
+window position x,y,z; P when the game was paused, - otherwise; follow, the followed unit id
+or -1;
 mouse, the mouse position with M when the middle button was down; zoom; o, the drawing origin
 in tiles; grid, the screen size in tiles; rest, the free camera's offset in tiles; units, how
 many units were in view; painted or skipped, whether the hook drew this frame; repaints, the
@@ -89,13 +91,14 @@ def main():
     assert data[:4] == b'SMRC', 'not a recording'
     r.p = 4
     version = r.u32()
-    assert version == 2, f'recording version {version}, this script reads 2'
+    assert version in (2, 3), f'recording version {version}, this script reads 2 and 3'
     print('version', version)
     n = 0
     while r.p < len(data):
         assert r.u8() == ord('F')
         flags = [r.u8() for _ in range(4)]
         settings = ' '.join(f'{name}={value}' for name, value in zip(SETTINGS, flags))
+        step = r.u32() if version >= 3 else 150
         tick = r.u32()
         wx, wy, wz = r.i32(), r.i32(), r.i32()
         paused = r.u8()
@@ -121,7 +124,8 @@ def main():
         painted = r.u8()
         changed = r.u32()
         if first <= n <= last:
-            print(f'{n:5d} t={tick} {settings} w={wx},{wy},{wz} {"P" if paused else "-"} '
+            print(f'{n:5d} t={tick} {settings} step={step} w={wx},{wy},{wz} '
+                  f'{"P" if paused else "-"} '
                   f'follow={follow} mouse={mx},{my}{"M" if mbut else ""} zoom={zoom} o={ox},{oy} '
                   f'grid={dimx}x{dimy} rest={rx:g},{ry:g} units={units} {"painted" if painted else "skipped"} '
                   f'repaints={repaints} changed={changed} vps={" ".join(vps)}')

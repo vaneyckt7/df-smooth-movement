@@ -1,8 +1,8 @@
 #!/bin/sh
 # Builds and runs the frame recording codec test and the tile repaint test against the stub
 # viewport header in stubs/, then replays every recording in recordings/ and requires that
-# every frame's draws digest to what expected/<name>.digest holds. Exits non-zero when any
-# fails. The game's own repaint count from the recording's self-check is printed for
+# every frame's draws digest to what expected/<name>.digest holds, and that recinfo.py reads
+# the same number of frames. Exits non-zero when any fails. The game's own repaint count from the recording's self-check is printed for
 # information: it matches only for the plugin version that made the recording.
 # Usage: harness/test.sh <plugin dir>
 set -eu
@@ -31,6 +31,12 @@ for rec in "$here"/recordings/*.rec; do
 		cat "$here/out/test-$name.txt"; echo "replay of $name: exited $rc"; exit 1
 	fi
 	"$here/digest.py" "$trace" >"$here/out/test-$name.digest"
+	# recinfo.py walks the file on its own; it must agree with the replay on the frame count.
+	frames=$("$here/recinfo.py" "$rec" 0 -1 | sed -n 's/^frames //p')
+	replayed=$(wc -l <"$here/out/test-$name.digest" | tr -d ' ')
+	if [ "$frames" != "$replayed" ]; then
+		echo "recinfo.py of $name: $frames frames, the replay $replayed"; exit 1
+	fi
 	if cmp -s "$here/out/test-$name.digest" "$here/expected/$name.digest"; then
 		game=$(sed -n 's/^game: *//p' "$here/out/test-$name.txt")
 		replay=$(sed -n 's/^replay: *//p' "$here/out/test-$name.txt")
