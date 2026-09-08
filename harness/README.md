@@ -73,8 +73,9 @@ such as the repository root (`.`) or an export of another branch, for example
   (`test_tile_repaint.cpp`, which checks against the stub viewport which of the 25 arrays
   each repaint pass zeroes and that every entry is restored) and the sprite proxy test
   (`test_sprite_proxies.cpp`, which steps a creature through the animation manager on the
-  stub viewport and checks which sprites get a proxy, what tiles each covers, and that fire,
-  the clip and a missing texture block one) and the free camera test
+  stub viewport and checks which sprites get a proxy, what tiles each covers, that fire,
+  the clip and a missing texture block one, and which proxies bob with the walk bob on and
+  the row above each then covers) and the free camera test
   (`test_free_camera.cpp`, which drives the camera with a stand-in manager and checks the
   render offset a landed scroll, a window jump, a followed movement, a normalization write
   and a middle-mouse drag give) and the view context test (`test_view_context.cpp`, which
@@ -99,6 +100,8 @@ walking left so their sprites are mirrored. Neither has hauled item icons, linea
 followed unit, a scroll or a zoom change; a change to those paths needs its own recording.
 Both predate format version 4, so they carry no simulation tick and the replay treats every
 change of the per-tile arrays as a candidate step, as the plugin did when they were made.
+No recording carries the walk bob settings, so every replay runs with the bob off; the bob's
+proxy marking and coverage are covered by the sprite proxy test instead.
 The recordings are fixtures and stay fixed: every version of the plugin replays the same
 scenes. `expected/<name>.digest` holds, for each recording, one line per frame with the
 repaint count and the digest of the visible draws the current version asks for on it, made

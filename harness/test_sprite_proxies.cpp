@@ -16,7 +16,8 @@
 namespace {
 
 constexpr int32_t dim_x=6,dim_y=4,tile_count=dim_x*dim_y;
-constexpr int32_t center_texpos=11,right_texpos=12,up_texpos=13;
+constexpr int32_t center_texpos=11,right_texpos=12,up_texpos=13,vehicle_texpos=14;
+constexpr int32_t neighbour_texpos=15;
 // A creature with a right and an up fragment steps one tile east: the render groups main
 // and upper, a fragment whose mirror shifts it two tiles, and one that flips in place.
 constexpr int32_t from_x=2,to_x=3,row=2;
@@ -93,12 +94,18 @@ struct scenest
 {
 	viewportst v;
 	visual_animation_managerst manager;
+	bool bob=false;
 
-	explicit scenest(int32_t row=::row)
+	// With `vehicle`, a vehicle on the creature's own tile steps east with it.
+	// With `neighbour`, a one-tile creature a column to the left on the row above, that is,
+	// beside the up fragment, steps east in lockstep too.
+	explicit scenest(int32_t row=::row,bool vehicle=false,bool neighbour=false)
 		{
 		v.at(L::center,from_x,row)=center_texpos;
 		v.at(L::right,from_x+1,row)=right_texpos;
 		if(row>0)v.at(L::up,from_x,row-1)=up_texpos;
+		if(vehicle)v.at(L::vehicle,from_x,row)=vehicle_texpos;
+		if(neighbour)v.at(L::center,from_x-1,row-1)=neighbour_texpos;
 		manager.begin_frame(1000);
 		manager.synchronize_viewport(v.input());
 		manager.end_frame();
@@ -108,6 +115,16 @@ struct scenest
 		v.at(L::center,to_x,row)=center_texpos;
 		v.at(L::right,to_x+1,row)=right_texpos;
 		if(row>0)v.at(L::up,to_x,row-1)=up_texpos;
+		if(vehicle)
+			{
+			v.at(L::vehicle,from_x,row)=0;
+			v.at(L::vehicle,to_x,row)=vehicle_texpos;
+			}
+		if(neighbour)
+			{
+			v.at(L::center,from_x-1,row-1)=0;
+			v.at(L::center,to_x-1,row-1)=neighbour_texpos;
+			}
 		manager.begin_frame(1016);
 		manager.synchronize_viewport(v.input());
 		manager.end_frame();
@@ -115,7 +132,7 @@ struct scenest
 
 	std::vector<render_proxyst> collect(bool flip,int32_t missing_texpos=0)
 		{
-		return collect_proxies(&v.vp,manager,flip,[missing_texpos](int32_t texpos)
+		return collect_proxies(&v.vp,manager,flip,bob,[missing_texpos](int32_t texpos)
 			{
 			static int token;
 			return texpos==missing_texpos?nullptr:reinterpret_cast<SDL_Texture *>(&token);
@@ -357,6 +374,150 @@ void test_coverage()
 		printf("viewport coverage union wrong\n"),++failures;
 }
 
+void test_bob()
+{
+	// With the walk bob on, the creature bobs and both fragments ride on its centre proxy, so
+	// each proxy also covers the row above its path. The centre is the first proxy collected.
+	{
+	scenest scene;
+	scene.bob=true;
+	const auto proxies=scene.collect(false);
+	expect_count("bob on",proxies,3);
+	expect_proxy("bob on, center",proxies,L::center,to_x,row,false,0,
+		{{from_x,row-1},{to_x,row-1},{from_x,row},{to_x,row}},center_texpos);
+	expect_proxy("bob on, right",proxies,L::right,to_x+1,row,false,0,
+		{{from_x+1,row-1},{to_x+1,row-1},{from_x+1,row},{to_x+1,row}},right_texpos);
+	expect_proxy("bob on, up",proxies,L::up,to_x,row-1,false,0,
+		{{from_x,row-2},{to_x,row-2},{from_x,row-1},{to_x,row-1}},up_texpos);
+	for(const render_proxyst &proxy:proxies)
+		{
+		const bool centre=proxy.layer==L::center;
+		if(!proxy.bob)printf("bob on: %s not bobbing\n",centre?"centre":"fragment"),++failures;
+		if(proxy.anchor!=(centre?-1:0))
+			printf("bob on: anchor %d\n",proxy.anchor),++failures;
+		}
+	if(!proxies.empty()&&proxies[0].layer!=L::center)
+		printf("bob on: centre not first\n"),++failures;
+	}
+	{
+	// With the bob off, the proxies, their coverage and the anchors are what they were.
+	scenest scene;
+	const auto proxies=scene.collect(false);
+	for(const render_proxyst &proxy:proxies)
+		if(proxy.bob)printf("bob off: bobbing\n"),++failures;
+	expect_proxy("bob off, up",proxies,L::up,to_x,row-1,false,0,
+		{{from_x,row-1},{to_x,row-1}},up_texpos);
+	}
+	{
+	// With flipping on, the mirrored image's row above is covered too: the right fragment
+	// lands two tiles to the left, so its bob row spans both places.
+	scenest scene;
+	scene.bob=true;
+	const auto proxies=scene.collect(true);
+	expect_count("bob and flip",proxies,3);
+	expect_proxy("bob and flip, right",proxies,L::right,to_x+1,row,true,-2,
+		{{from_x-1,row-1},{from_x,row-1},{from_x+1,row-1},{to_x+1,row-1},
+		{from_x-1,row},{from_x,row},{from_x+1,row},{to_x+1,row}},right_texpos);
+	}
+	{
+	// Fire on the row above the up fragment's path: that fragment cannot bob, so the whole
+	// creature glides without the bob, and every proxy covers only its path. (Fire under the
+	// up fragment itself does not block it, since the upper group is drawn over fire.)
+	scenest scene;
+	scene.bob=true;
+	scene.v.spatter_flags[to_x*dim_y+row-2]=0x10000000U;
+	const auto proxies=scene.collect(false);
+	expect_count("fire on the bob row",proxies,3);
+	for(const render_proxyst &proxy:proxies)
+		if(proxy.bob)printf("fire on the bob row: still bobbing\n"),++failures;
+	expect_proxy("fire on the bob row, center",proxies,L::center,to_x,row,false,0,
+		{{from_x,row},{to_x,row}},center_texpos);
+	expect_proxy("fire on the bob row, up",proxies,L::up,to_x,row-1,false,0,
+		{{from_x,row-1},{to_x,row-1}},up_texpos);
+	}
+	{
+	// The row above the mirrored image is burning: the same, with flipping on.
+	scenest scene;
+	scene.bob=true;
+	scene.v.spatter_flags[(from_x-1)*dim_y+row-1]=0x20000000U;
+	const auto proxies=scene.collect(true);
+	expect_count("fire on the mirrored bob row",proxies,3);
+	for(const render_proxyst &proxy:proxies)
+		if(proxy.bob)printf("fire on the mirrored bob row: still bobbing\n"),++failures;
+	expect_proxy("fire on the mirrored bob row, right",proxies,L::right,to_x+1,row,true,-2,
+		{{from_x-1,row},{from_x,row},{from_x+1,row},{to_x+1,row}},right_texpos);
+	}
+	{
+	// A creature walking along the top row has no row above inside the clip: it glides
+	// without the bob rather than being dropped.
+	scenest top(0);
+	top.bob=true;
+	const auto proxies=top.collect(false);
+	expect_count("bob on the top row",proxies,2);
+	for(const render_proxyst &proxy:proxies)
+		if(proxy.bob)printf("bob on the top row: bobbing\n"),++failures;
+	expect_proxy("bob on the top row, center",proxies,L::center,to_x,0,false,0,
+		{{from_x,0},{to_x,0}},center_texpos);
+	}
+	{
+	// A vehicle stepping on the creature's own tile with it (a pushed minecart) never bobs
+	// and never rides on the creature's proxy, while the creature bobs as before.
+	scenest scene(row,true);
+	scene.bob=true;
+	const auto proxies=scene.collect(false);
+	expect_count("vehicle",proxies,4);
+	const render_proxyst *vehicle=find(proxies,L::vehicle);
+	if(vehicle==nullptr)printf("vehicle: no proxy\n"),++failures;
+	else if(vehicle->bob||vehicle->anchor!=-1)
+		printf("vehicle: bob %d anchor %d\n",vehicle->bob,vehicle->anchor),++failures;
+	else if(vehicle->coverage!=tilest{{from_x,row},{to_x,row}})
+		printf("vehicle: covers %s\n",tiles_text(vehicle->coverage).c_str()),++failures;
+	const render_proxyst *centre=find(proxies,L::center);
+	if(centre==nullptr||!centre->bob)printf("vehicle: creature not bobbing\n"),++failures;
+	}
+	{
+	// A one-tile creature stepping in lockstep beside the up fragment, with fire on its own
+	// bob row so it cannot bob: the fragments still ride on their own centre and bob with
+	// it. The neighbour's centre comes first in collection order and moves the same way, so
+	// a match on any centre within a tile would tie the up fragment to the neighbour and
+	// leave it on the glide line while its creature hops.
+	scenest scene(row,false,true);
+	scene.bob=true;
+	scene.v.spatter_flags[(from_x-1)*dim_y+row-2]=0x10000000U;
+	const auto proxies=scene.collect(false);
+	expect_count("neighbour",proxies,4);
+	int32_t own=-1,other=-1;
+	for(size_t i=0;i<proxies.size();++i)
+		if(proxies[i].layer==L::center)
+			(proxies[i].texpos==center_texpos?own:other)=int32_t(i);
+	if(own<0||other<0)printf("neighbour: centres missing\n"),++failures;
+	else
+		{
+		if(other>own)printf("neighbour: not collected first\n"),++failures;
+		if(proxies[other].bob)printf("neighbour: neighbour bobbing\n"),++failures;
+		if(!proxies[own].bob)printf("neighbour: creature not bobbing\n"),++failures;
+		for(const render_proxyst &proxy:proxies)
+			if(proxy.layer!=L::center&&(proxy.anchor!=own||!proxy.bob))
+				printf("neighbour: fragment anchor %d bob %d\n",proxy.anchor,proxy.bob),
+					++failures;
+		}
+	expect_proxy("neighbour, up",proxies,L::up,to_x,row-1,false,0,
+		{{from_x,row-2},{to_x,row-2},{from_x,row-1},{to_x,row-1}},up_texpos);
+	}
+	{
+	// A resting mirrored sprite never bobs.
+	scenest scene;
+	scene.bob=true;
+	scene.manager.cancel_transitions();
+	const auto proxies=scene.collect(true);
+	expect_count("resting with bob on",proxies,3);
+	for(const render_proxyst &proxy:proxies)
+		if(proxy.bob||proxy.anchor!=-1)printf("resting with bob on: bobbing\n"),++failures;
+	expect_proxy("resting with bob on, center",proxies,L::center,to_x,row,true,0,
+		{{to_x,row}},center_texpos);
+	}
+}
+
 void test_tile_checks()
 {
 	viewportst v;
@@ -386,6 +547,7 @@ int main()
 	test_blocked();
 	test_resting();
 	test_coverage();
+	test_bob();
 	test_tile_checks();
 	if(failures!=0){printf("sprite proxy tests: %d failures\n",failures);return 1;}
 	printf("sprite proxy tests: OK\n");

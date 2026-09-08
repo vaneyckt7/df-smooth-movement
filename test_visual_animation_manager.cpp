@@ -1339,4 +1339,85 @@ int main()
 	assert(scrolled.get_facing(viewport,1,2)==visual_facingst::east);
 	assert(scrolled.get_facing(viewport,2,2)==native_sprite_facing);
 	}
+
+	// The walk bob lifts once per hop, returns to the grid at both ends of a step, and never
+	// exceeds amplitude times the direction multiplier.
+	{
+	const float amplitude=0.10f,multiplier=2.7f,peak=amplitude*multiplier;
+	auto near=[](float a,float b){return std::fabs(a-b)<1e-5f;};
+	for(int hops:{1,2})
+		{
+		assert(near(walk_bob_lift(0.0f,hops,amplitude,multiplier),0.0f));
+		assert(near(walk_bob_lift(1.0f,hops,amplitude,multiplier),0.0f));
+		float highest=0.0f;
+		for(int i=0;i<=1000;++i)
+			{
+			const float lift=walk_bob_lift(float(i)/1000.0f,hops,amplitude,multiplier);
+			assert(lift>=0.0f);
+			highest=std::max(highest,lift);
+			}
+		assert(near(highest,peak));
+		}
+	assert(near(walk_bob_lift(0.5f,1,amplitude,multiplier),peak));
+	assert(near(walk_bob_lift(0.25f,2,amplitude,multiplier),peak));
+	// The foot lands between the two hops.
+	assert(near(walk_bob_lift(0.5f,2,amplitude,multiplier),0.0f));
+	assert(near(walk_bob_lift(0.25f,2,amplitude,1.0f),amplitude));
+	assert(near(walk_bob_lift(0.25f,2,0.0f,multiplier),0.0f));
+	// The lift guard keys off the largest multiplier and admits exactly up to the cap.
+	assert(walk_bob_lift_fits(0.10f,1.0f,2.4f,2.7f));
+	assert(walk_bob_lift_fits(0.30f,1.0f,3.0f,2.0f));
+	assert(!walk_bob_lift_fits(0.30f,1.0f,3.0f,3.5f));
+	assert(!walk_bob_lift_fits(0.30f,4.0f,1.0f,1.0f));
+	assert(walk_bob_lift_fits(0.0f,5.0f,5.0f,5.0f));
+	// The settings pick the multiplier by the step's direction and default to fitting values.
+	const walk_bob_settingst defaults;
+	assert(!defaults.enabled&&defaults.hops==2);
+	assert(walk_bob_lift_fits(defaults.amplitude,defaults.horizontal_mult,
+		defaults.diagonal_mult,defaults.vertical_mult));
+	assert(near(defaults.lift(0.0f,5.0f,1,5,0.25f),0.10f));
+	assert(near(defaults.lift(0.0f,5.0f,1,4,0.25f),0.24f));
+	assert(near(defaults.lift(0.0f,5.0f,0,4,0.25f),0.27f));
+	assert(near(defaults.lift(0.0f,5.0f,0,4,0.5f),0.0f));
+	walk_bob_settingst single=defaults;
+	single.hops=1;
+	assert(near(single.lift(0.0f,5.0f,0,4,0.5f),0.27f));
+	}
+
+	// The creature-level bob decision: any rider that cannot bob takes its whole creature
+	// with it, riders copy their root, chains of any depth resolve, and independent groups
+	// do not affect each other.
+	{
+	// 0: centre A; 1: fragment of A; 2: icon riding on fragment 1 (depth 2); 3: centre B;
+	// 4: icon on B; 5: a lone item with no creature.
+	const std::vector<int32_t> anchors={-1,0,1,-1,3,-1};
+	std::vector<bool> bob={true,true,false,true,true,false};
+	resolve_creature_bob(anchors,bob);
+	assert(!bob[0]&&!bob[1]&&!bob[2]); // the grandchild's fire row stops all of A
+	assert(bob[3]&&bob[4]);            // B is untouched
+	assert(!bob[5]);
+	std::vector<bool> all={true,true,true,true,true,false};
+	resolve_creature_bob(anchors,all);
+	assert(all[0]&&all[1]&&all[2]&&all[3]&&all[4]&&!all[5]);
+	std::vector<bool> root_off={false,true,true,true,true,true};
+	resolve_creature_bob(anchors,root_off);
+	assert(!root_off[0]&&!root_off[1]&&!root_off[2]&&root_off[3]&&root_off[4]);
+	std::vector<bool> empty;
+	resolve_creature_bob({},empty);
+	}
+
+	// The bob direction is that of the tile step, even when the source is a fractional
+	// in-flight position left by a retarget.
+	{
+	using D=walk_bob_directionst;
+	assert(walk_bob_direction(0.0f,5.0f,1,5)==D::horizontal);
+	assert(walk_bob_direction(0.0f,5.0f,0,4)==D::vertical);
+	assert(walk_bob_direction(0.0f,5.0f,1,4)==D::diagonal);
+	assert(walk_bob_direction(1.0f,4.0f,0,5)==D::diagonal);
+	// East step retargeted north from (0.6,5): a vertical step, not a diagonal one.
+	assert(walk_bob_direction(0.6f,5.0f,1,4)==D::vertical);
+	// Diagonal step retargeted east from (0.6,4.4): a horizontal step.
+	assert(walk_bob_direction(0.6f,4.4f,2,4)==D::horizontal);
+	assert(walk_bob_direction(0.4f,5.0f,1,5)==D::horizontal);
+	}
 }
