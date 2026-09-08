@@ -21,6 +21,9 @@
 #include "df/unit.h"
 #include "df/unit_inventory_item.h"
 #include "df/viewport_spatter_flag.h"
+#include "df/viewscreen_dungeonmodest.h"
+#include "df/viewscreen_dwarfmodest.h"
+#include "df/world.h"
 
 #include "frame_record.h"
 #include "frame_recorder.h"
@@ -36,6 +39,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -58,6 +62,7 @@ REQUIRE_GLOBAL(plotinfo);
 REQUIRE_GLOBAL(window_x);
 REQUIRE_GLOBAL(window_y);
 REQUIRE_GLOBAL(window_z);
+REQUIRE_GLOBAL(world);
 
 namespace {
 
@@ -89,6 +94,41 @@ struct sdl_apist
 	decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
 };
 
+// When the game last filled the viewports' per-tile arrays. The simulation thread fills them
+// inside the map screens' render and runs on while the render thread paints them, so the
+// simulation's frame counter is read there, not at paint time when it may already have
+// moved on. Draw serial in the high half, tick in the low half, in one word so the paint side
+// reads both as they were stored.
+struct drawn_buffersst
+{
+	std::atomic<uint64_t> drawn{0};
+	uint32_t draw_serial=0;         // simulation thread
+	uint32_t painted_draw_serial=0; // render thread
+	// Tick of the arrays about to be painted, or -1 when no fill was seen since the last
+	// frame; the frame's animation input. A visual reset leaves it alone: the arrays on
+	// screen keep the tick they were filled at, and the frame that resets is painting them.
+	int64_t frame_simulation_tick=-1;
+
+	// Simulation thread: the arrays were just filled at the current frame counter.
+	void note_drawn()
+		{
+		if(world==nullptr)return;
+		++draw_serial;
+		drawn.store((uint64_t(draw_serial)<<32)|uint32_t(world->frame_counter),
+			std::memory_order_release);
+		}
+
+	// Render thread: the tick of a fill not yet painted, or -1.
+	int64_t take_tick()
+		{
+		const uint64_t value=drawn.load(std::memory_order_acquire);
+		const uint32_t serial=uint32_t(value>>32);
+		if(serial==painted_draw_serial)return -1;
+		painted_draw_serial=serial;
+		return int64_t(int32_t(uint32_t(value)));
+		}
+};
+
 // The state the render hook reads and writes each frame.
 struct render_statest
 {
@@ -105,6 +145,8 @@ struct render_statest
 	// The camera glide's per-tile blank summary, filled for the glide's frame and cleared
 	// after.
 	blank_summariest<df::graphic_viewportst> blank_summaries;
+
+	drawn_buffersst drawn_buffers;
 
 	// What the hook did on the frame in progress, for the recorder. Render thread only, so
 	// a `stats reset` from the console cannot skew them.
@@ -211,7 +253,8 @@ viewport_visual_animation_inputst animation_input(df::graphic_viewportst *vp)
 		vp->screentexpos_background,
 		vp->screentexpos_background_old,
 		window_x?*window_x:0,
-		window_y?*window_y:0
+		window_y?*window_y:0,
+		state.render.drawn_buffers.frame_simulation_tick
 		};
 }
 
@@ -477,6 +520,7 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 		header.camera=state.render.camera.is_enabled();
 		header.linear=state.render.animation_manager.is_linear();
 		header.step_ms=state.render.animation_manager.step_duration_ms();
+		header.simulation_tick=state.render.drawn_buffers.frame_simulation_tick;
 		header.tick_ms=now_ms;
 		header.window_x=window_x?*window_x:0;
 		header.window_y=window_y?*window_y:0;
@@ -673,6 +717,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	const bool timing_enabled=state.stats.enabled.load(std::memory_order_relaxed);
 	// The frame's clock, read once so that a recording carries the value the frame used.
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
+	state.render.drawn_buffers.frame_simulation_tick=state.render.drawn_buffers.take_tick();
 	record_frame_start(renderer,now_ms);
 	state.render.hook_repaints=0;
 	state.render.hook_painted=false;
@@ -840,6 +885,31 @@ void renderer_hook::interpose_fn_update_all()
 	render_interpolated_world(this);
 	INTERPOSE_NEXT(update_all)();
 }
+
+// Both map screens fill the viewports' per-tile arrays in their render, on the simulation
+// thread; the interposes note the simulation tick they were filled at.
+struct dwarfmode_hook : df::viewscreen_dwarfmodest
+{
+	typedef df::viewscreen_dwarfmodest interpose_base;
+	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
+		{
+		state.render.drawn_buffers.note_drawn();
+		INTERPOSE_NEXT(render)(curtick);
+		}
+};
+
+struct dungeonmode_hook : df::viewscreen_dungeonmodest
+{
+	typedef df::viewscreen_dungeonmodest interpose_base;
+	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
+		{
+		state.render.drawn_buffers.note_drawn();
+		INTERPOSE_NEXT(render)(curtick);
+		}
+};
+
+IMPLEMENT_VMETHOD_INTERPOSE(dwarfmode_hook,render);
+IMPLEMENT_VMETHOD_INTERPOSE(dungeonmode_hook,render);
 
 void clear_sdl_bindings()
 {
@@ -1172,9 +1242,14 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 		{
 		reset_state();
 		if(!load_sdl(out))return CR_FAILURE;
-		if(!INTERPOSE_HOOK(renderer_hook,update_all).apply())
+		if(!INTERPOSE_HOOK(dwarfmode_hook,render).apply()||
+			!INTERPOSE_HOOK(dungeonmode_hook,render).apply()||
+			!INTERPOSE_HOOK(renderer_hook,update_all).apply())
 			{
-			out.printerr("smooth-movement: could not hook the 2D renderer\n");
+			out.printerr("smooth-movement: could not hook the map screens and 2D renderer\n");
+			INTERPOSE_HOOK(dwarfmode_hook,render).remove();
+			INTERPOSE_HOOK(dungeonmode_hook,render).remove();
+			INTERPOSE_HOOK(renderer_hook,update_all).remove();
 			clear_sdl_bindings();
 			return CR_FAILURE;
 			}
@@ -1182,6 +1257,8 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 	else
 		{
 		INTERPOSE_HOOK(renderer_hook,update_all).remove();
+		INTERPOSE_HOOK(dwarfmode_hook,render).remove();
+		INTERPOSE_HOOK(dungeonmode_hook,render).remove();
 		reset_state();
 		clear_sdl_bindings();
 		if(gps!=nullptr)++gps->force_full_display_count;

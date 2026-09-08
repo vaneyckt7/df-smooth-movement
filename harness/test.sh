@@ -9,6 +9,13 @@ set -eu
 src=$(cd "$1" && pwd); here=$(cd "$(dirname "$0")" && pwd); mkdir -p "$here/out"
 c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-frame-record" "$here/test_frame_record.cpp"
 "$here/out/test-frame-record"
+# recinfo.py must read a recording in the current format: the fixtures are older.
+"$here/out/test-frame-record" "$here/out/test-current.rec"
+sample=$("$here/recinfo.py" "$here/out/test-current.rec" |
+	sed -n 's/.* step=\([0-9]*\) sim=\(-*[0-9]*\) .*/\1,\2/p;s/^frames //p' | tr '\n' ' ')
+if [ "$sample" != "250,1234567 250,-1 250,1234569 3 " ]; then
+	echo "recinfo.py misreads the current format: $sample"; exit 1
+fi
 c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-tile-repaint" \
     "$here/test_tile_repaint.cpp"
 "$here/out/test-tile-repaint"

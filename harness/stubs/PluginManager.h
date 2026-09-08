@@ -10,9 +10,11 @@
 #include "df/enabler.h"
 #include "df/graphic.h"
 #include "df/plotinfost.h"
+#include "df/world.h"
 namespace df { namespace global {
 	inline df::enabler *enabler=nullptr; inline df::graphic *gps=nullptr; inline bool *pause_state=nullptr;
-	inline df::plotinfost *plotinfo=nullptr; inline int32_t *window_x=nullptr; inline int32_t *window_y=nullptr; inline int32_t *window_z=nullptr; } }
+	inline df::plotinfost *plotinfo=nullptr; inline int32_t *window_x=nullptr; inline int32_t *window_y=nullptr; inline int32_t *window_z=nullptr;
+	inline df::world *world=nullptr; } }
 namespace DFHack {
 using command_function=command_result(*)(color_ostream&,std::vector<std::string>&);
 struct PluginCommand { std::string name,desc; command_function fn;

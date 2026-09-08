@@ -97,6 +97,8 @@ camera off, unpaused for all but two frames, with creatures moving. `fortress-ca
 is 183 frames with the free camera on, resting a little off the tile grid, with creatures
 walking left so their sprites are mirrored. Neither has hauled item icons, linear easing, a
 followed unit, a scroll or a zoom change; a change to those paths needs its own recording.
+Both predate format version 4, so they carry no simulation tick and the replay treats every
+change of the per-tile arrays as a candidate step, as the plugin did when they were made.
 The recordings are fixtures and stay fixed: every version of the plugin replays the same
 scenes. `expected/<name>.digest` holds, for each recording, one line per frame with the
 repaint count and the digest of the visible draws the current version asks for on it, made

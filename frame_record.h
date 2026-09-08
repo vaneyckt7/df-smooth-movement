@@ -7,6 +7,9 @@
 //   per frame:
 //     'F' u8 flip, u8 hauled, u8 camera, u8 linear (the plugin's settings for this frame),
 //         u32 step_ms (the one-tile step time; absent in version 2, where it was 150),
+//         i64 simulation_tick (the simulation's frame counter when the game last filled the
+//         per-tile arrays, -1 when no fill was seen since the previous frame; absent before
+//         version 4, which reads as -1 on every frame),
 //         u32 tick_ms, i32 window x y z, u8 paused, i32 follow_unit, i32 mouse x y, u8 mbut,
 //         i32 zoom origin_x origin_y dimx dimy, f64 free-camera rest offset x y (tiles)
 //     u8 viewports; per viewport: u8 slot (0..7 lower, 8 main), i32 dim_x dim_y clipx0 clipx1
@@ -33,8 +36,9 @@
 
 namespace frame_record {
 
-constexpr uint32_t version=3;
-// The oldest version the reader accepts; a version 2 frame header has no step field.
+constexpr uint32_t version=4;
+// The oldest version the reader accepts; a version 2 frame header has no step field and a
+// version 3 header no simulation tick.
 constexpr uint32_t oldest_version=2;
 constexpr int main_slot=8;
 constexpr int slot_count=9;
@@ -82,6 +86,8 @@ struct writerst
 	void u32(uint32_t v){for(int i=0;i<4;++i)bytes.push_back(uint8_t(v>>(8*i)));}
 	void i32(int32_t v){u32(uint32_t(v));}
 	void f64(double v){uint64_t bits;std::memcpy(&bits,&v,8);u32(uint32_t(bits));u32(uint32_t(bits>>32));}
+	void i64(int64_t v)
+		{const uint64_t bits=uint64_t(v);u32(uint32_t(bits));u32(uint32_t(bits>>32));}
 	void varint(uint64_t v)
 		{
 		while(v>=0x80){bytes.push_back(uint8_t(v|0x80));v>>=7;}
@@ -147,6 +153,7 @@ struct readerst
 		}
 	int32_t i32(){return int32_t(u32());}
 	double f64(){const uint64_t lo=u32(),hi=u32();const uint64_t bits=lo|hi<<32;double v;std::memcpy(&v,&bits,8);return v;}
+	int64_t i64(){const uint64_t lo=u32(),hi=u32();return int64_t(lo|hi<<32);}
 	uint64_t varint()
 		{
 		uint64_t v=0;
@@ -198,6 +205,7 @@ struct frame_headerst
 {
 	bool flip=false,hauled=false,camera=false,linear=false;
 	uint32_t step_ms=150; // a version 2 recording reads back as 150, what it was made with
+	int64_t simulation_tick=-1; // a recording before version 4 reads back as -1, unknown
 	uint32_t tick_ms=0;
 	int32_t window_x=0,window_y=0,window_z=0;
 	bool paused=false;
@@ -234,6 +242,7 @@ inline void write_frame_header(writerst &w,const frame_headerst &f)
 	w.u8('F');
 	w.u8(f.flip);w.u8(f.hauled);w.u8(f.camera);w.u8(f.linear);
 	w.u32(f.step_ms);
+	w.i64(f.simulation_tick);
 	w.u32(f.tick_ms);
 	w.i32(f.window_x);w.i32(f.window_y);w.i32(f.window_z);
 	w.u8(f.paused);
@@ -283,6 +292,8 @@ inline bool read_frame_header(readerst &r,frame_headerst &f)
 	f.flip=r.u8()!=0;f.hauled=r.u8()!=0;f.camera=r.u8()!=0;f.linear=r.u8()!=0;
 	f.step_ms=r.version>=3?r.u32():150;
 	if(f.step_ms==0)r.fail("bad step time");
+	f.simulation_tick=r.version>=4?r.i64():-1;
+	if(f.simulation_tick<-1)r.fail("bad simulation tick");
 	f.tick_ms=r.u32();
 	f.window_x=r.i32();f.window_y=r.i32();f.window_z=r.i32();
 	f.paused=r.u8()!=0;

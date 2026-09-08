@@ -265,8 +265,9 @@ int run_replay(const char *record_path,const char *trace_path)
 
 	bench_rendererst renderer;
 	renderer.sdl_renderer=reinterpret_cast<void*>(0x1);
-	df::graphic graphics;df::enabler enable;df::plotinfost plot;
+	df::graphic graphics;df::enabler enable;df::plotinfost plot;df::world world;
 	int32_t wx=0,wy=0,wz=0;bool paused=false;
+	df::global::world=&world;
 	df::global::gps=&graphics;df::global::enabler=&enable;df::global::plotinfo=&plot;
 	df::global::pause_state=&paused;df::global::window_x=&wx;df::global::window_y=&wy;df::global::window_z=&wz;
 	replay_slotst slots[frame_record::slot_count];
@@ -335,6 +336,13 @@ int run_replay(const char *record_path,const char *trace_path)
 			DFHack::Units::harness_units.push_back(&unit);
 			}
 
+		// The game filled the per-tile arrays before this frame at the recorded simulation
+		// tick; the hook takes it as the map screens' interposes would have noted it.
+		if(h.simulation_tick>=0)
+			{
+			world.frame_counter=int32_t(h.simulation_tick);
+			state.render.drawn_buffers.note_drawn();
+			}
 		const uint64_t r0=repaint_calls,p0=state.stats.painted;
 		if(trace)fprintf(trace,"# frame replay %zu t=%u w=%d,%d\n",n,h.tick_ms,wx,wy);
 		const auto t0=clock::now();
