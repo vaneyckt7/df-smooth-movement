@@ -12,9 +12,10 @@ Usage: recinfo.py <recording> [first frame] [last frame]
 Per line: frame number; t, the frame clock in ms; the plugin's four settings; step, the
 one-tile step time in ms (a version 2 recording has no field and was made at 150); sim, the
 simulation's frame counter when the game last filled the per-tile arrays, or -1 when no fill
-was seen since the previous frame or the recording is older than version 4; w, the
-window position x,y,z; P when the game was paused, - otherwise; follow, the followed unit id
-or -1;
+was seen since the previous frame or the recording is older than version 4; bob, amount,
+mult and hops, the walk bob settings (off, 0.1, 1,2.4,2.7 and 2 for a recording older
+than version 5, which has no fields for them); w, the window position x,y,z; P when the
+game was paused, - otherwise; follow, the followed unit id or -1;
 mouse, the mouse position with M when the middle button was down; zoom; o, the drawing origin
 in tiles; grid, the screen size in tiles; rest, the free camera's offset in tiles; units, how
 many units were in view; painted or skipped, whether the hook drew this frame; repaints, the
@@ -65,6 +66,11 @@ class Reader:
         self.p += 8
         return v
 
+    def f32(self):
+        v = struct.unpack_from('<f', self.d, self.p)[0]
+        self.p += 4
+        return v
+
     def u32(self):
         v = struct.unpack_from('<I', self.d, self.p)[0]
         self.p += 4
@@ -98,7 +104,7 @@ def main():
     assert data[:4] == b'SMRC', 'not a recording'
     r.p = 4
     version = r.u32()
-    assert version in (2, 3, 4), f'recording version {version}, this script reads 2 to 4'
+    assert version in (2, 3, 4, 5), f'recording version {version}, this script reads 2 to 5'
     print('version', version)
     n = 0
     while r.p < len(data):
@@ -107,6 +113,12 @@ def main():
         settings = ' '.join(f'{name}={value}' for name, value in zip(SETTINGS, flags))
         step = r.u32() if version >= 3 else 150
         sim = r.i64() if version >= 4 else -1
+        if version >= 5:
+            bob, amount = r.u8(), r.f32()
+            mults = [r.f32() for _ in range(3)]
+            hops = r.u8()
+        else:
+            bob, amount, mults, hops = 0, 0.1, [1, 2.4, 2.7], 2
         tick = r.u32()
         wx, wy, wz = r.i32(), r.i32(), r.i32()
         paused = r.u8()
@@ -132,7 +144,9 @@ def main():
         painted = r.u8()
         changed = r.u32()
         if first <= n <= last:
-            print(f'{n:5d} t={tick} {settings} step={step} sim={sim} w={wx},{wy},{wz} '
+            print(f'{n:5d} t={tick} {settings} step={step} sim={sim} '
+                  f'bob={"on" if bob else "off"} amount={amount:g} '
+                  f'mult={",".join(f"{m:g}" for m in mults)} hops={hops} w={wx},{wy},{wz} '
                   f'{"P" if paused else "-"} '
                   f'follow={follow} mouse={mx},{my}{"M" if mbut else ""} zoom={zoom} o={ox},{oy} '
                   f'grid={dimx}x{dimy} rest={rx:g},{ry:g} units={units} {"painted" if painted else "skipped"} '
