@@ -17,12 +17,13 @@ int main(int argc,char **argv)
 		for(int i=0;i<3;++i)
 			{
 			frame_record::frame_headerst f;
-			f.step_ms=250;
+			f.settings.step_ms=250;
 			f.simulation_tick=i==1?-1:int64_t(1234567)+i;
-			f.bob.enabled=i==2;
-			f.bob.amplitude=0.15f;
-			f.bob.horizontal_mult=1.0f;f.bob.diagonal_mult=2.0f;f.bob.vertical_mult=3.0f;
-			f.bob.hops=1;
+			f.settings.bob.enabled=i==2;
+			f.settings.bob.amplitude=0.15f;
+			f.settings.bob.horizontal_mult=1.0f;f.settings.bob.diagonal_mult=2.0f;
+			f.settings.bob.vertical_mult=3.0f;
+			f.settings.bob.hops=1;
 			f.tick_ms=uint32_t(1000+16*i);
 			frame_record::write_frame_header(w,f);
 			w.u8(0);
@@ -83,12 +84,14 @@ int main(int argc,char **argv)
 	{
 	frame_record::writerst w;
 	frame_record::write_file_header(w);
-	frame_record::frame_headerst f;f.flip=true;f.camera=true;f.step_ms=300;
+	frame_record::frame_headerst f;
+	f.settings.flip=true;f.settings.camera=true;f.settings.step_ms=300;
 	f.simulation_tick=int64_t(3)<<33;f.tick_ms=123456;
-	f.bob.enabled=true;f.bob.amplitude=0.25f;f.bob.hops=1;
-	f.bob.horizontal_mult=1.5f;f.bob.diagonal_mult=2.0f;f.bob.vertical_mult=3.0f;
+	f.settings.bob.enabled=true;f.settings.bob.amplitude=0.25f;f.settings.bob.hops=1;
+	f.settings.bob.horizontal_mult=1.5f;f.settings.bob.diagonal_mult=2.0f;
+	f.settings.bob.vertical_mult=3.0f;
 	f.window_x=-3;f.window_z=77;f.paused=true;f.follow_unit=9;f.mouse_x=-1;f.mouse_mbut=true;
-	f.zoom=96;f.origin_x=5;f.dimx=200;f.rest_x=-0.25;f.rest_y=1.5;
+	f.zoom=96;f.origin_x=5;f.dimx=200;f.settings.rest_x=-0.25;f.settings.rest_y=1.5;
 	frame_record::write_frame_header(w,f);
 	frame_record::viewport_headerst v{8,100,60,1,98,2,57,3,4};
 	frame_record::write_viewport_header(w,v);
@@ -98,12 +101,13 @@ int main(int argc,char **argv)
 	frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
 	frame_record::frame_headerst f2;frame_record::viewport_headerst v2;std::vector<frame_record::unit_recordst> u2;frame_record::frame_resultst res;
 	const bool ok=frame_record::read_file_header(r)&&frame_record::read_frame_header(r,f2)&&frame_record::read_viewport_header(r,v2)&&frame_record::read_units(r,u2)&&frame_record::read_frame_result(r,res)&&r.at_end();
-	if(!ok||r.version!=frame_record::version||f2.flip!=f.flip||f2.hauled!=f.hauled||f2.camera!=f.camera||f2.linear!=f.linear||f2.step_ms!=300||f2.simulation_tick!=f.simulation_tick||f2.tick_ms!=f.tick_ms||f2.window_x!=f.window_x||f2.window_z!=f.window_z||f2.paused!=f.paused||f2.follow_unit!=f.follow_unit||f2.mouse_x!=f.mouse_x||f2.mouse_mbut!=f.mouse_mbut||f2.zoom!=f.zoom||f2.origin_x!=f.origin_x||f2.dimx!=f.dimx||f2.rest_x!=f.rest_x||f2.rest_y!=f.rest_y
+	if(!ok||r.version!=frame_record::version||f2.settings.flip!=f.settings.flip||f2.settings.hauled!=f.settings.hauled||f2.settings.camera!=f.settings.camera||f2.settings.linear!=f.settings.linear||f2.settings.step_ms!=300||f2.simulation_tick!=f.simulation_tick||f2.tick_ms!=f.tick_ms||f2.window_x!=f.window_x||f2.window_z!=f.window_z||f2.paused!=f.paused||f2.follow_unit!=f.follow_unit||f2.mouse_x!=f.mouse_x||f2.mouse_mbut!=f.mouse_mbut||f2.zoom!=f.zoom||f2.origin_x!=f.origin_x||f2.dimx!=f.dimx||f2.settings.rest_x!=f.settings.rest_x||f2.settings.rest_y!=f.settings.rest_y
 		||v2.slot!=v.slot||v2.dim_x!=v.dim_x||v2.dim_y!=v.dim_y||v2.clipx0!=v.clipx0||v2.clipx1!=v.clipx1||v2.clipy0!=v.clipy0||v2.clipy1!=v.clipy1||v2.screen_x!=v.screen_x||v2.screen_y!=v.screen_y
 		||u2.size()!=2||u2[0].x!=-1||u2[0].y!=2||u2[0].z!=3||u2[0].texpos!=6000||!u2[0].cached||u2[1].x!=4||u2[1].texpos!=0||u2[1].cached||res.repaints!=42||!res.painted||res.changed_words!=7)
 		{puts("header round trip failed");++failures;}
-	if(!f2.bob.enabled||f2.bob.amplitude!=0.25f||f2.bob.horizontal_mult!=1.5f||
-		f2.bob.diagonal_mult!=2.0f||f2.bob.vertical_mult!=3.0f||f2.bob.hops!=1)
+	if(!f2.settings.bob.enabled||f2.settings.bob.amplitude!=0.25f||
+		f2.settings.bob.horizontal_mult!=1.5f||f2.settings.bob.diagonal_mult!=2.0f||
+		f2.settings.bob.vertical_mult!=3.0f||f2.settings.bob.hops!=1)
 		{puts("bob settings round trip failed");++failures;}
 	}
 	// A version 2 file has no step field in its frame header and reads back at the 150 ms
@@ -114,8 +118,9 @@ int main(int argc,char **argv)
 	{
 	frame_record::writerst w;
 	w.raw("SMRC",4);w.u32(2);
-	frame_record::frame_headerst f;f.linear=true;f.step_ms=999;f.simulation_tick=77;
-	f.bob.enabled=true;f.bob.amplitude=0.3f;f.bob.hops=1;
+	frame_record::frame_headerst f;
+	f.settings.linear=true;f.settings.step_ms=999;f.simulation_tick=77;
+	f.settings.bob.enabled=true;f.settings.bob.amplitude=0.3f;f.settings.bob.hops=1;
 	f.tick_ms=5;f.zoom=64;
 	frame_record::write_frame_header(w,f);
 	// Drop the step, tick and bob fields: 4, 8 and 18 bytes after the 'F' and four flags.
@@ -123,8 +128,9 @@ int main(int argc,char **argv)
 	frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
 	frame_record::frame_headerst f2;
 	const bool ok=frame_record::read_file_header(r)&&frame_record::read_frame_header(r,f2)&&r.at_end();
-	if(!ok||r.version!=2||!f2.linear||f2.step_ms!=150||f2.simulation_tick!=-1||
-		f2.bob.enabled||f2.bob.amplitude!=walk_bob_settingst{}.amplitude||f2.bob.hops!=2||
+	if(!ok||r.version!=2||!f2.settings.linear||f2.settings.step_ms!=150||f2.simulation_tick!=-1||
+		f2.settings.bob.enabled||f2.settings.bob.amplitude!=walk_bob_settingst{}.amplitude||
+		f2.settings.bob.hops!=2||
 		f2.tick_ms!=5||f2.zoom!=64)
 		{puts("version 2 header read failed");++failures;}
 	frame_record::writerst w1;
@@ -135,8 +141,8 @@ int main(int argc,char **argv)
 	frame_record::frame_headerst f3;
 	const bool ok1=frame_record::read_file_header(r1)&&
 		frame_record::read_frame_header(r1,f3)&&r1.at_end();
-	if(!ok1||r1.version!=3||!f3.linear||f3.step_ms!=999||f3.simulation_tick!=-1||
-		f3.bob.enabled||f3.bob.hops!=2||f3.tick_ms!=5||f3.zoom!=64)
+	if(!ok1||r1.version!=3||!f3.settings.linear||f3.settings.step_ms!=999||f3.simulation_tick!=-1||
+		f3.settings.bob.enabled||f3.settings.bob.hops!=2||f3.tick_ms!=5||f3.zoom!=64)
 		{puts("version 3 header read failed");++failures;}
 	frame_record::writerst w5;
 	w5.raw("SMRC",4);w5.u32(4);
@@ -148,8 +154,9 @@ int main(int argc,char **argv)
 	frame_record::frame_headerst f5=f;
 	const bool ok5=frame_record::read_file_header(r5)&&
 		frame_record::read_frame_header(r5,f5)&&r5.at_end();
-	if(!ok5||r5.version!=4||!f5.linear||f5.step_ms!=999||f5.simulation_tick!=77||
-		f5.bob.enabled||f5.bob.amplitude!=walk_bob_settingst{}.amplitude||f5.bob.hops!=2||
+	if(!ok5||r5.version!=4||!f5.settings.linear||f5.settings.step_ms!=999||f5.simulation_tick!=77||
+		f5.settings.bob.enabled||f5.settings.bob.amplitude!=walk_bob_settingst{}.amplitude||
+		f5.settings.bob.hops!=2||
 		f5.tick_ms!=5||f5.zoom!=64)
 		{puts("version 4 header read failed");++failures;}
 	// The current version reads the bob settings back as written.
@@ -158,14 +165,15 @@ int main(int argc,char **argv)
 	frame_record::readerst r6;r6.data=w6.bytes.data();r6.size=w6.bytes.size();
 	frame_record::frame_headerst f6;
 	if(!frame_record::read_file_header(r6)||!frame_record::read_frame_header(r6,f6)||
-		!r6.at_end()||!f6.bob.enabled||f6.bob.amplitude!=0.3f||f6.bob.hops!=1||
-		f6.bob.vertical_mult!=walk_bob_settingst{}.vertical_mult)
+		!r6.at_end()||!f6.settings.bob.enabled||f6.settings.bob.amplitude!=0.3f||
+		f6.settings.bob.hops!=1||
+		f6.settings.bob.vertical_mult!=walk_bob_settingst{}.vertical_mult)
 		{puts("version 5 bob settings read failed");++failures;}
 	// Settings the commands would refuse: a zero amount, three hops, an amount whose
 	// product with a multiplier passes the cap, and a NaN multiplier.
 	const auto rejects=[&](const walk_bob_settingst &bob,const char *what)
 		{
-		frame_record::frame_headerst g=f;g.bob=bob;
+		frame_record::frame_headerst g=f;g.settings.bob=bob;
 		frame_record::writerst wb;frame_record::write_file_header(wb);
 		frame_record::write_frame_header(wb,g);
 		frame_record::readerst rb;rb.data=wb.bytes.data();rb.size=wb.bytes.size();
@@ -193,7 +201,7 @@ int main(int argc,char **argv)
 	frame_record::writerst w2;w2.raw("SMRC",4);w2.u32(frame_record::version+1);
 	frame_record::readerst r2;r2.data=w2.bytes.data();r2.size=w2.bytes.size();
 	if(frame_record::read_file_header(r2)||r2.ok()){puts("future version accepted");++failures;}
-	frame_record::writerst w3;frame_record::write_file_header(w3);f.step_ms=0;
+	frame_record::writerst w3;frame_record::write_file_header(w3);f.settings.step_ms=0;
 	frame_record::write_frame_header(w3,f);
 	frame_record::readerst r3;r3.data=w3.bytes.data();r3.size=w3.bytes.size();
 	if(!frame_record::read_file_header(r3)||frame_record::read_frame_header(r3,f2)||r3.ok())

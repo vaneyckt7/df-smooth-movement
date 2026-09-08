@@ -442,13 +442,8 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 			}
 		frame_recorderst::frame_inputst input;
 		frame_record::frame_headerst &header=input.header;
-		header.flip=state.flip_enabled;
-		header.hauled=state.hauled_enabled;
-		header.camera=state.render.camera.is_enabled();
-		header.linear=state.render.animation_manager.is_linear();
-		header.step_ms=state.render.animation_manager.step_duration_ms();
+		header.settings=state.settings();
 		header.simulation_tick=state.render.drawn_buffers.frame_simulation_tick;
-		header.bob=state.bob;
 		header.tick_ms=now_ms;
 		header.window_x=window_x?*window_x:0;
 		header.window_y=window_y?*window_y:0;
@@ -463,8 +458,6 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 		header.origin_y=renderer->origin_y;
 		header.dimx=gps?gps->dimx:0;
 		header.dimy=gps?gps->dimy:0;
-		header.rest_x=state.render.camera.rest_offset_x();
-		header.rest_y=state.render.camera.rest_offset_y();
 		input.viewports=recorded_viewports();
 		return input;
 		});

@@ -29,6 +29,7 @@
 #pragma once
 
 #include "df/graphic_viewportst.h"
+#include "plugin_settings.h"
 #include "visual_animation.h"
 
 #include <cstdint>
@@ -208,10 +209,10 @@ struct unit_recordst
 
 struct frame_headerst
 {
-	bool flip=false,hauled=false,camera=false,linear=false;
-	uint32_t step_ms=150; // a version 2 recording reads back as 150, what it was made with
+	// The plugin's settings for the frame. A version 2 recording reads back with the step at
+	// 150 ms, what it was made with, and one before version 5 with the bob off.
+	plugin_settingsst settings;
 	int64_t simulation_tick=-1; // a recording before version 4 reads back as -1, unknown
-	walk_bob_settingst bob; // a recording before version 5 reads back with the bob off
 	uint32_t tick_ms=0;
 	int32_t window_x=0,window_y=0,window_z=0;
 	bool paused=false;
@@ -219,7 +220,6 @@ struct frame_headerst
 	int32_t mouse_x=0,mouse_y=0;
 	bool mouse_mbut=false;
 	int32_t zoom=128,origin_x=0,origin_y=0,dimx=0,dimy=0;
-	double rest_x=0.0,rest_y=0.0;
 };
 
 struct viewport_headerst
@@ -246,13 +246,14 @@ inline void write_file_header(writerst &w)
 inline void write_frame_header(writerst &w,const frame_headerst &f)
 {
 	w.u8('F');
-	w.u8(f.flip);w.u8(f.hauled);w.u8(f.camera);w.u8(f.linear);
-	w.u32(f.step_ms);
+	const plugin_settingsst &s=f.settings;
+	w.u8(s.flip);w.u8(s.hauled);w.u8(s.camera);w.u8(s.linear);
+	w.u32(s.step_ms);
 	w.i64(f.simulation_tick);
-	w.u8(f.bob.enabled);
-	w.f32(f.bob.amplitude);
-	w.f32(f.bob.horizontal_mult);w.f32(f.bob.diagonal_mult);w.f32(f.bob.vertical_mult);
-	w.u8(uint8_t(f.bob.hops));
+	w.u8(s.bob.enabled);
+	w.f32(s.bob.amplitude);
+	w.f32(s.bob.horizontal_mult);w.f32(s.bob.diagonal_mult);w.f32(s.bob.vertical_mult);
+	w.u8(uint8_t(s.bob.hops));
 	w.u32(f.tick_ms);
 	w.i32(f.window_x);w.i32(f.window_y);w.i32(f.window_z);
 	w.u8(f.paused);
@@ -260,7 +261,7 @@ inline void write_frame_header(writerst &w,const frame_headerst &f)
 	w.i32(f.mouse_x);w.i32(f.mouse_y);
 	w.u8(f.mouse_mbut);
 	w.i32(f.zoom);w.i32(f.origin_x);w.i32(f.origin_y);w.i32(f.dimx);w.i32(f.dimy);
-	w.f64(f.rest_x);w.f64(f.rest_y);
+	w.f64(s.rest_x);w.f64(s.rest_y);
 }
 
 inline void write_viewport_header(writerst &w,const viewport_headerst &v)
@@ -299,26 +300,27 @@ inline bool read_file_header(readerst &r)
 inline bool read_frame_header(readerst &r,frame_headerst &f)
 {
 	if(r.u8()!='F'){r.fail("expected frame");return false;}
-	f.flip=r.u8()!=0;f.hauled=r.u8()!=0;f.camera=r.u8()!=0;f.linear=r.u8()!=0;
-	f.step_ms=r.version>=3?r.u32():150;
-	if(f.step_ms==0)r.fail("bad step time");
+	plugin_settingsst &s=f.settings;
+	s.flip=r.u8()!=0;s.hauled=r.u8()!=0;s.camera=r.u8()!=0;s.linear=r.u8()!=0;
+	s.step_ms=r.version>=3?r.u32():150;
+	if(s.step_ms==0)r.fail("bad step time");
 	f.simulation_tick=r.version>=4?r.i64():-1;
 	if(f.simulation_tick<-1)r.fail("bad simulation tick");
-	f.bob=walk_bob_settingst{};
+	s.bob=walk_bob_settingst{};
 	if(r.version>=5)
 		{
-		f.bob.enabled=r.u8()!=0;
-		f.bob.amplitude=r.f32();
-		f.bob.horizontal_mult=r.f32();f.bob.diagonal_mult=r.f32();f.bob.vertical_mult=r.f32();
-		f.bob.hops=r.u8();
+		s.bob.enabled=r.u8()!=0;
+		s.bob.amplitude=r.f32();
+		s.bob.horizontal_mult=r.f32();s.bob.diagonal_mult=r.f32();s.bob.vertical_mult=r.f32();
+		s.bob.hops=r.u8();
 		// The bounds the commands enforce, written so that NaN fails too.
-		if(!(f.bob.amplitude>0.0f&&f.bob.amplitude<=max_walk_bob_lift)||
-			!(f.bob.horizontal_mult>=0.0f&&f.bob.horizontal_mult<=5.0f)||
-			!(f.bob.diagonal_mult>=0.0f&&f.bob.diagonal_mult<=5.0f)||
-			!(f.bob.vertical_mult>=0.0f&&f.bob.vertical_mult<=5.0f)||
-			!walk_bob_lift_fits(f.bob.amplitude,f.bob.horizontal_mult,f.bob.diagonal_mult,
-				f.bob.vertical_mult)||
-			(f.bob.hops!=1&&f.bob.hops!=2))r.fail("bad walk bob settings");
+		if(!(s.bob.amplitude>0.0f&&s.bob.amplitude<=max_walk_bob_lift)||
+			!(s.bob.horizontal_mult>=0.0f&&s.bob.horizontal_mult<=5.0f)||
+			!(s.bob.diagonal_mult>=0.0f&&s.bob.diagonal_mult<=5.0f)||
+			!(s.bob.vertical_mult>=0.0f&&s.bob.vertical_mult<=5.0f)||
+			!walk_bob_lift_fits(s.bob.amplitude,s.bob.horizontal_mult,s.bob.diagonal_mult,
+				s.bob.vertical_mult)||
+			(s.bob.hops!=1&&s.bob.hops!=2))r.fail("bad walk bob settings");
 		}
 	f.tick_ms=r.u32();
 	f.window_x=r.i32();f.window_y=r.i32();f.window_z=r.i32();
@@ -327,7 +329,7 @@ inline bool read_frame_header(readerst &r,frame_headerst &f)
 	f.mouse_x=r.i32();f.mouse_y=r.i32();
 	f.mouse_mbut=r.u8()!=0;
 	f.zoom=r.i32();f.origin_x=r.i32();f.origin_y=r.i32();f.dimx=r.i32();f.dimy=r.i32();
-	f.rest_x=r.f64();f.rest_y=r.f64();
+	s.rest_x=r.f64();s.rest_y=r.f64();
 	return r.ok();
 }
 
