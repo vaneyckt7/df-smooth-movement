@@ -8,6 +8,7 @@ A visual plugin for Dwarf Fortress that makes movement smoother.
 - **Sprites flip** creatures can optionally face the direction they are walking.
 - **Smooth native follow:** Dwarf Fortress's unit follow glides automatically.
 - **Adjustable step time:** how long a one-tile glide takes is a runtime setting.
+- **Walk bob:** creatures can optionally hop twice per step, like footfalls, while they glide.
 - **Free camera:** the camera can optionally glide and be dragged with the mouse (WIP).
 
 ## Installation
@@ -36,9 +37,25 @@ smooth-movement camera on   # enable the free camera
 smooth-movement linear on   # use linear easing with adaptive <timestep>–500 ms movement tweens
 smooth-movement timestep 200 # a one-tile glide takes 200 ms (default 150, range 20-2000)
 smooth-movement hauled on   # show icons for carried boulders, bars, and wood
+smooth-movement bob on      # enable the walk bob
+smooth-movement bob 0.15    # bob height in tiles (default 0.10); does not turn the bob on
+smooth-movement bobmult 1 2.4 2.7  # bob multipliers for horizontal, diagonal, vertical steps
+smooth-movement hops 1      # one hop per step instead of two
 smooth-movement stats on    # time the render hook; `smooth-movement stats` prints the numbers
 smooth-movement record f.rec # write what the render hook sees for the next 900 frames to f.rec
 ```
+
+### Walk bob
+
+The bob is off by default and does not change how creatures glide; it only lifts the sprite
+along the way. The height is `bob <amount>` times a per-direction multiplier: a step with a
+vertical component already moves the sprite a whole tile up or down, which drowns a small hop,
+so diagonal and straight vertical steps get larger multipliers by default. Every combination of
+amount and multipliers is capped so the lift stays under one tile, because the plugin repaints
+exactly one row above a bobbing sprite. On a row that is off the top of the screen, or on fire,
+the whole creature glides without the bob. Carried item icons bob with their creature; vehicles
+never bob. `all on|off` leaves the bob alone. Like `flip` and `hauled`, the bob settings return
+to their defaults when the plugin is disabled.
 
 ## Compatibility
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added: an optional walk bob. `bob on` lifts every gliding creature sprite twice per step,
+  like two footfalls, by `bob <amount>` (default 0.10 tile) times a multiplier for the step's
+  direction (`bobmult <horizontal> <diagonal> <vertical>`, default 1, 2.4, 2.7); `hops 1`
+  gives a single bounce. Off by default, and with it off nothing the plugin draws changes.
+  Carried item icons bob with their creature, vehicles never do, and a creature whose row
+  above is off the screen or burning glides without the bob. Frame recordings do not carry
+  the bob settings yet, so a replay runs with the bob off.
 - Fixed: a repaint while the game is paused can no longer be read as a step, so sprites do
   not slide or flip with the simulation standing still. A redraw at a simulation tick the
   per-tile arrays were already drawn at (the game showing the units sharing a tile in turn,

@@ -161,6 +161,7 @@ struct plugin_statest
 	frame_recorderst recorder;
 	bool flip_enabled=false;
 	bool hauled_enabled=false;
+	walk_bob_settingst bob;
 	render_statest render;
 };
 
@@ -408,10 +409,16 @@ void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
 	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
 	const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
 	const float mirror_offset=float(proxy.mirror_shift)*tile_size;
+	// A bobbing sprite is lifted towards the row above its path; the lift is zero at both
+	// ends of the step, so it lands on the grid.
+	const float bob_offset=proxy.bob?
+		-state.bob.lift(proxy.source_x,proxy.source_y,proxy.target_x,proxy.target_y,
+			proxy.progress)*tile_size:
+		0.0f;
 	const SDL_FRect destination=
 		{
 		source_x+(target_x-source_x)*proxy.progress+mirror_offset,
-		source_y+(target_y-source_y)*proxy.progress,
+		source_y+(target_y-source_y)*proxy.progress+bob_offset,
 		tile_size,
 		tile_size
 		};
@@ -432,9 +439,14 @@ void draw_carried_item_proxy(
 	const float target_y=tile_pixel(proxy.target_y,renderer->origin_y,zoom);
 	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
 	const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
+	// The icon rides the creature's walk bob so it stays on the sprite that carries it.
+	const float bob_offset=proxy.bob?
+		-state.bob.lift(proxy.source_x,proxy.source_y,proxy.target_x,proxy.target_y,
+			proxy.progress)*tile_size:
+		0.0f;
 	const auto icon=carried_item_icon_rect(
 		source_x+(target_x-source_x)*proxy.progress,
-		source_y+(target_y-source_y)*proxy.progress,
+		source_y+(target_y-source_y)*proxy.progress+bob_offset,
 		tile_size);
 	const SDL_FRect destination={icon.x,icon.y,icon.width,icon.height};
 	state.sdl.render_copy_f(
@@ -596,7 +608,7 @@ std::vector<carried_item_proxyst> collect_carried_item_proxies(
 		const float source_x=movement.active?movement.source_x:float(x);
 		const float source_y=movement.active?movement.source_y:float(y);
 		carried_item_proxyst proxy={
-			source_x,source_y,x,y,movement.active?movement.progress:1.0f,texture,{}};
+			source_x,source_y,x,y,movement.active?movement.progress:1.0f,texture,false,{}};
 		for(int32_t coverage_x=int32_t(std::floor(std::min(source_x,float(x))));
 			coverage_x<=int32_t(std::ceil(std::max(source_x,float(x))));++coverage_x)
 			for(int32_t coverage_y=int32_t(std::floor(std::min(source_y,float(y))));
@@ -634,7 +646,7 @@ std::vector<viewport_renderst> collect_viewport_renders(
 			{
 			vp,
 			collect_proxies(
-				vp,state.render.animation_manager,state.flip_enabled,
+				vp,state.render.animation_manager,state.flip_enabled,state.bob.enabled,
 				[renderer](int32_t texpos){return cached_texture(renderer,texpos);}),
 			{}
 			};
@@ -787,6 +799,20 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	std::vector<viewport_renderst> viewport_renders=
 		collect_viewport_renders(renderer,viewports);
 	tile_coveragest coverage=collect_viewport_coverage(viewport_renders);
+	// A hauled icon bobs with the creature under it: the main viewport's centre proxy on the
+	// same tile at the same point of the same step. That proxy's coverage already holds the
+	// row the lift reaches into, so the icon adds nothing to it.
+	if(state.bob.enabled&&!carried_items.empty()&&!viewport_renders.empty())
+		for(carried_item_proxyst &item:carried_items)
+			for(const render_proxyst &proxy:viewport_renders.back().proxies)
+				if(proxy.bob&&proxy.layer==viewport_visual_layer::center&&
+					proxy.target_x==item.target_x&&proxy.target_y==item.target_y&&
+					proxy.source_x==item.source_x&&proxy.source_y==item.source_y&&
+					proxy.progress==item.progress)
+					{
+					item.bob=true;
+					break;
+					}
 	for(const carried_item_proxyst &proxy:carried_items)
 		coverage.insert(proxy.coverage.begin(),proxy.coverage.end());
 
@@ -952,6 +978,18 @@ int32_t parse_step_ms(const std::string &text)
 	return ms>=20&&ms<=2000?ms:-1;
 }
 
+// A bob amount or multiplier: decimal digits with at most one point, so that a stray
+// character is a usage error rather than a number cut short at it. Negative when the text
+// is not one.
+float parse_bob_value(const std::string &text)
+{
+	if(text.empty()||text.size()>8||
+		text.find_first_not_of("0123456789.")!=std::string::npos||
+		text.find('.')!=text.rfind('.')||
+		text.find_first_of("0123456789")==std::string::npos)return -1.0f;
+	return std::stof(text);
+}
+
 void reset_visual_state()
 {
 	const bool linear=state.render.animation_manager.is_linear();
@@ -975,6 +1013,7 @@ void reset_state()
 		visual_animation_managerst::default_step_duration_ms);
 	state.flip_enabled=false;
 	state.hauled_enabled=false;
+	state.bob=walk_bob_settingst{};
 	state.stats.enabled=false;
 	state.stats.clear();
 	state.recorder.stop();
@@ -1001,6 +1040,11 @@ command_result status_command(
 			state.render.animation_manager.step_duration_ms());
 		out.print("hauled item icons: {}\n",
 			state.hauled_enabled?"on":"off");
+		out.print("walk bob: {}, amount {:.2f}\n",state.bob.enabled?"on":"off",
+			state.bob.amplitude);
+		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
+			state.bob.horizontal_mult,state.bob.diagonal_mult,state.bob.vertical_mult);
+		out.print("hops per step: {}\n",state.bob.hops);
 		out.print("frame stats: {}\n",
 			state.stats.enabled?"on":"off");
 		return CR_OK;
@@ -1214,6 +1258,89 @@ command_result status_command(
 			}
 		return CR_WRONG_USAGE;
 		}
+	if(parameters[0]=="bob")
+		{
+		if(parameters.size()==1)
+			{
+			out.print("walk bob: {}, amount {:.2f}\n",state.bob.enabled?"on":"off",
+				state.bob.amplitude);
+			return CR_OK;
+			}
+		if(parameters.size()!=2)return CR_WRONG_USAGE;
+		if(parameters[1]=="on"||parameters[1]=="off")
+			{
+			state.bob.enabled=parameters[1]=="on";
+			if(gps!=nullptr)++gps->force_full_display_count;
+			out.print("smooth-movement: walk bob {}\n",parameters[1]);
+			return CR_OK;
+			}
+		// Anything else is an amount, in tiles. It only sets the height: turning the bob off
+		// is `bob off`, so zero is rejected with the rest.
+		const float amount=parse_bob_value(parameters[1]);
+		if(amount<0.0f)return CR_WRONG_USAGE;
+		if(amount==0.0f||amount>max_walk_bob_lift)
+			{
+			out.printerr("bob amount must be within 0..{:.2f} tile\n",max_walk_bob_lift);
+			return CR_FAILURE;
+			}
+		if(!walk_bob_lift_fits(amount,state.bob.horizontal_mult,state.bob.diagonal_mult,
+				state.bob.vertical_mult))
+			{
+			out.printerr("bob {:.2f} times the current multipliers lifts more than {:.2f} "
+				"tile; lower the multipliers first\n",amount,max_walk_bob_lift);
+			return CR_FAILURE;
+			}
+		state.bob.amplitude=amount;
+		if(gps!=nullptr)++gps->force_full_display_count;
+		out.print("smooth-movement: bob amount {:.2f}\n",state.bob.amplitude);
+		return CR_OK;
+		}
+	if(parameters[0]=="bobmult")
+		{
+		if(parameters.size()==1)
+			{
+			out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
+				state.bob.horizontal_mult,state.bob.diagonal_mult,state.bob.vertical_mult);
+			return CR_OK;
+			}
+		if(parameters.size()!=4)return CR_WRONG_USAGE;
+		const float horizontal=parse_bob_value(parameters[1]);
+		const float diagonal=parse_bob_value(parameters[2]);
+		const float vertical=parse_bob_value(parameters[3]);
+		if(horizontal<0.0f||diagonal<0.0f||vertical<0.0f)return CR_WRONG_USAGE;
+		if(horizontal>5.0f||diagonal>5.0f||vertical>5.0f)
+			{
+			out.printerr("bob multipliers must be within 0..5\n");
+			return CR_FAILURE;
+			}
+		if(!walk_bob_lift_fits(state.bob.amplitude,horizontal,diagonal,vertical))
+			{
+			out.printerr("bob {:.2f} times that multiplier lifts more than {:.2f} tile; "
+				"lower one of them\n",state.bob.amplitude,max_walk_bob_lift);
+			return CR_FAILURE;
+			}
+		state.bob.horizontal_mult=horizontal;
+		state.bob.diagonal_mult=diagonal;
+		state.bob.vertical_mult=vertical;
+		out.print("smooth-movement: bob multipliers horizontal {:.2f}, diagonal {:.2f}, "
+			"vertical {:.2f}\n",horizontal,diagonal,vertical);
+		return CR_OK;
+		}
+	if(parameters[0]=="hops")
+		{
+		if(parameters.size()==1)
+			{
+			out.print("hops per step: {}\n",state.bob.hops);
+			return CR_OK;
+			}
+		if(parameters.size()==2&&(parameters[1]=="1"||parameters[1]=="2"))
+			{
+			state.bob.hops=parameters[1]=="1"?1:2;
+			out.print("smooth-movement: hops per step {}\n",state.bob.hops);
+			return CR_OK;
+			}
+		return CR_WRONG_USAGE;
+		}
 	return CR_WRONG_USAGE;
 }
 
@@ -1229,6 +1356,8 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 		"sprite flipping: flip on|off; linear movement: linear on|off; "
 		"one-tile step time: timestep <ms> (20-2000); "
 		"hauled item icons: hauled on|off; "
+		"walk bob: bob on|off|<amount>; bob multipliers: bobmult <horizontal> <diagonal> "
+		"<vertical>; hops per step: hops 1|2; "
 		"frame timing: stats [on|off|reset]; "
 		"frame recording: record <file> [frames] | record stop | record status.",
 		status_command);
