@@ -420,6 +420,67 @@ void test_bob()
 	expect_true("refused hops leave it",state.bob.hops==2);
 }
 
+// The settings go out as one value and come back the same, with each landing where its
+// owner reads it. The four switches are set to a pattern and then its complement, so two of
+// them swapped would show. The camera's rest offset survives its switch, which zeroes the
+// offset when it changes.
+void test_settings_round_trip()
+{
+	plugin_statest state;
+	plugin_settingsst s;
+	s.flip=true;s.hauled=false;s.camera=true;s.rest_x=-0.25;s.rest_y=0.5;s.linear=false;
+	s.step_ms=400;s.bob.enabled=true;s.bob.amplitude=0.2f;s.bob.horizontal_mult=1.1f;
+	s.bob.diagonal_mult=1.2f;s.bob.vertical_mult=1.3f;s.bob.hops=1;
+	state.apply_settings(s);
+	expect_true("apply sets flip",state.flip_enabled);
+	expect_true("apply leaves hauled",!state.hauled_enabled);
+	expect_true("apply turns the camera on",state.render.camera.is_enabled());
+	expect_near("apply sets the rest x",state.render.camera.rest_offset_x(),-0.25);
+	expect_near("apply sets the rest y",state.render.camera.rest_offset_y(),0.5);
+	expect_true("apply leaves linear",!state.render.animation_manager.is_linear());
+	expect_true("apply sets the step",state.render.animation_manager.step_duration_ms()==400);
+	expect_true("apply sets the bob",state.bob.enabled&&state.bob.hops==1);
+	expect_near("apply sets the bob amount",state.bob.amplitude,0.2f);
+	expect_near("apply sets the bob multipliers",state.bob.vertical_mult,1.3f);
+	const plugin_settingsst back=state.settings();
+	expect_true("settings read back the switches",
+		back.flip&&!back.hauled&&back.camera&&!back.linear&&back.step_ms==400);
+	expect_near("settings read back the rest x",back.rest_x,-0.25);
+	expect_near("settings read back the rest y",back.rest_y,0.5);
+	expect_true("settings read back the bob",
+		back.bob.enabled&&back.bob.hops==1&&back.bob.amplitude==0.2f&&
+		back.bob.horizontal_mult==1.1f&&back.bob.diagonal_mult==1.2f&&
+		back.bob.vertical_mult==1.3f);
+	plugin_settingsst other;
+	other.flip=false;other.hauled=true;other.camera=false;other.linear=true;
+	state.apply_settings(other);
+	expect_true("the complement applies",
+		!state.flip_enabled&&state.hauled_enabled&&!state.render.camera.is_enabled()&&
+		state.render.animation_manager.is_linear());
+	const plugin_settingsst back2=state.settings();
+	expect_true("the complement reads back",
+		!back2.flip&&back2.hauled&&!back2.camera&&back2.linear);
+	expect_true("the camera off reads back at rest zero",back2.rest_x==0.0&&back2.rest_y==0.0);
+	state.apply_settings(s);
+	// The commands and the value agree: what `camera 0.25 0` set reads back as the camera's
+	// own rest offset, negated by the command.
+	run(state,{"camera","0.25","0"});
+	expect_near("settings read the command's offset",state.settings().rest_x,-0.25);
+	// The same value again changes nothing, and the camera keeps its offset: the switch
+	// does not change.
+	state.apply_settings(state.settings());
+	expect_near("re-applying keeps the rest x",state.render.camera.rest_offset_x(),-0.25);
+	// Defaults put everything back, the camera off with its offset at zero.
+	state.apply_settings(plugin_settingsst{});
+	expect_true("defaults clear the switches",
+		!state.flip_enabled&&!state.hauled_enabled&&!state.render.camera.is_enabled()&&
+		!state.render.animation_manager.is_linear());
+	expect_true("defaults restore the step",
+		state.render.animation_manager.step_duration_ms()==150);
+	expect_near("defaults zero the rest x",state.render.camera.rest_offset_x(),0.0);
+	expect_true("defaults restore the bob",!state.bob.enabled&&state.bob.hops==2);
+}
+
 void test_reset()
 {
 	plugin_statest state;
@@ -460,6 +521,7 @@ int main()
 	test_flip_linear_hauled();
 	test_timestep();
 	test_bob();
+	test_settings_round_trip();
 	test_reset();
 	if(failures!=0)
 		{

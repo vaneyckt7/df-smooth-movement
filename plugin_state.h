@@ -12,6 +12,7 @@
 #include "frame_recorder.h"
 #include "frame_stats.h"
 #include "free_camera.h"
+#include "plugin_settings.h"
 #include "tile_repaint.h"
 #include "view_context.h"
 #include "visual_animation.h"
@@ -129,18 +130,45 @@ struct plugin_statest
 		render.native_follow_id=-1;
 		}
 
+	// The settings as one value, for the recorder to store with the frame.
+	plugin_settingsst settings() const
+		{
+		plugin_settingsst s;
+		s.flip=flip_enabled;
+		s.hauled=hauled_enabled;
+		s.camera=render.camera.is_enabled();
+		s.rest_x=render.camera.rest_offset_x();
+		s.rest_y=render.camera.rest_offset_y();
+		s.linear=render.animation_manager.is_linear();
+		s.step_ms=render.animation_manager.step_duration_ms();
+		s.bob=bob;
+		return s;
+		}
+
+	// Every setting to the value given, where its owner reads it; the harness restores a
+	// recorded frame's settings with it. The camera's rest offset goes after its switch,
+	// which zeroes the offset when it changes.
+	void apply_settings(const plugin_settingsst &s)
+		{
+		flip_enabled=s.flip;
+		hauled_enabled=s.hauled;
+		render.camera.set_enabled(s.camera);
+		render.camera.set_rest(s.rest_x,s.rest_y);
+		render.animation_manager.set_linear(s.linear);
+		render.animation_manager.set_step_duration_ms(s.step_ms);
+		bob=s.bob;
+		}
+
 	// Everything back to how a freshly enabled plugin starts: the visual state, the settings
-	// at their defaults, the counters cleared and a running recording stopped.
+	// at their defaults, the counters cleared and a running recording stopped. Linear easing
+	// is the one setting kept: the plugin has kept it across disable and enable since the
+	// setting was added.
 	void reset()
 		{
 		reset_visual();
-		render.camera.set_rest(0.0,0.0);
-		render.camera.set_enabled(false);
-		render.animation_manager.set_step_duration_ms(
-			visual_animation_managerst::default_step_duration_ms);
-		flip_enabled=false;
-		hauled_enabled=false;
-		bob=walk_bob_settingst{};
+		plugin_settingsst defaults;
+		defaults.linear=render.animation_manager.is_linear();
+		apply_settings(defaults);
 		stats.enabled=false;
 		stats.clear();
 		recorder.stop();

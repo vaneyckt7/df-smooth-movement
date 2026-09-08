@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The plugin's settings are one value, `plugin_settingsst` in `plugin_settings.h`, that the
+  state hands out and takes back whole; a frame recording stores it with every frame and the
+  harness restores it before replaying the frame. The recording format is unchanged.
 - The render hook's two paint paths, the camera glide and the incremental frame, share one
   black fill under the tiles they repaint, with the game's draw colour saved and restored
   around it, instead of a copy each. Nothing the plugin draws changes.
