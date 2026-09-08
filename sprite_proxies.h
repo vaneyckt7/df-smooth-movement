@@ -350,8 +350,9 @@ std::vector<render_proxyst> collect_proxies(
 		}
 
 	// A creature that has stopped still needs its mirrored sprite painted each frame.
-	// Otherwise the engine repaints it natively and the two orientations alternate between steps.
-	// A fragment's tile is its anchor minus the layer's centre offset, inverting the moving path.
+	// Otherwise the game repaints it natively and the two orientations alternate between
+	// steps. A fragment's tile is its anchor minus the layer's centre offset, inverting the
+	// moving path.
 	// The movement tracker lists the tiles of the viewport that face the mirrored way, so the
 	// sweep visits those alone; a viewport with none, such as a level below the camera, lists
 	// nothing.
@@ -427,5 +428,26 @@ std::vector<render_proxyst> collect_proxies(
 			}
 		}
 	return proxies;
+}
+
+// Marks each carried item whose carrier bobs. The item rides on the centre proxy of the
+// viewport it is drawn over, the one on its own tile at the same point of the same step,
+// matched the way a fragment finds its anchor above: same target, same source, same
+// progress. The proxy's coverage already holds the row the lift reaches into, so the item
+// adds nothing to it. With the bob off no proxy bobs, so no item does.
+inline void mark_carried_item_bobs(
+	std::vector<carried_item_proxyst> &items,
+	const std::vector<render_proxyst> &proxies)
+{
+	for(carried_item_proxyst &item:items)
+		for(const render_proxyst &proxy:proxies)
+			if(proxy.bob&&proxy.layer==viewport_visual_layer::center&&
+				proxy.target_x==item.target_x&&proxy.target_y==item.target_y&&
+				proxy.source_x==item.source_x&&proxy.source_y==item.source_y&&
+				proxy.progress==item.progress)
+				{
+				item.bob=true;
+				break;
+				}
 }
 #endif
