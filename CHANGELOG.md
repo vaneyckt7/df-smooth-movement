@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The timestep changelog entry said the step resets "like `linear`"; `linear` is the one setting the plugin keeps across disable and enable, and the entry now says so.
 - The scroll detector counts the votes for a view shift over the background and over the sprite layers with one loop. Nothing the plugin draws changes.
 - The console commands read `on` and `off` through one parser, and a setting's bare command prints the same line the bare `smooth-movement` lists for it. Every command prints what it printed before.
 - `harness/test.sh` builds and runs each harness test through one shell function. Nothing the plugin does changes.
@@ -50,7 +51,8 @@
   to the movements that start after it. With `linear` on, the adaptive duration's floor is
   the step time and its 500 ms ceiling rises to the step time when that is longer, and a
   movement in flight keeps its own duration as the ceiling when the step time is lowered.
-  The setting returns to its default when the plugin is disabled or enabled, like `linear`.
+  The setting returns to its default when the plugin is disabled or enabled; `linear` alone
+  is kept, as it has been since it was added.
 - Add `smooth-movement stats [on|off|reset]`: counts frames, frames that reached the draw
   stage and tile repaints by the game, and (while on) times the render hook split into movement
   detection and drawing. Timing is off by default; counting costs one increment per frame,
