@@ -254,24 +254,16 @@ double tile_px(const df::renderer_2d_base *renderer)
 // is nothing to compare (empty background).
 double background_match_ratio(const df::graphic_viewportst *vp,int32_t dwx,int32_t dwy)
 {
-	int32_t considered=0;
-	int32_t matches=0;
-	for(int32_t x=0;x<vp->dim_x;++x)
-		{
-		const int32_t sx=x+dwx;
-		if(sx<0||sx>=vp->dim_x)continue;
-		for(int32_t y=0;y<vp->dim_y;++y)
-			{
-			const int32_t sy=y+dwy;
-			if(sy<0||sy>=vp->dim_y)continue;
-			const int32_t cur=vp->screentexpos_background[x*vp->dim_y+y];
-			if(cur==0)continue;
-			++considered;
-			if(vp->screentexpos_background_old[sx*vp->dim_y+sy]==cur)++matches;
-			}
-		}
-	if(considered==0)return -1.0;
-	return double(matches)/double(considered);
+	shift_match_tallyst tally;
+	tally_shift_matches(
+		visual_gridst{vp->dim_x,vp->dim_y},
+		vp->screentexpos_background,
+		vp->screentexpos_background_old,
+		dwx,
+		dwy,
+		[](int32_t texpos,int32_t previous){return texpos==previous;},
+		tally);
+	return tally.ratio();
 }
 
 // The camera's window writes: a plain UI scroll, never below zero.

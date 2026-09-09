@@ -213,6 +213,43 @@ struct visual_gridst
 		}
 };
 
+// The tally of one shift hypothesis: how many tiles were compared and how many agreed.
+struct shift_match_tallyst
+{
+	int32_t considered=0;
+	int32_t matches=0;
+
+	// 0..1, or -1 when there was nothing to compare.
+	double ratio() const
+		{
+		return considered==0?-1.0:double(matches)/double(considered);
+		}
+};
+
+// Adds to `tally` every tile of `current` that is non-zero and has a counterpart under a
+// shift by (dx,dy): current[x,y] against previous[x+dx,y+dy], compared by `matches`.
+template<typename Matches>
+void tally_shift_matches(
+	const visual_gridst &grid,
+	const int32_t *current,
+	const int32_t *previous,
+	int32_t dx,
+	int32_t dy,
+	const Matches &matches,
+	shift_match_tallyst &tally)
+{
+	for(int32_t x=0;x<grid.dim_x;++x)
+		{
+		for(int32_t y=0;y<grid.dim_y;++y)
+			{
+			const int32_t texpos=current[grid.index(x,y)];
+			if(texpos==0||!grid.contains(x+dx,y+dy))continue;
+			++tally.considered;
+			if(matches(texpos,previous[grid.index(x+dx,y+dy)]))++tally.matches;
+			}
+		}
+}
+
 // out[x,y] = in[x+dx,y+dy] where that tile exists, `fill` elsewhere: the grid as it looks
 // after the view scrolled by (dx,dy).
 template<typename T>

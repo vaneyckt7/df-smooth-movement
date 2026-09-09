@@ -54,6 +54,31 @@ void run_frame(
 
 int main()
 {
+	{
+	// The shift tally: a 3x2 grid whose previous is the current moved one tile right; zero
+	// tiles and tiles whose counterpart falls off the grid are not counted.
+	const visual_gridst grid{3,2};
+	const int32_t current[6]={10,11,20,0,30,31};
+	const int32_t previous[6]={0,0,10,11,20,99};
+	const auto equal=[](int32_t a,int32_t b){return a==b;};
+	shift_match_tallyst none;
+	assert(none.ratio()==-1.0);
+	shift_match_tallyst right;
+	tally_shift_matches(grid,current,previous,1,0,equal,right);
+	assert(right.considered==3&&right.matches==3&&right.ratio()==1.0);
+	shift_match_tallyst still;
+	tally_shift_matches(grid,current,previous,0,0,equal,still);
+	assert(still.considered==5&&still.matches==0&&still.ratio()==0.0);
+	shift_match_tallyst down;
+	tally_shift_matches(grid,current,previous,0,1,equal,down);
+	assert(down.considered==3&&down.matches==0);
+	tally_shift_matches(grid,current,previous,1,0,equal,down); // tallies accumulate
+	assert(down.considered==6&&down.matches==3&&down.ratio()==0.5);
+	shift_match_tallyst off;
+	tally_shift_matches(grid,current,previous,3,0,equal,off);
+	assert(off.considered==0&&off.ratio()==-1.0);
+	}
+
 	visual_animation_managerst manager;
 	manager.set_base_duration_ms(100); // the timings below assume the original 100 ms step
 	manager.begin_frame(1000);

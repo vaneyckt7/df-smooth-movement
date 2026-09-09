@@ -23,8 +23,7 @@ inline double shift_match_ratio(
 	int32_t dy)
 {
 	const visual_gridst grid=input.grid();
-	int32_t considered=0;
-	int32_t matches=0;
+	shift_match_tallyst tally;
 	for(size_t layer=0;layer<visual_layer_count;++layer)
 		{
 		const auto id=static_cast<viewport_visual_layer>(layer);
@@ -32,21 +31,16 @@ inline double shift_match_ratio(
 		// A layer matching any non-zero previous carries no position, so it would vote for
 		// every hypothesis and carry an unapplied scroll over the bar.
 		if(visual_layer_descriptor(id).matches_any_previous)continue;
-		const int32_t *current=input.current[layer];
-		const int32_t *previous=input.previous[layer];
-		for(int32_t x=0;x<grid.dim_x;++x)
-			{
-			for(int32_t y=0;y<grid.dim_y;++y)
-				{
-				const int32_t texpos=current[grid.index(x,y)];
-				if(texpos==0||!grid.contains(x+dx,y+dy))continue;
-				++considered;
-				if(visual_layer_matches(id,texpos,previous[grid.index(x+dx,y+dy)]))++matches;
-				}
-			}
+		tally_shift_matches(
+			grid,
+			input.current[layer],
+			input.previous[layer],
+			dx,
+			dy,
+			[id](int32_t texpos,int32_t previous){return visual_layer_matches(id,texpos,previous);},
+			tally);
 		}
-	if(considered==0)return -1.0;
-	return double(matches)/double(considered);
+	return tally.ratio();
 }
 
 class visual_animation_managerst
