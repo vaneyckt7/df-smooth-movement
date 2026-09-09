@@ -164,6 +164,8 @@ struct render_statest
 	int64_t simulation_tick=-1;
 	int32_t snapshot_frames_left=0;
 	int32_t snapshot_frame_index=0;
+	// Movements left to log before the trace stops; set by the console through the mailbox.
+	int32_t trace_budget=0;
 
 	// The tick of a draw not yet painted, or -1.
 	int64_t take_drawn_tick(const buffer_drawst &draws)
@@ -227,7 +229,6 @@ struct plugin_statest
 	frame_statisticst stats;
 	// Console-armed, render-served.
 	snapshot_requestst snapshot;
-	int32_t trace_budget=0;   // console-set; movements left to log before the trace stops
 	console_settingst settings;   // console's own
 	// Simulation thread writes, render thread reads.
 	buffer_drawst draws;
@@ -434,7 +435,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		r.animation_manager.synchronize_viewport(animation_input(viewport));
 	r.animation_manager.end_frame();
 	if(t0)stats.add(stats.sync_us,stats.now_us()-t0);
-	if(state.trace_budget>0)
+	if(r.trace_budget>0)
 		{
 		// Opened only on a frame that has something to log.
 		std::ofstream trace;
@@ -442,8 +443,8 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 			{
 			for(const visual_movementst &m:r.animation_manager.movements(viewport))
 				{
-				if(m.start_time_ms!=now_ms||state.trace_budget<=0)continue;
-				--state.trace_budget;
+				if(m.start_time_ms!=now_ms||r.trace_budget<=0)continue;
+				--r.trace_budget;
 				if(!trace.is_open())trace.open("smooth-movement-trace.txt",std::ios::app);
 				trace<<"t="<<now_ms<<" paused="<<(pause_state!=nullptr&&*pause_state)
 					<<" vp="<<(viewport==vp?"main":"other")<<" layer="<<int(m.layer)
@@ -594,7 +595,6 @@ void reset_state()
 	state.settings.apply_to(state.render);
 	state.render.painted_draw_serial=state.draws.drawn_serial();
 	state.snapshot.armed=false;
-	state.trace_budget=0;
 	state.mailbox.drain(state.render);
 }
 
@@ -753,7 +753,7 @@ command_result status_command(
 			try{count=std::stoi(parameters[1]);}
 			catch(const std::exception &){return CR_WRONG_USAGE;}
 			}
-		state.trace_budget=count;
+		apply([count](render_statest &r){r.trace_budget=count;});
 		out.print("smooth-movement: tracing the next {} movements\n",count);
 		return CR_OK;
 		}
@@ -961,7 +961,6 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 		if(!wait_for_last_frame())
 			out.printerr("smooth-movement: the render thread is still in the last frame\n");
 		state.snapshot.armed=false;
-		state.trace_budget=0;
 		}
 	is_enabled=enable;
 	out.print("smooth-movement: {}\n",enable?"enabled":"disabled");
