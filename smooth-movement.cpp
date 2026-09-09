@@ -206,12 +206,14 @@ void game_repaint(df::renderer_2d_base *renderer,df::graphic_viewportst *vp,int3
 }
 
 // A staged repaint: skipped when the tile, with the stage's layers hidden, has nothing to
-// paint.
-void staged_repaint(
-	df::renderer_2d_base *renderer,df::graphic_viewportst *vp,int32_t x,int32_t y)
+// paint. The repaint passes of tile_repaint.h call it as repaint(vp,x,y).
+auto staged_repainter(df::renderer_2d_base *renderer)
 {
-	if(tile_paints_nothing(vp,x*vp->dim_y+y))return;
-	game_repaint(renderer,vp,x,y);
+	return [renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
+		{
+		if(tile_paints_nothing(vp,x*vp->dim_y+y))return;
+		game_repaint(renderer,vp,x,y);
+		};
 }
 
 void redraw_viewport_tile(
@@ -226,10 +228,7 @@ void redraw_viewport_tile(
 	if(state.render.blank_summaries.known_blank(vp,index))return;
 	repaint_staged(
 		vp,x,y,selected_mask(viewport.coverage.selected,index),defer_interface,
-		[renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
-			{
-			staged_repaint(renderer,vp,x,y);
-			});
+		staged_repainter(renderer));
 }
 
 // Runs after the proxies so the shading covers them rather than sitting underneath.
@@ -241,11 +240,7 @@ void draw_interface_only(
 {
 	if(!interface_pass_readable(vp))return;
 	if(state.render.blank_summaries.known_blank(vp,x*vp->dim_y+y))return;
-	repaint_interface_only(
-		vp,x,y,[renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
-			{
-			staged_repaint(renderer,vp,x,y);
-			});
+	repaint_interface_only(vp,x,y,staged_repainter(renderer));
 }
 
 void redraw_world_tile(
@@ -278,10 +273,7 @@ void redraw_above(
 	if(state.render.blank_summaries.known_blank(vp,index))return;
 	repaint_above(
 		vp,x,y,group,selected_mask(selected,index),
-		[renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
-			{
-			staged_repaint(renderer,vp,x,y);
-			});
+		staged_repainter(renderer));
 }
 
 SDL_Texture *cached_texture(
