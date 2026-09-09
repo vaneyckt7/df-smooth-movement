@@ -64,8 +64,14 @@ class free_camerast
 	int32_t prev_wy=0;
 	bool has_prev=false;
 
+	// Drop the scroll and follow tracking. A window write of the camera's own that has
+	// not landed yet is folded into rest first: whoever clears the tracking (a restart,
+	// a view reset, an abandoned scroll) also ends the manager's reporting of that
+	// landing, and without the fold the view would sit a tile off for good.
 	void clear_tracking()
 		{
+		rest_x+=self_scroll_x;
+		rest_y+=self_scroll_y;
 		self_scroll_x=0;
 		self_scroll_y=0;
 		follow_id=no_visual_movement;
