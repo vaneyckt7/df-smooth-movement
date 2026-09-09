@@ -522,16 +522,24 @@ void renderer_hook::interpose_fn_update_all()
 		save_snapshot(this);
 }
 
-// Both map screens draw the viewports; the interpose records the tick they drew.
+// Both map screens draw the viewports. Each interpose records the tick it drew and marks the
+// draw in progress around the game's own render, so the render hook can tell a frame that
+// found the buffers being written.
+template<typename Render>
+void draw_viewports(const Render &render)
+{
+	state.draws.note_drawn();
+	state.draws.drawing.store(true,std::memory_order_release);
+	render();
+	state.draws.drawing.store(false,std::memory_order_release);
+}
+
 struct dwarfmode_hook : df::viewscreen_dwarfmodest
 {
 	typedef df::viewscreen_dwarfmodest interpose_base;
 	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
 		{
-		state.draws.note_drawn();
-		state.draws.drawing.store(true,std::memory_order_release);
-		INTERPOSE_NEXT(render)(curtick);
-		state.draws.drawing.store(false,std::memory_order_release);
+		draw_viewports([&]{INTERPOSE_NEXT(render)(curtick);});
 		}
 };
 
@@ -540,10 +548,7 @@ struct dungeonmode_hook : df::viewscreen_dungeonmodest
 	typedef df::viewscreen_dungeonmodest interpose_base;
 	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
 		{
-		state.draws.note_drawn();
-		state.draws.drawing.store(true,std::memory_order_release);
-		INTERPOSE_NEXT(render)(curtick);
-		state.draws.drawing.store(false,std::memory_order_release);
+		draw_viewports([&]{INTERPOSE_NEXT(render)(curtick);});
 		}
 };
 
