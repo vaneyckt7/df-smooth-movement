@@ -57,6 +57,39 @@ inline float parse_bob_value(const std::string &text)
 	return std::stof(text);
 }
 
+// Whether the words are a setting's name followed by `on` or `off`, and which; the shape
+// every switch in the grammar takes.
+inline bool parse_on_off(const std::vector<std::string> &parameters,bool &on)
+{
+	if(parameters.size()!=2||(parameters[1]!="on"&&parameters[1]!="off"))return false;
+	on=parameters[1]=="on";
+	return true;
+}
+
+inline const char *on_off(bool on)
+{
+	return on?"on":"off";
+}
+
+// One line per setting, named by the setting's command word. Printed by the setting's bare
+// command and by the bare `smooth-movement`, which lists them all.
+template<typename Output>
+void print_setting(Output &out,const plugin_statest &state,const std::string &word)
+{
+	if(word=="flip")out.print("sprite flipping: {}\n",on_off(state.flip_enabled));
+	if(word=="linear")
+		out.print("linear movement: {}\n",on_off(state.render.animation_manager.is_linear()));
+	if(word=="timestep")
+		out.print("time step: {} ms\n",state.render.animation_manager.step_duration_ms());
+	if(word=="hauled")out.print("hauled item icons: {}\n",on_off(state.hauled_enabled));
+	if(word=="bob")
+		out.print("walk bob: {}, amount {:.2f}\n",on_off(state.bob.enabled),state.bob.amplitude);
+	if(word=="bobmult")
+		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
+			state.bob.horizontal_mult,state.bob.diagonal_mult,state.bob.vertical_mult);
+	if(word=="hops")out.print("hops per step: {}\n",state.bob.hops);
+}
+
 // Prints every setting, for the bare command.
 template<typename Output>
 void print_settings(Output &out,const plugin_statest &state,const command_hostst &host)
@@ -66,23 +99,11 @@ void print_settings(Output &out,const plugin_statest &state,const command_hostst
 		host.plugin_version,
 		host.plugin_enabled?"enabled":"disabled");
 	out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
-		state.render.camera.is_enabled()?"on":"off",
+		on_off(state.render.camera.is_enabled()),
 		-state.render.camera.rest_offset_x(),-state.render.camera.rest_offset_y());
-	out.print("sprite flipping: {}\n",
-		state.flip_enabled?"on":"off");
-	out.print("linear movement: {}\n",
-		state.render.animation_manager.is_linear()?"on":"off");
-	out.print("time step: {} ms\n",
-		state.render.animation_manager.step_duration_ms());
-	out.print("hauled item icons: {}\n",
-		state.hauled_enabled?"on":"off");
-	out.print("walk bob: {}, amount {:.2f}\n",state.bob.enabled?"on":"off",
-		state.bob.amplitude);
-	out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-		state.bob.horizontal_mult,state.bob.diagonal_mult,state.bob.vertical_mult);
-	out.print("hops per step: {}\n",state.bob.hops);
-	out.print("frame stats: {}\n",
-		state.stats.enabled?"on":"off");
+	for(const char *word:{"flip","linear","timestep","hauled","bob","bobmult","hops"})
+		print_setting(out,state,word);
+	out.print("frame stats: {}\n",on_off(state.stats.enabled));
 }
 
 template<typename Output>
@@ -94,13 +115,12 @@ command_outcomest stats_command(
 		state.stats.print(out);
 		return command_outcomest::ok;
 		}
-	if(parameters.size()==2&&
-		(parameters[1]=="on"||parameters[1]=="off"))
+	bool on=false;
+	if(parse_on_off(parameters,on))
 		{
-		const bool on=parameters[1]=="on";
 		if(on)state.stats.clear();
 		state.stats.enabled=on;
-		out.print("smooth-movement: frame stats {}\n",parameters[1]);
+		out.print("smooth-movement: frame stats {}\n",on_off(on));
 		return command_outcomest::ok;
 		}
 	if(parameters.size()==2&&parameters[1]=="reset")
@@ -169,7 +189,7 @@ command_outcomest camera_command(
 	if(parameters.size()==1)
 		{
 		out.print("free camera: {}, offset {:.3f} {:.3f}\n",
-			state.render.camera.is_enabled()?"on":"off",
+			on_off(state.render.camera.is_enabled()),
 			-state.render.camera.rest_offset_x(),-state.render.camera.rest_offset_y());
 		return command_outcomest::ok;
 		}
@@ -220,16 +240,16 @@ command_outcomest bob_command(
 {
 	if(parameters.size()==1)
 		{
-		out.print("walk bob: {}, amount {:.2f}\n",state.bob.enabled?"on":"off",
-			state.bob.amplitude);
+		print_setting(out,state,"bob");
 		return command_outcomest::ok;
 		}
 	if(parameters.size()!=2)return command_outcomest::wrong_usage;
-	if(parameters[1]=="on"||parameters[1]=="off")
+	bool on=false;
+	if(parse_on_off(parameters,on))
 		{
-		state.bob.enabled=parameters[1]=="on";
+		state.bob.enabled=on;
 		host.full_redraw();
-		out.print("smooth-movement: walk bob {}\n",parameters[1]);
+		out.print("smooth-movement: walk bob {}\n",on_off(on));
 		return command_outcomest::ok;
 		}
 	// Anything else is an amount, in tiles. It only sets the height: turning the bob off
@@ -260,8 +280,7 @@ command_outcomest bobmult_command(
 {
 	if(parameters.size()==1)
 		{
-		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-			state.bob.horizontal_mult,state.bob.diagonal_mult,state.bob.vertical_mult);
+		print_setting(out,state,"bobmult");
 		return command_outcomest::ok;
 		}
 	if(parameters.size()!=4)return command_outcomest::wrong_usage;
@@ -306,14 +325,13 @@ command_outcomest run_command(
 	if(word=="record")return record_command(out,parameters,state,host);
 	if(word=="all")
 		{
-		if(parameters.size()!=2||
-			(parameters[1]!="on"&&parameters[1]!="off"))return command_outcomest::wrong_usage;
-		const bool enabled=parameters[1]=="on";
-		state.flip_enabled=enabled;
-		state.render.animation_manager.set_linear(enabled);
-		state.hauled_enabled=enabled;
+		bool on=false;
+		if(!parse_on_off(parameters,on))return command_outcomest::wrong_usage;
+		state.flip_enabled=on;
+		state.render.animation_manager.set_linear(on);
+		state.hauled_enabled=on;
 		host.full_redraw();
-		out.print("smooth-movement: flip, linear and hauled {}\n",parameters[1]);
+		out.print("smooth-movement: flip, linear and hauled {}\n",on_off(on));
 		return command_outcomest::ok;
 		}
 	if(word=="camera")return camera_command(out,parameters,state,host);
@@ -321,53 +339,38 @@ command_outcomest run_command(
 		{
 		if(parameters.size()==1)
 			{
-			out.print("sprite flipping: {}\n",
-				state.flip_enabled?"on":"off");
+			print_setting(out,state,word);
 			return command_outcomest::ok;
 			}
 		// A toggle changes the screen without changing anything the game knows, so the game
 		// will not repaint. OFF matters most: the render path stops touching tiles it
 		// painted every frame. The last mirrored frame would persist. Same flush
 		// plugin_enable(false) uses.
-		if(parameters.size()==2&&parameters[1]=="on")
-			{
-			state.flip_enabled=true;
-			host.full_redraw();
-			out.print("smooth-movement: sprite flipping enabled\n");
-			return command_outcomest::ok;
-			}
-		if(parameters.size()==2&&parameters[1]=="off")
-			{
-			state.flip_enabled=false;
-			host.full_redraw();
-			out.print("smooth-movement: sprite flipping disabled\n");
-			return command_outcomest::ok;
-			}
-		return command_outcomest::wrong_usage;
+		bool on=false;
+		if(!parse_on_off(parameters,on))return command_outcomest::wrong_usage;
+		state.flip_enabled=on;
+		host.full_redraw();
+		out.print("smooth-movement: sprite flipping {}\n",on?"enabled":"disabled");
+		return command_outcomest::ok;
 		}
 	if(word=="linear")
 		{
 		if(parameters.size()==1)
 			{
-			out.print("linear movement: {}\n",
-				state.render.animation_manager.is_linear()?"on":"off");
+			print_setting(out,state,word);
 			return command_outcomest::ok;
 			}
-		if(parameters.size()==2&&
-			(parameters[1]=="on"||parameters[1]=="off"))
-			{
-			state.render.animation_manager.set_linear(parameters[1]=="on");
-			out.print("smooth-movement: linear movement {}\n",parameters[1]);
-			return command_outcomest::ok;
-			}
-		return command_outcomest::wrong_usage;
+		bool on=false;
+		if(!parse_on_off(parameters,on))return command_outcomest::wrong_usage;
+		state.render.animation_manager.set_linear(on);
+		out.print("smooth-movement: linear movement {}\n",on_off(on));
+		return command_outcomest::ok;
 		}
 	if(word=="timestep")
 		{
 		if(parameters.size()==1)
 			{
-			out.print("time step: {} ms\n",
-				state.render.animation_manager.step_duration_ms());
+			print_setting(out,state,word);
 			return command_outcomest::ok;
 			}
 		if(parameters.size()==2)
@@ -384,18 +387,15 @@ command_outcomest run_command(
 		{
 		if(parameters.size()==1)
 			{
-			out.print("hauled item icons: {}\n",state.hauled_enabled?"on":"off");
+			print_setting(out,state,word);
 			return command_outcomest::ok;
 			}
-		if(parameters.size()==2&&
-			(parameters[1]=="on"||parameters[1]=="off"))
-			{
-			state.hauled_enabled=parameters[1]=="on";
-			host.full_redraw();
-			out.print("smooth-movement: hauled item icons {}\n",parameters[1]);
-			return command_outcomest::ok;
-			}
-		return command_outcomest::wrong_usage;
+		bool on=false;
+		if(!parse_on_off(parameters,on))return command_outcomest::wrong_usage;
+		state.hauled_enabled=on;
+		host.full_redraw();
+		out.print("smooth-movement: hauled item icons {}\n",on_off(on));
+		return command_outcomest::ok;
 		}
 	if(word=="bob")return bob_command(out,parameters,state,host);
 	if(word=="bobmult")return bobmult_command(out,parameters,state);
@@ -403,7 +403,7 @@ command_outcomest run_command(
 		{
 		if(parameters.size()==1)
 			{
-			out.print("hops per step: {}\n",state.bob.hops);
+			print_setting(out,state,word);
 			return command_outcomest::ok;
 			}
 		if(parameters.size()==2&&(parameters[1]=="1"||parameters[1]=="2"))
