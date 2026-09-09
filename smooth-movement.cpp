@@ -244,12 +244,6 @@ plugin_statest state;
 
 using canvasst=sdl_canvasst<df::renderer_2d_base,df::graphic_viewportst,sdl_apist>;
 
-double tile_px(const df::renderer_2d_base *renderer)
-{
-	const int32_t zoom=renderer->viewport_zoom_factor;
-	return double(zoom==128?32:std::max(1,zoom*32/128));
-}
-
 // Match ratio of "buffers shifted by (dwx,dwy)" on the background layer: 0..1, or -1 when there
 // is nothing to compare (empty background).
 double background_match_ratio(const df::graphic_viewportst *vp,int32_t dwx,int32_t dwy)
@@ -456,7 +450,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 
 	if(!viewport_readable(vp)||renderer->sdl_renderer==nullptr)
 		return;
-	const double cam_tile=tile_px(renderer);
+	const double cam_tile=tile_pixel_size(renderer->viewport_zoom_factor);
 	camera_framest camera_frame;
 	camera_frame.window_x=window_x?*window_x:0;
 	camera_frame.window_y=window_y?*window_y:0;
