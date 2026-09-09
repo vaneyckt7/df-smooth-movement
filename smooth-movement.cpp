@@ -828,12 +828,17 @@ void renderer_hook::interpose_fn_update_all()
 
 // Both map screens fill the viewports' per-tile arrays in their render, on the simulation
 // thread; the interposes note the simulation tick they were filled at.
+void note_map_render()
+{
+	if(world!=nullptr)state.render.drawn_buffers.note_drawn(world->frame_counter);
+}
+
 struct dwarfmode_hook : df::viewscreen_dwarfmodest
 {
 	typedef df::viewscreen_dwarfmodest interpose_base;
 	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
 		{
-		if(world!=nullptr)state.render.drawn_buffers.note_drawn(world->frame_counter);
+		note_map_render();
 		INTERPOSE_NEXT(render)(curtick);
 		}
 };
@@ -843,13 +848,30 @@ struct dungeonmode_hook : df::viewscreen_dungeonmodest
 	typedef df::viewscreen_dungeonmodest interpose_base;
 	DEFINE_VMETHOD_INTERPOSE(void,render,(uint32_t curtick))
 		{
-		if(world!=nullptr)state.render.drawn_buffers.note_drawn(world->frame_counter);
+		note_map_render();
 		INTERPOSE_NEXT(render)(curtick);
 		}
 };
 
 IMPLEMENT_VMETHOD_INTERPOSE(dwarfmode_hook,render);
 IMPLEMENT_VMETHOD_INTERPOSE(dungeonmode_hook,render);
+
+// The three interposes the plugin runs on: both map screens' render and the 2D renderer's
+// update_all. Applying stops at the first that fails; removing one that is not applied is
+// a no-op, so a failed apply and a disable remove all three alike.
+bool apply_hooks()
+{
+	return INTERPOSE_HOOK(dwarfmode_hook,render).apply()&&
+		INTERPOSE_HOOK(dungeonmode_hook,render).apply()&&
+		INTERPOSE_HOOK(renderer_hook,update_all).apply();
+}
+
+void remove_hooks()
+{
+	INTERPOSE_HOOK(renderer_hook,update_all).remove();
+	INTERPOSE_HOOK(dwarfmode_hook,render).remove();
+	INTERPOSE_HOOK(dungeonmode_hook,render).remove();
+}
 
 bool load_sdl(color_ostream &out)
 {
@@ -913,23 +935,17 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 		{
 		state.reset();
 		if(!load_sdl(out))return CR_FAILURE;
-		if(!INTERPOSE_HOOK(dwarfmode_hook,render).apply()||
-			!INTERPOSE_HOOK(dungeonmode_hook,render).apply()||
-			!INTERPOSE_HOOK(renderer_hook,update_all).apply())
+		if(!apply_hooks())
 			{
 			out.printerr("smooth-movement: could not hook the map screens and 2D renderer\n");
-			INTERPOSE_HOOK(dwarfmode_hook,render).remove();
-			INTERPOSE_HOOK(dungeonmode_hook,render).remove();
-			INTERPOSE_HOOK(renderer_hook,update_all).remove();
+			remove_hooks();
 			state.sdl.clear();
 			return CR_FAILURE;
 			}
 		}
 	else
 		{
-		INTERPOSE_HOOK(renderer_hook,update_all).remove();
-		INTERPOSE_HOOK(dwarfmode_hook,render).remove();
-		INTERPOSE_HOOK(dungeonmode_hook,render).remove();
+		remove_hooks();
 		state.reset();
 		state.sdl.clear();
 		full_redraw();
