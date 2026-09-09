@@ -9,6 +9,7 @@
 #endif
 
 #include "sdl_canvas.h"
+#include "fake_viewport.h"
 
 #include <cassert>
 #include <cstdint>
@@ -21,36 +22,6 @@ namespace {
 struct fake_renderer;
 struct fake_texture{int id;};
 
-struct fake_viewportst
-{
-	int32_t dim_x=0;
-	int32_t dim_y=0;
-	int32_t *screentexpos_background=nullptr;
-	uint64_t *screentexpos_floor_flag=nullptr;
-	int32_t *screentexpos_background_two=nullptr;
-	uint32_t *screentexpos_liquid_flag=nullptr;
-	uint32_t *screentexpos_spatter_flag=nullptr;
-	int32_t *screentexpos_spatter=nullptr;
-	uint64_t *screentexpos_ramp_flag=nullptr;
-	uint32_t *screentexpos_shadow_flag=nullptr;
-	int32_t *screentexpos_building_one=nullptr;
-	int32_t *screentexpos_item=nullptr;
-	int32_t *screentexpos_vehicle=nullptr;
-	int32_t *screentexpos_vermin=nullptr;
-	int32_t *screentexpos_left_creature=nullptr;
-	int32_t *screentexpos=nullptr;
-	int32_t *screentexpos_right_creature=nullptr;
-	int32_t *screentexpos_building_two=nullptr;
-	int32_t *screentexpos_projectile=nullptr;
-	int32_t *screentexpos_high_flow=nullptr;
-	int32_t *screentexpos_top_shadow=nullptr;
-	int32_t *screentexpos_signpost=nullptr;
-	int32_t *screentexpos_upleft_creature=nullptr;
-	int32_t *screentexpos_up_creature=nullptr;
-	int32_t *screentexpos_upright_creature=nullptr;
-	int32_t *screentexpos_designation=nullptr;
-	int32_t *screentexpos_interface=nullptr;
-};
 
 struct fake_rect{int x,y,w,h;};
 struct fake_frect{float x,y,w,h;};
