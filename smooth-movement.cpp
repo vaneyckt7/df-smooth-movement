@@ -474,6 +474,20 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 		});
 }
 
+// The units that are not hidden on the level the window shows, within the viewport's tiles
+// from the window's corner; empty when the game has no window position.
+std::vector<df::unit *> units_in_view(const df::graphic_viewportst *vp)
+{
+	std::vector<df::unit *> units;
+	if(window_x==nullptr||window_y==nullptr||window_z==nullptr)return units;
+	Units::getUnitsInBox(
+		units,
+		*window_x,*window_y,*window_z,
+		*window_x+vp->dim_x-1,*window_y+vp->dim_y-1,*window_z,
+		[](df::unit *unit){return !Units::isHidden(unit);});
+	return units;
+}
+
 // Hands the recorder the units in view, where the hook looks them up.
 void record_frame_units(df::renderer_2d_base *renderer)
 {
@@ -481,15 +495,9 @@ void record_frame_units(df::renderer_2d_base *renderer)
 		{
 		std::vector<frame_record::unit_recordst> records;
 		const df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
-		if(vp!=nullptr&&window_x!=nullptr&&window_y!=nullptr&&window_z!=nullptr)
+		if(vp!=nullptr)
 			{
-			std::vector<df::unit *> units;
-			Units::getUnitsInBox(
-				units,
-				*window_x,*window_y,*window_z,
-				*window_x+vp->dim_x-1,*window_y+vp->dim_y-1,*window_z,
-				[](df::unit *unit){return !Units::isHidden(unit);});
-			for(const df::unit *unit:units)
+			for(const df::unit *unit:units_in_view(vp))
 				{
 				const int32_t texpos=item_texpos(hauled_item(unit));
 				records.push_back({unit->pos.x,unit->pos.y,unit->pos.z,texpos,
@@ -505,15 +513,7 @@ std::vector<carried_item_proxyst> collect_carried_item_proxies(
 	df::graphic_viewportst *vp)
 {
 	std::vector<carried_item_proxyst> proxies;
-	if(window_x==nullptr||window_y==nullptr||window_z==nullptr)return proxies;
-
-	std::vector<df::unit *> units;
-	Units::getUnitsInBox(
-		units,
-		*window_x,*window_y,*window_z,
-		*window_x+vp->dim_x-1,*window_y+vp->dim_y-1,*window_z,
-		[](df::unit *unit){return !Units::isHidden(unit);});
-	for(const df::unit *unit:units)
+	for(const df::unit *unit:units_in_view(vp))
 		{
 		const int32_t x=unit->pos.x-*window_x;
 		const int32_t y=unit->pos.y-*window_y;
