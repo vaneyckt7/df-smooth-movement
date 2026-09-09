@@ -100,7 +100,7 @@ void print_settings(Output &out,const plugin_statest &state,const command_hostst
 		host.plugin_enabled?"enabled":"disabled");
 	out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
 		on_off(state.render.camera.is_enabled()),
-		-state.render.camera.rest_offset_x(),-state.render.camera.rest_offset_y());
+		-state.render.camera.requested_offset_x(),-state.render.camera.requested_offset_y());
 	for(const char *word:{"flip","linear","timestep","hauled","bob","bobmult","hops"})
 		print_setting(out,state,word);
 	out.print("frame stats: {}\n",on_off(state.stats.enabled));
@@ -190,7 +190,7 @@ command_outcomest camera_command(
 		{
 		out.print("free camera: {}, offset {:.3f} {:.3f}\n",
 			on_off(state.render.camera.is_enabled()),
-			-state.render.camera.rest_offset_x(),-state.render.camera.rest_offset_y());
+			-state.render.camera.requested_offset_x(),-state.render.camera.requested_offset_y());
 		return command_outcomest::ok;
 		}
 	if(parameters.size()==2&&parameters[1]=="on")
@@ -205,7 +205,7 @@ command_outcomest camera_command(
 		}
 	if(parameters.size()==2&&parameters[1]=="reset")
 		{
-		state.render.camera.set_rest(0.0,0.0);
+		state.render.camera.request_rest(0.0,0.0);
 		return command_outcomest::ok;
 		}
 	if(parameters.size()==3)
@@ -221,7 +221,7 @@ command_outcomest camera_command(
 				}
 			// User-facing: positive = view sits east/south of the grid position.
 			state.render.camera.set_enabled(true);
-			state.render.camera.set_rest(-fx,-fy);
+			state.render.camera.request_rest(-fx,-fy);
 			state.render.camera.normalize_rest(host.scroll_window);
 			return command_outcomest::ok;
 			}

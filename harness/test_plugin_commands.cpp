@@ -266,16 +266,19 @@ void test_camera()
 		scrolled_x==0&&scrolled_y==0);
 	expect_ok("camera offset past half a tile",run(state,{"camera","0.75","0"}),"");
 	expect_true("camera offset past half a tile scrolls a tile",scrolled_x==1&&scrolled_y==0);
-	expect_ok("camera printout",run(state,{"camera"}),"free camera: on, offset 0.75 0\n");
+	// The printout is against the window as written, which the last command moved a tile.
+	expect_ok("camera printout",run(state,{"camera"}),"free camera: on, offset -0.25 -0\n");
 	expect_ok("camera reset",run(state,{"camera","reset"}),"");
-	expect_near("camera reset x",state.render.camera.rest_offset_x(),0.0);
+	// No frame runs here, so the tile the previous command wrote has not landed: rest carries
+	// it until the landing, and the offset against the written window is zero.
+	expect_near("camera reset x",state.render.camera.rest_offset_x(),-1.0);
 	expect_near("camera reset y",state.render.camera.rest_offset_y(),0.0);
 	expect_true("camera reset keeps it on",state.render.camera.is_enabled());
 	expect_failed("camera offset too far east",run(state,{"camera","1","0"}),
 		"offsets must be within -0.99..0.99 tiles\n");
 	expect_failed("camera offset too far north",run(state,{"camera","0","-1.5"}),
 		"offsets must be within -0.99..0.99 tiles\n");
-	expect_near("refused offset leaves x",state.render.camera.rest_offset_x(),0.0);
+	expect_near("refused offset leaves x",state.render.camera.rest_offset_x(),-1.0);
 	expect_usage("camera offset not a number",run(state,{"camera","east","0"}));
 	expect_usage("camera bogus",run(state,{"camera","sideways"}));
 	expect_usage("camera one number",run(state,{"camera","0.5","0","0"}));
