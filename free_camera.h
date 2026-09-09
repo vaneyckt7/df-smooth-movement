@@ -111,10 +111,33 @@ class free_camerast
 			return rest_y;
 			}
 
+		// The offset against the window as written: what a command would ask for to
+		// reproduce the view, before and after a write of the camera's own lands.
+		double requested_offset_x() const
+			{
+			return rest_x+self_scroll_x;
+			}
+
+		double requested_offset_y() const
+			{
+			return rest_y+self_scroll_y;
+			}
+
 		void set_rest(double x,double y)
 			{
 			rest_x=x;
 			rest_y=y;
+			}
+
+		// The offset a command asks for, against the window as written. Rest is against the
+		// window the per-tile arrays still show, which lags a write of the camera's own until
+		// it lands, so the write is taken off here and comes back when the landing is
+		// attributed. The view is right at once and stays right whether or not the write
+		// ever lands on its own.
+		void request_rest(double x,double y)
+			{
+			rest_x=x-self_scroll_x;
+			rest_y=y-self_scroll_y;
 			}
 
 		// Cancel everything except the persistent rest offset (the camera keeps its sub-tile
@@ -136,14 +159,14 @@ class free_camerast
 			}
 
 		// Fold whole tiles of rest into window_x/window_y so |rest| <= 0.5 (minimal edge
-		// strip). The visual position is unchanged: the window write is attributed via
-		// self_scroll when it lands. scroll_window(kx,ky) writes the window position and
-		// returns which axes it applied.
+		// strip) once every write of the camera's own has landed. The visual position is
+		// unchanged: the window write is attributed via self_scroll when it lands.
+		// scroll_window(kx,ky) writes the window position and returns which axes it applied.
 		template<typename ScrollWindow>
 		void normalize_rest(const ScrollWindow &scroll_window)
 			{
-			const int32_t kx=int32_t(-std::llround(rest_x));
-			const int32_t ky=int32_t(-std::llround(rest_y));
+			const int32_t kx=int32_t(-std::llround(rest_x+self_scroll_x));
+			const int32_t ky=int32_t(-std::llround(rest_y+self_scroll_y));
 			const std::array<bool,2> applied=scroll_window(kx,ky);
 			if(applied[0])self_scroll_x+=kx;
 			if(applied[1])self_scroll_y+=ky;

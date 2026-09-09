@@ -307,6 +307,68 @@ void test_normalize()
 	expect_glide("landing after abandon",scene.camera,-10-32,0);
 	}
 	{
+	// A second camera command before the first one's write lands asks for its offset against
+	// the window as written, while rest is against the content the arrays still show: the
+	// write is taken off rest and comes back when it lands. The view is right before the
+	// landing and after it, with no glide.
+	scenest scene;
+	scene.camera.request_rest(-0.75,0.0);
+	scene.camera.normalize_rest(scene.window);
+	scene.step();
+	scene.camera.request_rest(0.0,0.0);
+	expect_rest("reset before landing",scene.camera,-1.0,0.0);
+	expect_glide("reset before landing",scene.camera,-32,0);
+	scene.manager.scroll.pending=true;
+	scene.step();
+	scene.land(1,0);
+	scene.step();
+	expect_rest("reset landed",scene.camera,0.0,0.0);
+	expect_glide("reset landed",scene.camera,0,0);
+	scene.step();
+	scene.land(1,0);
+	scene.step();
+	expect_glide("scroll after the reset",scene.camera,32,0);
+	}
+	{
+	// The same with a second offset that writes again: both writes land together and rest
+	// ends within half a tile.
+	scenest scene;
+	scene.camera.request_rest(-0.75,0.0);
+	scene.camera.normalize_rest(scene.window);
+	scene.step();
+	scene.camera.request_rest(-0.75,0.0);
+	scene.camera.normalize_rest(scene.window);
+	if(scene.window.x!=12)printf("second write: window %d, expected 12\n",scene.window.x),++failures;
+	expect_rest("second write pending",scene.camera,-1.75,0.0);
+	scene.manager.scroll.pending=true;
+	scene.step();
+	scene.land(2,0);
+	scene.step();
+	expect_rest("second write landed",scene.camera,0.25,0.0);
+	expect_glide("second write landed",scene.camera,8,0);
+	}
+	{
+	// An opposite offset before the first write lands puts the window back where it was, so
+	// nothing ever lands: rest is right on its own, and a user scroll afterwards glides.
+	scenest scene;
+	scene.camera.request_rest(-0.75,0.0);
+	scene.camera.normalize_rest(scene.window);
+	scene.step();
+	scene.camera.request_rest(0.75,0.0);
+	scene.camera.normalize_rest(scene.window);
+	if(scene.window.x!=10)printf("opposite write: window %d, expected 10\n",scene.window.x),++failures;
+	scene.step();
+	scene.step();
+	expect_rest("opposite write",scene.camera,-0.25,0.0);
+	expect_glide("opposite write",scene.camera,-8,0);
+	scene.window.x=11;
+	scene.step();
+	scene.land(1,0);
+	scene.step();
+	expect_rest("scroll after the opposite write",scene.camera,-0.25,0.0);
+	expect_glide("scroll after the opposite write",scene.camera,32-8,0);
+	}
+	{
 	// A view reset (z-level, zoom, resize) cancels the transients while a write is pending;
 	// the manager drops the pending landing with the view, so the write is folded into rest.
 	scenest scene;
