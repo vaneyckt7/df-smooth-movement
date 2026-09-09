@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The repaint passes of `tile_repaint.h` get the callable that asks the game for a tile repaint from one function, `staged_repainter`. Nothing the plugin draws changes.
 - The render hook looks the units in view up through one function, `units_in_view`, for the frame recorder and for the hauled item icons. Nothing the plugin draws or records changes.
 - A creature sprite and a hauled item's icon find their place on screen through one function, `place_sprite`, instead of each working out the glide and the bob lift. Nothing the plugin draws changes.
 - The tile size on screen is computed by one function, `tile_size_px`, where four places in the render hook each had the formula. Nothing the plugin draws changes.
