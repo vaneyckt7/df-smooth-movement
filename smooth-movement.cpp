@@ -613,6 +613,14 @@ bool wait_for_last_frame()
 	return true;
 }
 
+// An `on`/`off` word: sets `flag` and returns true; any other word leaves it and returns false.
+bool set_on_off(const std::string &word,bool &flag)
+{
+	if(word!="on"&&word!="off")return false;
+	flag=word=="on";
+	return true;
+}
+
 command_result status_command(
 	color_ostream &out,
 	std::vector<std::string> &parameters)
@@ -657,15 +665,8 @@ command_result status_command(
 				console.camera?"on":"off",-camera.rest_offset_x(),-camera.rest_offset_y());
 			return CR_OK;
 			}
-		if(parameters.size()==2&&parameters[1]=="on")
+		if(parameters.size()==2&&set_on_off(parameters[1],console.camera))
 			{
-			console.camera=true;
-			push_settings();
-			return CR_OK;
-			}
-		if(parameters.size()==2&&parameters[1]=="off")
-			{
-			console.camera=false;
 			push_settings();
 			return CR_OK;
 			}
@@ -762,17 +763,15 @@ command_result status_command(
 		// stats | stats on|off | stats reset | stats detail on|off
 		if(parameters.size()==1){out.print("{}",state.stats.report());return CR_OK;}
 		if(parameters[1]=="reset"){state.stats.reset();return CR_OK;}
-		if(parameters[1]=="on"||parameters[1]=="off")
+		if(set_on_off(parameters[1],state.stats.enabled))
 			{
-			state.stats.enabled=parameters[1]=="on";
 			state.stats.reset();
 			out.print("smooth-movement: stats {}\n",state.stats.enabled?"on":"off");
 			return CR_OK;
 			}
 		if(parameters[1]=="detail"&&parameters.size()==3&&
-			(parameters[2]=="on"||parameters[2]=="off"))
+			set_on_off(parameters[2],state.stats.detail))
 			{
-			state.stats.detail=parameters[2]=="on";
 			state.stats.reset();
 			out.print("smooth-movement: stats detail {}\n",state.stats.detail?"on":"off");
 			return CR_OK;
@@ -787,18 +786,10 @@ command_result status_command(
 				settings.flip?"on":"off");
 			return CR_OK;
 			}
-		if(parameters.size()==2&&parameters[1]=="on")
+		if(parameters.size()==2&&set_on_off(parameters[1],settings.flip))
 			{
-			settings.flip=true;
 			push_settings();
-			out.print("smooth-movement: sprite flipping enabled\n");
-			return CR_OK;
-			}
-		if(parameters.size()==2&&parameters[1]=="off")
-			{
-			settings.flip=false;
-			push_settings();
-			out.print("smooth-movement: sprite flipping disabled\n");
+			out.print("smooth-movement: sprite flipping {}\n",settings.flip?"enabled":"disabled");
 			return CR_OK;
 			}
 		return CR_WRONG_USAGE;
@@ -906,9 +897,8 @@ command_result status_command(
 				}
 			catch(...){return CR_WRONG_USAGE;}
 			}
-		if(parameters.size()==2&&(parameters[1]=="on"||parameters[1]=="off"))
+		if(parameters.size()==2&&set_on_off(parameters[1],settings.bob.enabled))
 			{
-			settings.bob.enabled=parameters[1]=="on";
 			push_settings();
 			out.print("smooth-movement: walk bob {}\n",settings.bob.enabled?"enabled":"disabled");
 			return CR_OK;
