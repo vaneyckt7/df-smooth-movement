@@ -3,6 +3,8 @@
 #ifndef VISUAL_ANIMATION_H
 #define VISUAL_ANIMATION_H
 
+#include "interpolation.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -160,6 +162,8 @@ struct visual_movement_renderst
 	float source_x=0.0f;
 	float source_y=0.0f;
 	float progress=1.0f;
+	// How far above the line between the tiles the sprite is, in tiles (see interpolation.h).
+	float lift=0.0f;
 	bool inherited=false;
 	uint64_t movement_id=0;
 };
@@ -218,38 +222,19 @@ constexpr bool native_follow_changed(int32_t previous_id,int32_t current_id)
 	return previous_id!=current_id;
 }
 
-inline float animation_progress(
+// Where a step is at 'now_ms': its time progress, capped at the end, through the
+// interpolation, for a step in a direction, given the walk bob settings.
+inline sprite_positionst animation_position(
 	uint32_t now_ms,
 	uint32_t start_time_ms,
 	uint32_t duration_ms,
-	bool linear=false)
+	const interpolationst &interpolation=default_interpolation(),
+	step_directionst direction=step_directionst::horizontal,
+	const walk_bob_settingst &bob=walk_bob_settingst{})
 {
 	const float progress=std::min(
 		1.0f,float(now_ms-start_time_ms)/duration_ms);
-	return linear?progress:progress*progress*(3.0f-2.0f*progress);
-}
-
-// Walk bob: how far, in tiles, a moving sprite is lifted at 'progress' through a step.
-// |sin(pi*hops*progress)| rises and falls once per hop and is zero at both ends, so the
-// sprite always lands on the grid. 'multiplier' is the per-direction factor.
-inline float walk_bob_lift(float progress,int hops,float amplitude,float multiplier)
-{
-	return std::fabs(std::sin(progress*3.14159265f*float(hops)))*amplitude*multiplier;
-}
-
-// Which multiplier a step takes. The source can be fractional when a step retargets from an
-// in-flight position, so it is rounded back to the tile the creature was last seen on; the
-// direction is that of the whole tile step, not of the remaining fraction.
-enum class walk_bob_directionst{horizontal,diagonal,vertical};
-
-inline walk_bob_directionst walk_bob_direction(
-	float source_x,float source_y,int32_t target_x,int32_t target_y)
-{
-	const bool same_x=std::lround(source_x)==target_x;
-	const bool same_y=std::lround(source_y)==target_y;
-	if(same_y)return walk_bob_directionst::horizontal;
-	if(same_x)return walk_bob_directionst::vertical;
-	return walk_bob_directionst::diagonal;
+	return interpolation.at(progress,direction,bob);
 }
 
 // One bob per creature. anchors[i] is the index of the proxy that i rides on (-1 for a root:
@@ -280,36 +265,6 @@ inline bool walk_bob_lift_fits(
 	// A little slack so a product landing on the cap (0.3 x 3.0) is not rejected by rounding.
 	return amplitude*std::max({horizontal,diagonal,vertical})<=max_walk_bob_lift+1e-4f;
 }
-
-// The walk bob's settings, off by default. While a creature glides its sprite is lifted by
-// the amplitude (a fraction of a tile) times the multiplier for the step's direction. A step
-// with a vertical component glides the sprite a whole tile up or down, which drowns a small
-// hop, so those steps get more; on a straight up or down step the hop is parallel to the
-// travel and shows only as a stall, so it needs more still. Two hops per step read as two
-// footfalls, one as a single bounce.
-struct walk_bob_settingst
-{
-	bool enabled=false;
-	float amplitude=0.10f;
-	float horizontal_mult=1.0f;
-	float diagonal_mult=2.4f;
-	float vertical_mult=2.7f;
-	int hops=2;
-
-	float multiplier(walk_bob_directionst direction) const
-	{
-		return direction==walk_bob_directionst::horizontal?horizontal_mult:
-			direction==walk_bob_directionst::vertical?vertical_mult:diagonal_mult;
-	}
-
-	// The lift, in tiles, of a sprite 'progress' through a step from its source to its target.
-	float lift(float source_x,float source_y,int32_t target_x,int32_t target_y,
-		float progress) const
-	{
-		return walk_bob_lift(progress,hops,amplitude,
-			multiplier(walk_bob_direction(source_x,source_y,target_x,target_y)));
-	}
-};
 
 inline bool visual_moved_between_tiles(
 	viewport_visual_layer layer,
@@ -413,7 +368,9 @@ class visual_animation_managerst
 	uint32_t frame_delta_ms=0;
 	bool has_frame=false;
 	bool force_full_redraw=false;
-	bool linear=false;
+	// The interpolation every step follows (its pacing decides the cadence rules below), and
+	// the walk bob settings, the parameters of the ones that lift (`bob` below).
+	const interpolationst *interpolation=&default_interpolation();
 	visual_movement_idst next_movement_id=1;
 	std::vector<viewport_animationst> viewports;
 
@@ -655,10 +612,25 @@ class visual_animation_managerst
 		return viewports.back();
 		}
 
+	// A movement's position this frame, for the direction of its own step (a rider's step
+	// is its anchor's, shifted, so the direction is the same).
+	sprite_positionst movement_position(const movementst &movement) const
+		{
+		return animation_position(
+			frame_time_ms,movement.start_time_ms,movement.duration_ms,*interpolation,
+			step_direction(movement.source_x,movement.source_y,movement.target_x,
+				movement.target_y),
+			bob);
+		}
+
 	float movement_progress(const movementst &movement) const
 		{
-		return animation_progress(
-			frame_time_ms,movement.start_time_ms,movement.duration_ms,linear);
+		return movement_position(movement).along;
+		}
+
+	float movement_lift(const movementst &movement) const
+		{
+		return movement_position(movement).lift;
 		}
 
 	bool movement_active(const movementst &movement) const
@@ -667,7 +639,7 @@ class visual_animation_managerst
 			frame_time_ms-movement.start_time_ms<movement.duration_ms;
 		}
 
-	// The longest a linear movement lasts and the oldest predecessor its cadence follows:
+	// The longest a paced movement lasts and the oldest predecessor its cadence follows:
 	// 500 ms, or the step time when that is longer, so a long step is never cut short.
 	uint32_t linear_limit_ms() const
 		{
@@ -693,6 +665,8 @@ class visual_animation_managerst
 
 		visual_animation_managerst()=default;
 
+		walk_bob_settingst bob;
+
 		uint32_t step_duration_ms() const
 			{
 			return movement_duration_ms;
@@ -703,14 +677,14 @@ class visual_animation_managerst
 			movement_duration_ms=std::max(1U,ms);
 			}
 
-		void set_linear(bool enabled)
+		void set_interpolation(const interpolationst &selected)
 			{
-			linear=enabled;
+			interpolation=&selected;
 			}
 
-		bool is_linear() const
+		const interpolationst &get_interpolation() const
 			{
-			return linear;
+			return *interpolation;
 			}
 
 		void begin_frame(uint32_t now_ms)
@@ -731,7 +705,7 @@ class visual_animation_managerst
 					{
 					if(movement.historical)continue;
 					force_full_redraw=true;
-					if(linear&&frame_time_ms-movement.start_time_ms>=movement.duration_ms)
+					if(interpolation->paced&&frame_time_ms-movement.start_time_ms>=movement.duration_ms)
 						movement.historical=true;
 					}
 				}
@@ -1098,7 +1072,7 @@ class visual_animation_managerst
 									static_cast<viewport_visual_layer>(layer)||
 									movement.target_x!=visual_source_x||
 									movement.target_y!=visual_source_y||
-									(linear&&frame_time_ms-movement.start_time_ms>
+									(interpolation->paced&&frame_time_ms-movement.start_time_ms>
 										linear_limit_ms(movement)))continue;
 								if(predecessor==nullptr||
 									frame_time_ms-movement.start_time_ms<
@@ -1116,7 +1090,7 @@ class visual_animation_managerst
 									visual_source_y=predecessor->source_y+
 										(predecessor->target_y-predecessor->source_y)*progress;
 									}
-								if(linear)duration_ms=std::clamp(
+								if(interpolation->paced)duration_ms=std::clamp(
 									frame_time_ms-predecessor->start_time_ms,
 									movement_duration_ms,linear_limit_ms());
 								}
@@ -1192,7 +1166,7 @@ class visual_animation_managerst
 						const int32_t current=input.current[layer][target];
 						const bool invalid=current==0||
 							!visual_layer_matches(movement.layer,current,movement.texpos);
-						if(linear)
+						if(interpolation->paced)
 							{
 							if(invalid||frame_time_ms-movement.start_time_ms>=movement.duration_ms)
 								movement.historical=true;
@@ -1398,6 +1372,7 @@ class visual_animation_managerst
 							movement.source_x,
 							movement.source_y,
 							movement_progress(movement),
+							movement_lift(movement),
 							false,
 							movement.id
 							};
@@ -1425,6 +1400,7 @@ class visual_animation_managerst
 						target_x+companion->source_x-companion->target_x,
 						target_y+companion->source_y-companion->target_y,
 						movement_progress(*companion),
+						movement_lift(*companion),
 						true,
 						companion->id
 						};

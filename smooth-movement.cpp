@@ -332,10 +332,9 @@ sprite_placementst place_sprite(const df::renderer_2d_base *renderer,const Proxy
 	const float tile_size=float(tile_size_px(zoom));
 	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
 	const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
-	const float bob_offset=proxy.bob?
-		-state.bob.lift(proxy.source_x,proxy.source_y,proxy.target_x,proxy.target_y,
-			proxy.progress)*tile_size:
-		0.0f;
+	// The movement's lift applies when the proxy was cleared to bob (proxy.bob, see
+	// sprite_proxies.h).
+	const float bob_offset=proxy.bob?-proxy.lift*tile_size:0.0f;
 	return {
 		source_x+(target_x-source_x)*proxy.progress,
 		source_y+(target_y-source_y)*proxy.progress+bob_offset,
@@ -529,7 +528,8 @@ std::vector<carried_item_proxyst> collect_carried_item_proxies(
 		const float source_x=movement.active?movement.source_x:float(x);
 		const float source_y=movement.active?movement.source_y:float(y);
 		carried_item_proxyst proxy={
-			source_x,source_y,x,y,movement.active?movement.progress:1.0f,texture,false,{}};
+			source_x,source_y,x,y,movement.active?movement.progress:1.0f,
+			movement.active?movement.lift:0.0f,texture,false,{}};
 		for(int32_t coverage_x=int32_t(std::floor(std::min(source_x,float(x))));
 			coverage_x<=int32_t(std::ceil(std::max(source_x,float(x))));++coverage_x)
 			for(int32_t coverage_y=int32_t(std::floor(std::min(source_y,float(y))));
@@ -567,7 +567,8 @@ std::vector<viewport_renderst> collect_viewport_renders(
 			{
 			vp,
 			collect_proxies(
-				vp,state.render.animation_manager,state.flip_enabled,state.bob.enabled,
+				vp,state.render.animation_manager,state.flip_enabled,
+				state.render.animation_manager.get_interpolation().lifts,
 				[renderer](int32_t texpos){return cached_texture(renderer,texpos);}),
 			{}
 			};
@@ -917,7 +918,8 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 		"smooth-movement",
 		"Smooth movement status; free camera: camera on|off|reset|<fx> <fy>; "
 		"flip, linear and hauled together: all on|off; "
-		"sprite flipping: flip on|off; linear movement: linear on|off; "
+		"sprite flipping: flip on|off; interpolation: interpolation <name> "
+		"(smoothstep|linear|bob); linear movement: linear on|off; "
 		"one-tile step time: timestep <ms> (20-2000); "
 		"hauled item icons: hauled on|off; "
 		"walk bob: bob on|off|<amount>; bob multipliers: bobmult <horizontal> <diagonal> "

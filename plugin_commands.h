@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 enum class command_outcomest
@@ -73,21 +74,39 @@ inline const char *on_off(bool on)
 
 // One line per setting, named by the setting's command word. Printed by the setting's bare
 // command and by the bare `smooth-movement`, which lists them all.
+inline bool has_interpolation(const plugin_statest &state,std::string_view name)
+{
+	return state.render.animation_manager.get_interpolation().name==name;
+}
+
+// The switches `linear on|off` and `bob on|off`: on picks that interpolation; off goes back
+// to the default when that one is current and leaves any other alone.
+inline void switch_interpolation(plugin_statest &state,std::string_view name,bool on)
+{
+	if(on)state.render.animation_manager.set_interpolation(*find_interpolation(name));
+	else if(has_interpolation(state,name))
+		state.render.animation_manager.set_interpolation(default_interpolation());
+}
+
 template<typename Output>
 void print_setting(Output &out,const plugin_statest &state,const std::string &word)
 {
 	if(word=="flip")out.print("sprite flipping: {}\n",on_off(state.flip_enabled));
+	if(word=="interpolation")
+		out.print("interpolation: {}\n",state.render.animation_manager.get_interpolation().name);
 	if(word=="linear")
-		out.print("linear movement: {}\n",on_off(state.render.animation_manager.is_linear()));
+		out.print("linear movement: {}\n",on_off(has_interpolation(state,"linear")));
 	if(word=="timestep")
 		out.print("time step: {} ms\n",state.render.animation_manager.step_duration_ms());
 	if(word=="hauled")out.print("hauled item icons: {}\n",on_off(state.hauled_enabled));
 	if(word=="bob")
-		out.print("walk bob: {}, amount {:.2f}\n",on_off(state.bob.enabled),state.bob.amplitude);
+		out.print("walk bob: {}, amount {:.2f}\n",
+			on_off(has_interpolation(state,"bob")),
+			state.render.animation_manager.bob.amplitude);
 	if(word=="bobmult")
 		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-			state.bob.horizontal_mult,state.bob.diagonal_mult,state.bob.vertical_mult);
-	if(word=="hops")out.print("hops per step: {}\n",state.bob.hops);
+			state.render.animation_manager.bob.horizontal_mult,state.render.animation_manager.bob.diagonal_mult,state.render.animation_manager.bob.vertical_mult);
+	if(word=="hops")out.print("hops per step: {}\n",state.render.animation_manager.bob.hops);
 }
 
 // Prints every setting, for the bare command.
@@ -101,7 +120,7 @@ void print_settings(Output &out,const plugin_statest &state,const command_hostst
 	out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
 		on_off(state.render.camera.is_enabled()),
 		-state.render.camera.requested_offset_x(),-state.render.camera.requested_offset_y());
-	for(const char *word:{"flip","linear","timestep","hauled","bob","bobmult","hops"})
+	for(const char *word:{"flip","interpolation","linear","timestep","hauled","bob","bobmult","hops"})
 		print_setting(out,state,word);
 	out.print("frame stats: {}\n",on_off(state.stats.enabled));
 }
@@ -233,6 +252,7 @@ command_outcomest camera_command(
 	return command_outcomest::wrong_usage;
 }
 
+
 template<typename Output>
 command_outcomest bob_command(
 	Output &out,const std::vector<std::string> &parameters,plugin_statest &state,
@@ -247,7 +267,7 @@ command_outcomest bob_command(
 	bool on=false;
 	if(parse_on_off(parameters,on))
 		{
-		state.bob.enabled=on;
+		switch_interpolation(state,"bob",on);
 		host.full_redraw();
 		out.print("smooth-movement: walk bob {}\n",on_off(on));
 		return command_outcomest::ok;
@@ -261,16 +281,16 @@ command_outcomest bob_command(
 		out.printerr("bob amount must be within 0..{:.2f} tile\n",max_walk_bob_lift);
 		return command_outcomest::failed;
 		}
-	if(!walk_bob_lift_fits(amount,state.bob.horizontal_mult,state.bob.diagonal_mult,
-			state.bob.vertical_mult))
+	if(!walk_bob_lift_fits(amount,state.render.animation_manager.bob.horizontal_mult,state.render.animation_manager.bob.diagonal_mult,
+			state.render.animation_manager.bob.vertical_mult))
 		{
 		out.printerr("bob {:.2f} times the current multipliers lifts more than {:.2f} "
 			"tile; lower the multipliers first\n",amount,max_walk_bob_lift);
 		return command_outcomest::failed;
 		}
-	state.bob.amplitude=amount;
+	state.render.animation_manager.bob.amplitude=amount;
 	host.full_redraw();
-	out.print("smooth-movement: bob amount {:.2f}\n",state.bob.amplitude);
+	out.print("smooth-movement: bob amount {:.2f}\n",state.render.animation_manager.bob.amplitude);
 	return command_outcomest::ok;
 }
 
@@ -293,15 +313,15 @@ command_outcomest bobmult_command(
 		out.printerr("bob multipliers must be within 0..5\n");
 		return command_outcomest::failed;
 		}
-	if(!walk_bob_lift_fits(state.bob.amplitude,horizontal,diagonal,vertical))
+	if(!walk_bob_lift_fits(state.render.animation_manager.bob.amplitude,horizontal,diagonal,vertical))
 		{
 		out.printerr("bob {:.2f} times that multiplier lifts more than {:.2f} tile; "
-			"lower one of them\n",state.bob.amplitude,max_walk_bob_lift);
+			"lower one of them\n",state.render.animation_manager.bob.amplitude,max_walk_bob_lift);
 		return command_outcomest::failed;
 		}
-	state.bob.horizontal_mult=horizontal;
-	state.bob.diagonal_mult=diagonal;
-	state.bob.vertical_mult=vertical;
+	state.render.animation_manager.bob.horizontal_mult=horizontal;
+	state.render.animation_manager.bob.diagonal_mult=diagonal;
+	state.render.animation_manager.bob.vertical_mult=vertical;
 	out.print("smooth-movement: bob multipliers horizontal {:.2f}, diagonal {:.2f}, "
 		"vertical {:.2f}\n",horizontal,diagonal,vertical);
 	return command_outcomest::ok;
@@ -328,7 +348,7 @@ command_outcomest run_command(
 		bool on=false;
 		if(!parse_on_off(parameters,on))return command_outcomest::wrong_usage;
 		state.flip_enabled=on;
-		state.render.animation_manager.set_linear(on);
+		switch_interpolation(state,"linear",on);
 		state.hauled_enabled=on;
 		host.full_redraw();
 		out.print("smooth-movement: flip, linear and hauled {}\n",on_off(on));
@@ -353,6 +373,22 @@ command_outcomest run_command(
 		out.print("smooth-movement: sprite flipping {}\n",on?"enabled":"disabled");
 		return command_outcomest::ok;
 		}
+	if(word=="interpolation")
+		{
+		if(parameters.size()==1)
+			{
+			print_setting(out,state,word);
+			out.print("interpolations: {}\n",interpolation_names());
+			return command_outcomest::ok;
+			}
+		if(parameters.size()!=2)return command_outcomest::wrong_usage;
+		const interpolationst *interpolation=find_interpolation(parameters[1]);
+		if(interpolation==nullptr)return command_outcomest::wrong_usage;
+		state.render.animation_manager.set_interpolation(*interpolation);
+		host.full_redraw();
+		out.print("smooth-movement: interpolation {}\n",interpolation->name);
+		return command_outcomest::ok;
+		}
 	if(word=="linear")
 		{
 		if(parameters.size()==1)
@@ -362,7 +398,7 @@ command_outcomest run_command(
 			}
 		bool on=false;
 		if(!parse_on_off(parameters,on))return command_outcomest::wrong_usage;
-		state.render.animation_manager.set_linear(on);
+		switch_interpolation(state,"linear",on);
 		out.print("smooth-movement: linear movement {}\n",on_off(on));
 		return command_outcomest::ok;
 		}
@@ -408,8 +444,8 @@ command_outcomest run_command(
 			}
 		if(parameters.size()==2&&(parameters[1]=="1"||parameters[1]=="2"))
 			{
-			state.bob.hops=parameters[1]=="1"?1:2;
-			out.print("smooth-movement: hops per step {}\n",state.bob.hops);
+			state.render.animation_manager.bob.hops=parameters[1]=="1"?1:2;
+			out.print("smooth-movement: hops per step {}\n",state.render.animation_manager.bob.hops);
 			return command_outcomest::ok;
 			}
 		return command_outcomest::wrong_usage;

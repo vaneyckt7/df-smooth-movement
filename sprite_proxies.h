@@ -53,6 +53,8 @@ struct render_proxyst
 	int32_t target_y;
 	int32_t texpos;
 	float progress;
+	// The movement's lift in tiles, drawn when `bob` below is set.
+	float lift;
 	SDL_Texture *texture;
 	bool mirrored=false;
 	int32_t mirror_shift=0;
@@ -71,6 +73,7 @@ struct carried_item_proxyst
 	int32_t target_x;
 	int32_t target_y;
 	float progress;
+	float lift;
 	SDL_Texture *texture;
 	// Set when the creature carrying it bobs: the icon then rides the same lift.
 	bool bob=false;
@@ -81,8 +84,9 @@ struct carried_item_proxyst
 // the animation manager tracks whose path stays inside the clip and off burning tiles, and,
 // with flipping on, every resting sprite that faces the mirrored way. `cached_texture(texpos)`
 // returns the renderer's texture for a tile, or null when it has none, in which case the
-// sprite is left to the game. With `bob_enabled`, every moving creature proxy and whatever
-// rides on it is marked to bob, and the row above its path joins its coverage.
+// sprite is left to the game. With `bob_enabled` (the interpolation lifts sprites, see
+// interpolation.h), every moving creature proxy and whatever rides on it is marked to bob,
+// and the row above its path joins its coverage.
 template<typename Viewport,typename TextureLookup>
 std::vector<render_proxyst> collect_proxies(
 	Viewport *vp,
@@ -226,6 +230,7 @@ std::vector<render_proxyst> collect_proxies(
 				y,
 				texpos,
 				movement.progress,
+				movement.lift,
 				nullptr,
 				mirrored,
 				mirror_shift,
@@ -395,6 +400,7 @@ std::vector<render_proxyst> collect_proxies(
 					y,
 					texpos,
 					1.0f,
+					0.0f,
 					nullptr,
 					true,
 					mirrored_tile_x(x,anchor_x)-x,

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "interpolation.h"
 #include "visual_animation.h"
 
 #include <cstdint>
@@ -19,7 +20,8 @@ struct plugin_settingsst
 	// The free camera's rest offset in tiles, positive when the view sits west/north of the
 	// window; only read while the camera is on.
 	double rest_x=0.0,rest_y=0.0;
-	bool linear=false; // linear easing instead of the default curve
+	// How a step is spread over frames, one of `interpolations()`.
+	const interpolationst *interpolation=&default_interpolation();
 	uint32_t step_ms=visual_animation_managerst::default_step_duration_ms; // one-tile step
-	walk_bob_settingst bob;
+	walk_bob_settingst bob; // how far a lifting interpolation raises the sprite
 };

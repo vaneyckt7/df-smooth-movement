@@ -154,6 +154,7 @@ void test_settings_printout()
 		"smooth-movement 9.9.9: enabled\n"
 		"free camera: off, offset -0 -0 (tiles east/south of the grid)\n"
 		"sprite flipping: off\n"
+		"interpolation: smoothstep\n"
 		"linear movement: off\n"
 		"time step: 150 ms\n"
 		"hauled item icons: off\n"
@@ -235,13 +236,23 @@ void test_all()
 	plugin_statest state;
 	expect_ok("all on",run(state,{"all","on"}),"smooth-movement: flip, linear and hauled on\n",1);
 	expect_true("all on sets flip",state.flip_enabled);
-	expect_true("all on sets linear",state.render.animation_manager.is_linear());
+	expect_true("all on sets linear",&state.render.animation_manager.get_interpolation()==find_interpolation("linear"));
 	expect_true("all on sets hauled",state.hauled_enabled);
 	expect_ok("all off",run(state,{"all","off"}),
 		"smooth-movement: flip, linear and hauled off\n",1);
 	expect_true("all off clears flip",!state.flip_enabled);
-	expect_true("all off clears linear",!state.render.animation_manager.is_linear());
+	expect_true("all off clears linear",!(&state.render.animation_manager.get_interpolation()==find_interpolation("linear")));
 	expect_true("all off clears hauled",!state.hauled_enabled);
+	// `all on` picks linear whatever was current; `all off` goes back to the default from
+	// linear and leaves another interpolation alone.
+	run(state,{"bob","on"});
+	expect_ok("all on from bob",run(state,{"all","on"}),
+		"smooth-movement: flip, linear and hauled on\n",1);
+	expect_true("all on from bob gives linear",&state.render.animation_manager.get_interpolation()==find_interpolation("linear"));
+	run(state,{"bob","on"});
+	expect_ok("all off from bob",run(state,{"all","off"}),
+		"smooth-movement: flip, linear and hauled off\n",1);
+	expect_true("all off leaves bob",&state.render.animation_manager.get_interpolation()==find_interpolation("bob"));
 	expect_usage("all alone",run(state,{"all"}));
 	expect_usage("all bogus",run(state,{"all","maybe"}));
 	expect_usage("all on extra",run(state,{"all","on","now"}));
@@ -299,10 +310,10 @@ void test_flip_linear_hauled()
 
 	expect_ok("linear",run(state,{"linear"}),"linear movement: off\n");
 	expect_ok("linear on",run(state,{"linear","on"}),"smooth-movement: linear movement on\n");
-	expect_true("linear on sets",state.render.animation_manager.is_linear());
+	expect_true("linear on sets",&state.render.animation_manager.get_interpolation()==find_interpolation("linear"));
 	expect_ok("linear printout",run(state,{"linear"}),"linear movement: on\n");
 	expect_ok("linear off",run(state,{"linear","off"}),"smooth-movement: linear movement off\n");
-	expect_true("linear off clears",!state.render.animation_manager.is_linear());
+	expect_true("linear off clears",!(&state.render.animation_manager.get_interpolation()==find_interpolation("linear")));
 	expect_usage("linear bogus",run(state,{"linear","maybe"}));
 	expect_usage("linear on extra",run(state,{"linear","on","now"}));
 
@@ -315,6 +326,43 @@ void test_flip_linear_hauled()
 	expect_true("hauled off clears",!state.hauled_enabled);
 	expect_usage("hauled bogus",run(state,{"hauled","maybe"}));
 	expect_usage("hauled on extra",run(state,{"hauled","on","now"}));
+}
+
+void test_interpolation()
+{
+	plugin_statest state;
+	const auto current=[&]{return state.render.animation_manager.get_interpolation().name;};
+	expect_ok("interpolation",run(state,{"interpolation"}),
+		"interpolation: smoothstep\ninterpolations: smoothstep, linear, bob\n");
+	expect_ok("interpolation bob",run(state,{"interpolation","bob"}),
+		"smooth-movement: interpolation bob\n",1);
+	expect_true("bob is set",std::string(current())=="bob");
+	expect_ok("linear printout follows",run(state,{"linear"}),"linear movement: off\n");
+	expect_ok("bob printout follows",run(state,{"bob"}),"walk bob: on, amount 0.1\n");
+	// Each switch picks its interpolation with on; off goes back to the default from that
+	// one and leaves any other alone.
+	expect_ok("bob off",run(state,{"bob","off"}),"smooth-movement: walk bob off\n",1);
+	expect_true("bob off gives smoothstep",std::string(current())=="smoothstep");
+	expect_ok("bob on from smoothstep",run(state,{"bob","on"}),"smooth-movement: walk bob on\n",1);
+	expect_true("bob on gives bob",std::string(current())=="bob");
+	expect_ok("linear on from bob",run(state,{"linear","on"}),
+		"smooth-movement: linear movement on\n");
+	expect_true("linear on gives linear",std::string(current())=="linear");
+	expect_ok("bob off from linear",run(state,{"bob","off"}),"smooth-movement: walk bob off\n",1);
+	expect_true("bob off leaves linear",std::string(current())=="linear");
+	expect_ok("bob on from linear",run(state,{"bob","on"}),"smooth-movement: walk bob on\n",1);
+	expect_true("bob on gives bob again",std::string(current())=="bob");
+	expect_ok("linear off from bob",run(state,{"linear","off"}),
+		"smooth-movement: linear movement off\n");
+	expect_true("linear off leaves bob",std::string(current())=="bob");
+	expect_ok("interpolation smoothstep",run(state,{"interpolation","smoothstep"}),
+		"smooth-movement: interpolation smoothstep\n",1);
+	expect_true("smoothstep is the default",&state.render.animation_manager.get_interpolation()==&default_interpolation());
+	expect_ok("interpolation printout follows",run(state,{"interpolation"}),
+		"interpolation: smoothstep\ninterpolations: smoothstep, linear, bob\n");
+	expect_usage("interpolation bogus",run(state,{"interpolation","bounce"}));
+	expect_usage("interpolation extra",run(state,{"interpolation","linear","now"}));
+	expect_usage("interpolation bob suffix",run(state,{"interpolation","smoothstep-bob"}));
 }
 
 void test_timestep()
@@ -345,16 +393,16 @@ void test_bob()
 	plugin_statest state;
 	expect_ok("bob",run(state,{"bob"}),"walk bob: off, amount 0.1\n");
 	expect_ok("bob on",run(state,{"bob","on"}),"smooth-movement: walk bob on\n",1);
-	expect_true("bob on sets",state.bob.enabled);
+	expect_true("bob on sets",&state.render.animation_manager.get_interpolation()==find_interpolation("bob"));
 	expect_ok("bob printout",run(state,{"bob"}),"walk bob: on, amount 0.1\n");
 	expect_ok("bob off",run(state,{"bob","off"}),"smooth-movement: walk bob off\n",1);
-	expect_true("bob off clears",!state.bob.enabled);
+	expect_true("bob off clears",!(&state.render.animation_manager.get_interpolation()==find_interpolation("bob")));
 	expect_ok("bob amount",run(state,{"bob","0.25"}),"smooth-movement: bob amount 0.25\n",1);
-	expect_near("bob amount sets",state.bob.amplitude,0.25);
-	expect_true("bob amount leaves it off",!state.bob.enabled);
+	expect_near("bob amount sets",state.render.animation_manager.bob.amplitude,0.25);
+	expect_true("bob amount leaves it off",!(&state.render.animation_manager.get_interpolation()==find_interpolation("bob")));
 	expect_ok("bob amount without a leading digit",run(state,{"bob",".2"}),
 		"smooth-movement: bob amount 0.2\n",1);
-	expect_near("bob amount without a leading digit sets",state.bob.amplitude,0.2f);
+	expect_near("bob amount without a leading digit sets",state.render.animation_manager.bob.amplitude,0.2f);
 	// 0.9 tile is the most the amount times the largest multiplier may lift: the default
 	// vertical multiplier of 2.7 caps the amount at a third of a tile.
 	expect_failed("bob amount lifting too far",run(state,{"bob","0.34"}),
@@ -370,15 +418,15 @@ void test_bob()
 	expect_usage("bob amount text",run(state,{"bob","high"}));
 	expect_usage("bob amount too long",run(state,{"bob","0.1000000"}));
 	expect_usage("bob extra",run(state,{"bob","on","now"}));
-	expect_near("refused amounts leave it",state.bob.amplitude,0.2f);
+	expect_near("refused amounts leave it",state.render.animation_manager.bob.amplitude,0.2f);
 
 	expect_ok("bobmult",run(state,{"bobmult"}),
 		"bob multipliers: horizontal 1, diagonal 2.4, vertical 2.7\n");
 	expect_ok("bobmult set",run(state,{"bobmult","0.5","1.5","2"}),
 		"smooth-movement: bob multipliers horizontal 0.5, diagonal 1.5, vertical 2\n");
-	expect_near("bobmult horizontal",state.bob.horizontal_mult,0.5);
-	expect_near("bobmult diagonal",state.bob.diagonal_mult,1.5);
-	expect_near("bobmult vertical",state.bob.vertical_mult,2.0);
+	expect_near("bobmult horizontal",state.render.animation_manager.bob.horizontal_mult,0.5);
+	expect_near("bobmult diagonal",state.render.animation_manager.bob.diagonal_mult,1.5);
+	expect_near("bobmult vertical",state.render.animation_manager.bob.vertical_mult,2.0);
 	// The amount is 0.2, so a multiplier of 5 would lift a tile; 0.15 lets the cap fit.
 	expect_ok("bob amount for the cap",run(state,{"bob","0.15"}),
 		"smooth-movement: bob amount 0.15\n",1);
@@ -402,9 +450,9 @@ void test_bob()
 		"smooth-movement: bob amount 0.2\n",1);
 	expect_failed("bobmult lifting too far",run(state,{"bobmult","1","4.6","1"}),
 		"bob 0.2 times that multiplier lifts more than 0.9 tile; lower one of them\n");
-	expect_near("refused multipliers leave horizontal",state.bob.horizontal_mult,1.0);
-	expect_near("refused multipliers leave diagonal",state.bob.diagonal_mult,1.0);
-	expect_near("refused multipliers leave vertical",state.bob.vertical_mult,1.0);
+	expect_near("refused multipliers leave horizontal",state.render.animation_manager.bob.horizontal_mult,1.0);
+	expect_near("refused multipliers leave diagonal",state.render.animation_manager.bob.diagonal_mult,1.0);
+	expect_near("refused multipliers leave vertical",state.render.animation_manager.bob.vertical_mult,1.0);
 	expect_usage("bobmult two values",run(state,{"bobmult","1","2"}));
 	expect_usage("bobmult four values",run(state,{"bobmult","1","2","3","4"}));
 	expect_usage("bobmult text",run(state,{"bobmult","1","two","3"}));
@@ -412,15 +460,15 @@ void test_bob()
 
 	expect_ok("hops",run(state,{"hops"}),"hops per step: 2\n");
 	expect_ok("hops 1",run(state,{"hops","1"}),"smooth-movement: hops per step 1\n");
-	expect_true("hops 1 sets",state.bob.hops==1);
+	expect_true("hops 1 sets",state.render.animation_manager.bob.hops==1);
 	expect_ok("hops printout",run(state,{"hops"}),"hops per step: 1\n");
 	expect_ok("hops 2",run(state,{"hops","2"}),"smooth-movement: hops per step 2\n");
-	expect_true("hops 2 sets",state.bob.hops==2);
+	expect_true("hops 2 sets",state.render.animation_manager.bob.hops==2);
 	expect_usage("hops 3",run(state,{"hops","3"}));
 	expect_usage("hops 0",run(state,{"hops","0"}));
 	expect_usage("hops text",run(state,{"hops","two"}));
 	expect_usage("hops extra",run(state,{"hops","1","2"}));
-	expect_true("refused hops leave it",state.bob.hops==2);
+	expect_true("refused hops leave it",state.render.animation_manager.bob.hops==2);
 }
 
 // The settings go out as one value and come back the same, with each landing where its
@@ -431,8 +479,8 @@ void test_settings_round_trip()
 {
 	plugin_statest state;
 	plugin_settingsst s;
-	s.flip=true;s.hauled=false;s.camera=true;s.rest_x=-0.25;s.rest_y=0.5;s.linear=false;
-	s.step_ms=400;s.bob.enabled=true;s.bob.amplitude=0.2f;s.bob.horizontal_mult=1.1f;
+	s.flip=true;s.hauled=false;s.camera=true;s.rest_x=-0.25;s.rest_y=0.5;s.interpolation=find_interpolation("bob");
+	s.step_ms=400;s.bob.amplitude=0.2f;s.bob.horizontal_mult=1.1f;
 	s.bob.diagonal_mult=1.2f;s.bob.vertical_mult=1.3f;s.bob.hops=1;
 	state.apply_settings(s);
 	expect_true("apply sets flip",state.flip_enabled);
@@ -440,29 +488,32 @@ void test_settings_round_trip()
 	expect_true("apply turns the camera on",state.render.camera.is_enabled());
 	expect_near("apply sets the rest x",state.render.camera.rest_offset_x(),-0.25);
 	expect_near("apply sets the rest y",state.render.camera.rest_offset_y(),0.5);
-	expect_true("apply leaves linear",!state.render.animation_manager.is_linear());
+	expect_true("apply leaves linear",!(&state.render.animation_manager.get_interpolation()==find_interpolation("linear")));
 	expect_true("apply sets the step",state.render.animation_manager.step_duration_ms()==400);
-	expect_true("apply sets the bob",state.bob.enabled&&state.bob.hops==1);
-	expect_near("apply sets the bob amount",state.bob.amplitude,0.2f);
-	expect_near("apply sets the bob multipliers",state.bob.vertical_mult,1.3f);
+	expect_true("apply sets the interpolation",
+		&state.render.animation_manager.get_interpolation()==find_interpolation("bob"));
+	expect_true("apply sets the bob",state.render.animation_manager.bob.hops==1);
+	expect_near("apply sets the bob amount",state.render.animation_manager.bob.amplitude,0.2f);
+	expect_near("apply sets the bob multipliers",state.render.animation_manager.bob.vertical_mult,1.3f);
 	const plugin_settingsst back=state.settings();
 	expect_true("settings read back the switches",
-		back.flip&&!back.hauled&&back.camera&&!back.linear&&back.step_ms==400);
+		back.flip&&!back.hauled&&back.camera&&back.interpolation==find_interpolation("bob")&&
+		back.step_ms==400);
 	expect_near("settings read back the rest x",back.rest_x,-0.25);
 	expect_near("settings read back the rest y",back.rest_y,0.5);
 	expect_true("settings read back the bob",
-		back.bob.enabled&&back.bob.hops==1&&back.bob.amplitude==0.2f&&
+		back.bob.hops==1&&back.bob.amplitude==0.2f&&
 		back.bob.horizontal_mult==1.1f&&back.bob.diagonal_mult==1.2f&&
 		back.bob.vertical_mult==1.3f);
 	plugin_settingsst other;
-	other.flip=false;other.hauled=true;other.camera=false;other.linear=true;
+	other.flip=false;other.hauled=true;other.camera=false;other.interpolation=find_interpolation("linear");
 	state.apply_settings(other);
 	expect_true("the complement applies",
 		!state.flip_enabled&&state.hauled_enabled&&!state.render.camera.is_enabled()&&
-		state.render.animation_manager.is_linear());
+		&state.render.animation_manager.get_interpolation()==find_interpolation("linear"));
 	const plugin_settingsst back2=state.settings();
 	expect_true("the complement reads back",
-		!back2.flip&&back2.hauled&&!back2.camera&&back2.linear);
+		!back2.flip&&back2.hauled&&!back2.camera&&back2.interpolation==find_interpolation("linear"));
 	expect_true("the camera off reads back at rest zero",back2.rest_x==0.0&&back2.rest_y==0.0);
 	state.apply_settings(s);
 	// The commands and the value agree: what `camera 0.25 0` set reads back as the camera's
@@ -477,11 +528,12 @@ void test_settings_round_trip()
 	state.apply_settings(plugin_settingsst{});
 	expect_true("defaults clear the switches",
 		!state.flip_enabled&&!state.hauled_enabled&&!state.render.camera.is_enabled()&&
-		!state.render.animation_manager.is_linear());
+		!(&state.render.animation_manager.get_interpolation()==find_interpolation("linear")));
 	expect_true("defaults restore the step",
 		state.render.animation_manager.step_duration_ms()==150);
 	expect_near("defaults zero the rest x",state.render.camera.rest_offset_x(),0.0);
-	expect_true("defaults restore the bob",!state.bob.enabled&&state.bob.hops==2);
+	expect_true("defaults restore the bob",
+		!(&state.render.animation_manager.get_interpolation()==find_interpolation("bob"))&&state.render.animation_manager.bob.hops==2);
 }
 
 void test_reset()
@@ -491,24 +543,29 @@ void test_reset()
 	run(state,{"camera","0.25","0"});
 	run(state,{"timestep","400"});
 	run(state,{"bob","0.2"});
-	run(state,{"bob","on"});
 	run(state,{"bobmult","1","1","1"});
 	run(state,{"hops","1"});
 	run(state,{"stats","on"});
 	state.reset();
 	expect_true("reset clears flip",!state.flip_enabled);
 	expect_true("reset clears hauled",!state.hauled_enabled);
-	// Linear easing survives a reset: the plugin has kept it across disable and enable since
-	// the setting was added.
-	expect_true("reset keeps linear",state.render.animation_manager.is_linear());
+	// `linear` survives a reset, `bob` does not: the plugin has kept
+	// linear easing across disable and enable since the setting was added, and the walk bob
+	// has always come back off.
+	expect_true("reset keeps linear",
+		&state.render.animation_manager.get_interpolation()==find_interpolation("linear"));
+	run(state,{"interpolation","bob"});
+	state.reset();
+	expect_true("reset drops bob",
+		&state.render.animation_manager.get_interpolation()==find_interpolation("smoothstep"));
 	expect_true("reset restores the step time",
 		state.render.animation_manager.step_duration_ms()==150);
 	expect_true("reset turns the camera off",!state.render.camera.is_enabled());
 	expect_near("reset zeroes the camera offset",state.render.camera.rest_offset_x(),0.0);
-	expect_true("reset clears the bob",!state.bob.enabled);
-	expect_near("reset restores the bob amount",state.bob.amplitude,0.1f);
-	expect_near("reset restores the bob multipliers",state.bob.diagonal_mult,2.4f);
-	expect_true("reset restores the hops",state.bob.hops==2);
+	expect_true("reset clears the bob",!(&state.render.animation_manager.get_interpolation()==find_interpolation("bob")));
+	expect_near("reset restores the bob amount",state.render.animation_manager.bob.amplitude,0.1f);
+	expect_near("reset restores the bob multipliers",state.render.animation_manager.bob.diagonal_mult,2.4f);
+	expect_true("reset restores the hops",state.render.animation_manager.bob.hops==2);
 	expect_true("reset turns the stats off",!state.stats.enabled);
 }
 
@@ -522,6 +579,7 @@ int main()
 	test_all();
 	test_camera();
 	test_flip_linear_hauled();
+	test_interpolation();
 	test_timestep();
 	test_bob();
 	test_settings_round_trip();

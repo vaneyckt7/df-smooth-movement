@@ -106,7 +106,6 @@ struct plugin_statest
 	frame_recorderst recorder;
 	bool flip_enabled=false;
 	bool hauled_enabled=false;
-	walk_bob_settingst bob;
 	render_statest render;
 
 	// The animation and camera state a freshly enabled plugin starts from, keeping the
@@ -114,11 +113,13 @@ struct plugin_statest
 	// plugin_enable, sees the same start.
 	void reset_visual()
 		{
-		const bool linear=render.animation_manager.is_linear();
+		const interpolationst &interpolation=render.animation_manager.get_interpolation();
 		const uint32_t step_ms=render.animation_manager.step_duration_ms();
+		const walk_bob_settingst bob=render.animation_manager.bob;
 		render.animation_manager=visual_animation_managerst();
-		render.animation_manager.set_linear(linear);
+		render.animation_manager.set_interpolation(interpolation);
 		render.animation_manager.set_step_duration_ms(step_ms);
+		render.animation_manager.bob=bob;
 		render.previous_coverage.clear();
 		render.view_context=view_context_trackerst();
 		render.camera.restart();
@@ -135,9 +136,9 @@ struct plugin_statest
 		s.camera=render.camera.is_enabled();
 		s.rest_x=render.camera.rest_offset_x();
 		s.rest_y=render.camera.rest_offset_y();
-		s.linear=render.animation_manager.is_linear();
+		s.interpolation=&render.animation_manager.get_interpolation();
 		s.step_ms=render.animation_manager.step_duration_ms();
-		s.bob=bob;
+		s.bob=render.animation_manager.bob;
 		return s;
 		}
 
@@ -150,20 +151,21 @@ struct plugin_statest
 		hauled_enabled=s.hauled;
 		render.camera.set_enabled(s.camera);
 		render.camera.set_rest(s.rest_x,s.rest_y);
-		render.animation_manager.set_linear(s.linear);
+		render.animation_manager.set_interpolation(*s.interpolation);
 		render.animation_manager.set_step_duration_ms(s.step_ms);
-		bob=s.bob;
+		render.animation_manager.bob=s.bob;
 		}
 
 	// Everything back to how a freshly enabled plugin starts: the visual state, the settings
-	// at their defaults, the counters cleared and a running recording stopped. Linear easing
-	// is the one setting kept: the plugin has kept it across disable and enable since the
-	// setting was added.
+	// at their defaults, the counters cleared and a running recording stopped. `linear` is
+	// the one setting kept: the plugin has kept linear easing across disable and enable
+	// since that setting was added, and the walk bob has always come back off.
 	void reset()
 		{
 		reset_visual();
 		plugin_settingsst defaults;
-		defaults.linear=render.animation_manager.is_linear();
+		const interpolationst *linear=find_interpolation("linear");
+		if(&render.animation_manager.get_interpolation()==linear)defaults.interpolation=linear;
 		apply_settings(defaults);
 		stats.enabled=false;
 		stats.clear();

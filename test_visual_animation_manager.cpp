@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <tuple>
 #include <limits>
 
 #include "visual_animation.h"
@@ -452,11 +453,13 @@ int main()
 	assert(manager.get_facing(gap_viewport,2,3)==native_sprite_facing);
 	}
 
-	assert(animation_progress(150,0,150)==1.0f);
-	assert(animation_progress(75,0,150)==0.5f);
-	assert(animation_progress(75,0,150,true)==0.5f);
-	assert(animation_progress(25,0,150,true)==float(1)/6);
-	assert(animation_progress(25,0,150)<float(1)/6);
+	const interpolationst &linear=*find_interpolation("linear");
+	assert(animation_position(150,0,150).along==1.0f);
+	assert(animation_position(75,0,150).along==0.5f);
+	assert(animation_position(75,0,150,linear).along==0.5f);
+	assert(animation_position(25,0,150,linear).along==float(1)/6);
+	assert(animation_position(25,0,150).along<float(1)/6);
+	assert(animation_position(25,0,150).lift==0.0f&&animation_position(25,0,150,linear).lift==0.0f);
 	const auto carried_icon=carried_item_icon_rect(100.0f,200.0f,20.0f);
 	assert(carried_icon.x==101.0f&&carried_icon.y==204.0f);
 	assert(carried_icon.width==14.0f&&carried_icon.height==14.0f);
@@ -507,7 +510,7 @@ int main()
 	assert(!movement.requires_full_redraw());
 
 	visual_animation_managerst linear_movement;
-	linear_movement.set_linear(true);
+	linear_movement.set_interpolation(*find_interpolation("linear"));
 	current.fill(0);
 	previous.fill(0);
 	set_layer(input,viewport_visual_layer::center,current.data(),previous.data());
@@ -530,7 +533,7 @@ int main()
 	at_two[2*3+1]=42;
 
 	visual_animation_managerst adaptive;
-	adaptive.set_linear(true);
+	adaptive.set_interpolation(*find_interpolation("linear"));
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(adaptive,input,1000);
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
@@ -550,7 +553,7 @@ int main()
 		viewport,viewport_visual_layer::center,2,1).progress==0.5f); // cadence: 300 ms
 
 	visual_animation_managerst minimum;
-	minimum.set_linear(true);
+	minimum.set_interpolation(*find_interpolation("linear"));
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(minimum,input,2000);
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
@@ -562,7 +565,7 @@ int main()
 		viewport,viewport_visual_layer::center,2,1).progress==0.5f); // clamped to 150 ms
 
 	visual_animation_managerst maximum;
-	maximum.set_linear(true);
+	maximum.set_interpolation(*find_interpolation("linear"));
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(maximum,input,3000);
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
@@ -580,7 +583,7 @@ int main()
 
 	// Reversal leaves two predecessors at B; the newer B->A step must win for A->B.
 	visual_animation_managerst reversal;
-	reversal.set_linear(true);
+	reversal.set_interpolation(*find_interpolation("linear"));
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(reversal,input,4000);
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
@@ -648,7 +651,7 @@ int main()
 	// With linear on, the step time is the adaptive duration's floor, and a step longer
 	// than 500 ms lifts the ceiling with it so the movement is neither clamped nor cut short.
 	visual_animation_managerst long_linear;
-	long_linear.set_linear(true);
+	long_linear.set_interpolation(*find_interpolation("linear"));
 	long_linear.set_step_duration_ms(800);
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(long_linear,input,7000);
@@ -686,7 +689,7 @@ int main()
 	// movement its own duration: it is neither erased at the new 500 ms limit nor
 	// dropped as a predecessor, and only the movements that start after it are shorter.
 	visual_animation_managerst lowered_linear;
-	lowered_linear.set_linear(true);
+	lowered_linear.set_interpolation(*find_interpolation("linear"));
 	lowered_linear.set_step_duration_ms(2000);
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(lowered_linear,input,10000);
@@ -715,7 +718,7 @@ int main()
 	assert(!lowered_linear.get_movement(viewport,viewport_visual_layer::center,2,1).active);
 
 	visual_animation_managerst short_linear;
-	short_linear.set_linear(true);
+	short_linear.set_interpolation(*find_interpolation("linear"));
 	short_linear.set_step_duration_ms(100);
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(short_linear,input,9000);
@@ -730,9 +733,16 @@ int main()
 	}
 
 	visual_animation_managerst ambiguous;
-	assert(!ambiguous.is_linear());
-	ambiguous.set_linear(true);
-	assert(ambiguous.is_linear());
+	assert(&ambiguous.get_interpolation()==&default_interpolation());
+	ambiguous.set_interpolation(*find_interpolation("linear"));
+	assert(&ambiguous.get_interpolation()==find_interpolation("linear"));
+	assert(ambiguous.get_interpolation().paced&&!ambiguous.get_interpolation().lifts);
+	ambiguous.set_interpolation(*find_interpolation("bob"));
+	assert(!ambiguous.get_interpolation().paced&&ambiguous.get_interpolation().lifts);
+	assert(!default_interpolation().paced&&!default_interpolation().lifts);
+	assert(find_interpolation("bounce")==nullptr);
+	assert(interpolation_names()=="smoothstep, linear, bob");
+	ambiguous.set_interpolation(*find_interpolation("linear"));
 	set_layer(input,viewport_visual_layer::center,current.data(),previous.data());
 	run_frame(ambiguous,input,2990);
 	previous.fill(0);
@@ -1341,48 +1351,113 @@ int main()
 	assert(scrolled.get_facing(viewport,2,2)==native_sprite_facing);
 	}
 
-	// The walk bob lifts once per hop, returns to the grid at both ends of a step, and never
-	// exceeds amplitude times the direction multiplier.
+	// The bob movement lifts once per hop, returns to the grid at both ends of a step, and
+	// its hop is the amount times the direction's multiplier high.
 	{
-	const float amplitude=0.10f,multiplier=2.7f,peak=amplitude*multiplier;
+	using D=step_directionst;
 	auto near=[](float a,float b){return std::fabs(a-b)<1e-5f;};
+	const interpolationst &bob=*find_interpolation("bob");
+	// A unit bob: amount 1, every multiplier 1, so the lift is the bare hop shape.
+	walk_bob_settingst unit;unit.amplitude=1.0f;unit.horizontal_mult=unit.diagonal_mult=
+		unit.vertical_mult=1.0f;
 	for(int hops:{1,2})
 		{
-		assert(near(walk_bob_lift(0.0f,hops,amplitude,multiplier),0.0f));
-		assert(near(walk_bob_lift(1.0f,hops,amplitude,multiplier),0.0f));
+		unit.hops=hops;
+		assert(near(bob.at(0.0f,D::horizontal,unit).lift,0.0f)&&
+			bob.at(0.0f,D::horizontal,unit).along==0.0f);
+		assert(near(bob.at(1.0f,D::horizontal,unit).lift,0.0f)&&
+			bob.at(1.0f,D::horizontal,unit).along==1.0f);
 		float highest=0.0f;
 		for(int i=0;i<=1000;++i)
 			{
-			const float lift=walk_bob_lift(float(i)/1000.0f,hops,amplitude,multiplier);
-			assert(lift>=0.0f);
-			highest=std::max(highest,lift);
+			const sprite_positionst position=bob.at(float(i)/1000.0f,D::horizontal,unit);
+			assert(position.lift>=0.0f&&position.along>=0.0f&&position.along<=1.0f);
+			// The bob follows the default's path, whatever the direction.
+			assert(position.along==
+				smoothstep_interpolation(float(i)/1000.0f,D::horizontal,unit).along);
+			assert(position.along==bob.at(float(i)/1000.0f,D::vertical,unit).along);
+			highest=std::max(highest,position.lift);
 			}
-		assert(near(highest,peak));
+		assert(near(highest,1.0f));
 		}
-	assert(near(walk_bob_lift(0.5f,1,amplitude,multiplier),peak));
-	assert(near(walk_bob_lift(0.25f,2,amplitude,multiplier),peak));
-	// The foot lands between the two hops.
-	assert(near(walk_bob_lift(0.5f,2,amplitude,multiplier),0.0f));
-	assert(near(walk_bob_lift(0.25f,2,amplitude,1.0f),amplitude));
-	assert(near(walk_bob_lift(0.25f,2,0.0f,multiplier),0.0f));
+	// The hop peaks halfway along the line (the time progress 0.5 is halfway through
+	// smoothstep too); with two hops the foot lands there and the peaks are at a quarter
+	// and three quarters of the line, which the soft start reaches later than in time.
+	unit.hops=1;
+	assert(near(bob.at(0.5f,D::horizontal,unit).lift,1.0f));
+	unit.hops=2;
+	assert(near(bob.at(0.5f,D::horizontal,unit).lift,0.0f));
+	float peak_along=0.0f,peak_lift=0.0f;
+	for(int i=0;i<=1000;++i)
+		{
+		const sprite_positionst position=bob.at(float(i)/1000.0f,D::horizontal,unit);
+		if(position.along<0.5f&&position.lift>peak_lift){peak_lift=position.lift;peak_along=position.along;}
+		}
+	assert(std::fabs(peak_along-0.25f)<0.002f&&near(peak_lift,1.0f));
+	assert(bob.at(0.25f,D::horizontal,unit).lift<1.0f);
 	// The lift guard keys off the largest multiplier and admits exactly up to the cap.
 	assert(walk_bob_lift_fits(0.10f,1.0f,2.4f,2.7f));
 	assert(walk_bob_lift_fits(0.30f,1.0f,3.0f,2.0f));
 	assert(!walk_bob_lift_fits(0.30f,1.0f,3.0f,3.5f));
 	assert(!walk_bob_lift_fits(0.30f,4.0f,1.0f,1.0f));
 	assert(walk_bob_lift_fits(0.0f,5.0f,5.0f,5.0f));
-	// The settings pick the multiplier by the step's direction and default to fitting values.
-	const walk_bob_settingst defaults;
-	assert(!defaults.enabled&&defaults.hops==2);
+	// The default settings fit, and scale the hop by the step's direction: a one-hop step
+	// peaks at the amount times the multiplier.
+	walk_bob_settingst defaults;
+	assert(defaults.hops==2);
 	assert(walk_bob_lift_fits(defaults.amplitude,defaults.horizontal_mult,
 		defaults.diagonal_mult,defaults.vertical_mult));
-	assert(near(defaults.lift(0.0f,5.0f,1,5,0.25f),0.10f));
-	assert(near(defaults.lift(0.0f,5.0f,1,4,0.25f),0.24f));
-	assert(near(defaults.lift(0.0f,5.0f,0,4,0.25f),0.27f));
-	assert(near(defaults.lift(0.0f,5.0f,0,4,0.5f),0.0f));
-	walk_bob_settingst single=defaults;
-	single.hops=1;
-	assert(near(single.lift(0.0f,5.0f,0,4,0.5f),0.27f));
+	defaults.hops=1;
+	assert(near(bob.at(0.5f,D::horizontal,defaults).lift,0.10f));
+	assert(near(bob.at(0.5f,D::diagonal,defaults).lift,0.24f));
+	assert(near(bob.at(0.5f,D::vertical,defaults).lift,0.27f));
+	assert(bob.at(0.0f,D::vertical,defaults).lift==0.0f);
+	// The other movements ignore the direction and the settings.
+	assert(smoothstep_interpolation(0.5f,D::vertical,defaults).lift==0.0f);
+	assert(linear_interpolation(0.5f,D::diagonal,defaults).lift==0.0f&&
+		linear_interpolation(0.5f,D::diagonal,defaults).along==0.5f);
+	// The manager hands the lift out in tiles with the movement, from its own bob settings.
+	{
+	visual_animation_managerst lifted;
+	lifted.set_interpolation(bob);
+	lifted.bob.hops=1;
+	lifted.bob.amplitude=0.2f;
+	int32_t lift_empty[9]={},lift_before[9]={},lift_after[9]={};
+	lift_before[0]=7;lift_after[3]=7; // x 0 -> 1 on row 0: a horizontal step
+	auto input=make_input(viewport,3,lift_empty);
+	set_layer(input,viewport_visual_layer::center,lift_before,lift_empty);
+	run_frame(lifted,input,1000);
+	set_layer(input,viewport_visual_layer::center,lift_after,lift_before);
+	run_frame(lifted,input,1075);
+	set_layer(input,viewport_visual_layer::center,lift_after,lift_after);
+	run_frame(lifted,input,1150);
+	const visual_movement_renderst mid=lifted.get_movement(viewport,viewport_visual_layer::center,1,0);
+	assert(mid.active&&mid.progress==0.5f&&near(mid.lift,0.2f*1.0f));
+	lifted.set_interpolation(default_interpolation());
+	assert(lifted.get_movement(viewport,viewport_visual_layer::center,1,0).lift==0.0f);
+	}
+	// The direction the manager hands a movement is the movement's own step: a vertical and
+	// a diagonal step lift by their multipliers, not the horizontal one.
+	for(const auto &[target_x,target_y,mult]:
+		{std::tuple{0,1,2.7f},std::tuple{1,1,2.4f}})
+	{
+	visual_animation_managerst lifted;
+	lifted.set_interpolation(bob);
+	lifted.bob.hops=1;
+	lifted.bob.amplitude=0.2f;
+	int32_t lift_empty[9]={},lift_before[9]={},lift_after[9]={};
+	lift_before[0]=7;lift_after[target_x*3+target_y]=7;
+	auto input=make_input(viewport,3,lift_empty);
+	set_layer(input,viewport_visual_layer::center,lift_before,lift_empty);
+	run_frame(lifted,input,1000);
+	set_layer(input,viewport_visual_layer::center,lift_after,lift_before);
+	run_frame(lifted,input,1075);
+	set_layer(input,viewport_visual_layer::center,lift_after,lift_after);
+	run_frame(lifted,input,1150);
+	const visual_movement_renderst mid=
+		lifted.get_movement(viewport,viewport_visual_layer::center,target_x,target_y);
+	assert(mid.active&&mid.progress==0.5f&&near(mid.lift,0.2f*mult));
+	}
 	}
 
 	// The creature-level bob decision: any rider that cannot bob takes its whole creature
@@ -1407,19 +1482,19 @@ int main()
 	resolve_creature_bob({},empty);
 	}
 
-	// The bob direction is that of the tile step, even when the source is a fractional
+	// The step direction is that of the tile step, even when the source is a fractional
 	// in-flight position left by a retarget.
 	{
-	using D=walk_bob_directionst;
-	assert(walk_bob_direction(0.0f,5.0f,1,5)==D::horizontal);
-	assert(walk_bob_direction(0.0f,5.0f,0,4)==D::vertical);
-	assert(walk_bob_direction(0.0f,5.0f,1,4)==D::diagonal);
-	assert(walk_bob_direction(1.0f,4.0f,0,5)==D::diagonal);
+	using D=step_directionst;
+	assert(step_direction(0.0f,5.0f,1,5)==D::horizontal);
+	assert(step_direction(0.0f,5.0f,0,4)==D::vertical);
+	assert(step_direction(0.0f,5.0f,1,4)==D::diagonal);
+	assert(step_direction(1.0f,4.0f,0,5)==D::diagonal);
 	// East step retargeted north from (0.6,5): a vertical step, not a diagonal one.
-	assert(walk_bob_direction(0.6f,5.0f,1,4)==D::vertical);
+	assert(step_direction(0.6f,5.0f,1,4)==D::vertical);
 	// Diagonal step retargeted east from (0.6,4.4): a horizontal step.
-	assert(walk_bob_direction(0.6f,4.4f,2,4)==D::horizontal);
-	assert(walk_bob_direction(0.4f,5.0f,1,5)==D::horizontal);
+	assert(step_direction(0.6f,4.4f,2,4)==D::horizontal);
+	assert(step_direction(0.4f,5.0f,1,5)==D::horizontal);
 	}
 	printf("visual animation manager tests: OK\n");
 }

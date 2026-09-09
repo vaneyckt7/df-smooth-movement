@@ -7,6 +7,7 @@
 #include "df/graphic_viewportst.h"
 #include "sprite_proxies.h"
 
+#include <cmath>
 #include <cstdio>
 #include <set>
 #include <string>
@@ -399,6 +400,30 @@ void test_bob()
 	if(!proxies.empty()&&proxies[0].layer!=L::center)
 		printf("bob on: centre not first\n"),++failures;
 	}
+	// The lift comes out with the movement, in tiles: with the bob interpolation, a frame in
+	// the middle of a one-hop step lifts the centre to the hop's peak, the bob amount for a
+	// horizontal step, and the fragments, whose movement is inherited from the centre, are
+	// lifted just as far.
+	{
+	scenest scene;
+	scene.bob=true;
+	scene.manager.set_interpolation(*find_interpolation("bob"));
+	scene.manager.bob.hops=1;
+	scene.manager.bob.amplitude=0.2f;
+	scene.manager.begin_frame(1016+visual_animation_managerst::default_step_duration_ms/2);
+	scene.manager.synchronize_viewport(scene.v.input());
+	scene.manager.end_frame();
+	const auto proxies=scene.collect(false);
+	expect_count("bob lift",proxies,3);
+	for(const render_proxyst &proxy:proxies)
+		{
+		const bool centre=proxy.layer==L::center;
+		if(std::fabs(proxy.progress-0.5f)>0.01f)
+			printf("bob lift: %s progress %g\n",centre?"centre":"fragment",proxy.progress),++failures;
+		if(std::fabs(proxy.lift-0.2f)>0.001f)
+			printf("bob lift: %s lift %g\n",centre?"centre":"fragment",proxy.lift),++failures;
+		}
+	}
 	{
 	// With the bob off, the proxies, their coverage and the anchors are what they were.
 	scenest scene;
@@ -531,7 +556,7 @@ void test_carried_item_bob()
 	auto item=[&](int32_t target_x,int32_t target_y,float source_x,float source_y,
 		float progress)
 		{
-		return carried_item_proxyst{source_x,source_y,target_x,target_y,progress,
+		return carried_item_proxyst{source_x,source_y,target_x,target_y,progress,0.0f,
 			centre->texture,false,{}};
 		};
 	std::vector<carried_item_proxyst> items={

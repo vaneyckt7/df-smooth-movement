@@ -5,13 +5,16 @@
 // File layout (little-endian, byte packed):
 //   "SMRC" u32 version
 //   per frame:
-//     'F' u8 flip, u8 hauled, u8 camera, u8 linear (the plugin's settings for this frame),
+//     'F' u8 flip, u8 hauled, u8 camera, u8 linear (the plugin's settings for this frame; the
+//         linear byte, with the bob byte below, names the interpolation: smoothstep, linear
+//         or bob; both set names none),
 //         u32 step_ms (the one-tile step time; absent in version 2, where it was 150),
 //         i64 simulation_tick (the simulation's frame counter when the game last filled the
 //         per-tile arrays, -1 when no fill was seen since the previous frame; absent before
 //         version 4, which reads as -1 on every frame),
-//         u8 bob, f32 bob amount, f32 horizontal diagonal vertical multipliers, u8 hops (the
-//         walk bob settings; absent before version 5, which reads as the bob off),
+//         u8 bob (the interpolation is `bob`), f32 bob amount, f32 horizontal diagonal
+//         vertical multipliers, u8 hops (the walk bob settings; absent before version 5,
+//         which reads as the bob off),
 //         u32 tick_ms, i32 window x y z, u8 paused, i32 follow_unit, i32 mouse x y, u8 mbut,
 //         i32 zoom origin_x origin_y dimx dimy, f64 free-camera rest offset x y (tiles)
 //     u8 viewports; per viewport: u8 slot (0..7 lower, 8 main), i32 dim_x dim_y clipx0 clipx1
@@ -247,10 +250,10 @@ inline void write_frame_header(writerst &w,const frame_headerst &f)
 {
 	w.u8('F');
 	const plugin_settingsst &s=f.settings;
-	w.u8(s.flip);w.u8(s.hauled);w.u8(s.camera);w.u8(s.linear);
+	w.u8(s.flip);w.u8(s.hauled);w.u8(s.camera);w.u8(s.interpolation==find_interpolation("linear"));
 	w.u32(s.step_ms);
 	w.i64(f.simulation_tick);
-	w.u8(s.bob.enabled);
+	w.u8(s.interpolation==find_interpolation("bob"));
 	w.f32(s.bob.amplitude);
 	w.f32(s.bob.horizontal_mult);w.f32(s.bob.diagonal_mult);w.f32(s.bob.vertical_mult);
 	w.u8(uint8_t(s.bob.hops));
@@ -301,15 +304,17 @@ inline bool read_frame_header(readerst &r,frame_headerst &f)
 {
 	if(r.u8()!='F'){r.fail("expected frame");return false;}
 	plugin_settingsst &s=f.settings;
-	s.flip=r.u8()!=0;s.hauled=r.u8()!=0;s.camera=r.u8()!=0;s.linear=r.u8()!=0;
+	s.flip=r.u8()!=0;s.hauled=r.u8()!=0;s.camera=r.u8()!=0;
+	const bool linear=r.u8()!=0;
 	s.step_ms=r.version>=3?r.u32():150;
 	if(s.step_ms==0)r.fail("bad step time");
 	f.simulation_tick=r.version>=4?r.i64():-1;
 	if(f.simulation_tick<-1)r.fail("bad simulation tick");
 	s.bob=walk_bob_settingst{};
+	bool bob=false;
 	if(r.version>=5)
 		{
-		s.bob.enabled=r.u8()!=0;
+		bob=r.u8()!=0;
 		s.bob.amplitude=r.f32();
 		s.bob.horizontal_mult=r.f32();s.bob.diagonal_mult=r.f32();s.bob.vertical_mult=r.f32();
 		s.bob.hops=r.u8();
@@ -322,6 +327,9 @@ inline bool read_frame_header(readerst &r,frame_headerst &f)
 				s.bob.vertical_mult)||
 			(s.bob.hops!=1&&s.bob.hops!=2))r.fail("bad walk bob settings");
 		}
+	// The two switches name one interpolation, and both on names none.
+	if(linear&&bob){r.fail("a frame with the linear and the bob switch names no interpolation");return false;}
+	s.interpolation=find_interpolation(linear?"linear":bob?"bob":"smoothstep");
 	f.tick_ms=r.u32();
 	f.window_x=r.i32();f.window_y=r.i32();f.window_z=r.i32();
 	f.paused=r.u8()!=0;
