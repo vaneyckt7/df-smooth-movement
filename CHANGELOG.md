@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `sdl_apist::clear` assigns a fresh value instead of listing every binding. Nothing the plugin does changes.
 - Both map screen interposes note the simulation tick through `note_map_render`, and the three hooks are applied and removed by `apply_hooks` and `remove_hooks`. Nothing the plugin does changes.
 - Every request for a full redraw by the game goes through `full_redraw`, which the console commands already used. Nothing the plugin does changes.
 - The repaint passes of `tile_repaint.h` get the callable that asks the game for a tile repaint from one function, `staged_repainter`. Nothing the plugin draws changes.

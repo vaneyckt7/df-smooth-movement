@@ -34,14 +34,10 @@ struct sdl_apist
 	decltype(&SDL_GetRenderDrawColor) get_render_draw_color=nullptr;
 	decltype(&SDL_SetRenderDrawColor) set_render_draw_color=nullptr;
 
+	// Back to unbound: a fresh value, so a function added above needs no line here.
 	void clear()
 		{
-		render_copy_f=nullptr;
-		render_copy_ex_f=nullptr;
-		render_fill_rect=nullptr;
-		render_set_clip_rect=nullptr;
-		get_render_draw_color=nullptr;
-		set_render_draw_color=nullptr;
+		*this=sdl_apist();
 		}
 };
 
