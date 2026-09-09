@@ -433,6 +433,15 @@ frame_recorderst::viewport_listst recorded_viewports()
 	return viewports;
 }
 
+// Asks the game to repaint everything on its next frame. The plugin asks for it whenever
+// the screen must change without anything the game knows changing: when a recording starts
+// from fresh visual state, when the camera re-joins the grid, when a setting turns off what
+// the plugin painted last frame and when the plugin is disabled.
+void full_redraw()
+{
+	if(gps!=nullptr)++gps->force_full_display_count;
+}
+
 // Hands the recorder what the hook reads at the start of a frame.
 void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 {
@@ -441,7 +450,7 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 		if(first)
 			{
 			state.reset_visual();
-			if(gps!=nullptr)++gps->force_full_display_count;
+			full_redraw();
 			}
 		frame_recorderst::frame_inputst input;
 		frame_record::frame_headerst &header=input.header;
@@ -705,7 +714,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		// The camera just re-joined the grid: one redraw by the game replaces the last shifted
 		// frame.
 		state.render.camera_was_offset=false;
-		if(gps!=nullptr)++gps->force_full_display_count;
+		full_redraw();
 		}
 	if(glide)state.render.camera_was_offset=true;
 	record_frame_units(renderer);
@@ -863,12 +872,6 @@ bool load_sdl(color_ostream &out)
 	return true;
 }
 
-// What the console commands need from the game.
-void full_redraw()
-{
-	if(gps!=nullptr)++gps->force_full_display_count;
-}
-
 command_result status_command(
 	color_ostream &out,
 	std::vector<std::string> &parameters)
@@ -929,7 +932,7 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 		INTERPOSE_HOOK(dungeonmode_hook,render).remove();
 		state.reset();
 		state.sdl.clear();
-		if(gps!=nullptr)++gps->force_full_display_count;
+		full_redraw();
 		}
 	is_enabled=enable;
 	out.print("smooth-movement: {}\n",enable?"enabled":"disabled");
