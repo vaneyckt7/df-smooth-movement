@@ -421,9 +421,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 
 	if(vp!=nullptr)
 		{
-		const view_context_changest change=r.view_context.observe(
-			vp,view_signature(renderer,vp),window_x?*window_x:0,window_y?*window_y:0);
-		if(change.reset)r.camera.cancel_transients();
+		if(r.view_context.observe(vp,view_signature(renderer,vp)))r.camera.cancel_transients();
 		}
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
 	const bool drawing_at_start=state.draws.drawing.load(std::memory_order_acquire);

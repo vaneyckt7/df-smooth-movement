@@ -11,8 +11,7 @@
 // these means the buffers cannot be compared with the previous frame's, so the animation
 // context is reset (the revision bumps). Map scroll (window_x/window_y) is deliberately not
 // part of the signature: a pan is followed by translating the movements, so it must NOT bump
-// the revision; it only invalidates the blackout coverage kept from the previous frame, which
-// is in the old viewport frame.
+// the revision.
 struct view_signaturest
 {
 	int32_t window_z=0;
@@ -42,21 +41,12 @@ struct view_signaturest
 		}
 };
 
-struct view_context_changest
-{
-	bool reset=false;      // the signature (or the main viewport object) changed
-	bool panned=false;     // the map scroll changed; also true on a reset and on the first frame
-};
-
 class view_context_trackerst
 {
 	uint64_t revision_=0;
 	const void *viewport=nullptr;
 	view_signaturest signature;
 	bool has_signature=false;
-	int32_t pan_x=0;
-	int32_t pan_y=0;
-	bool has_pan=false;
 
 	public:
 		// Revision 0 is never handed out for an observed frame: the first observation resets.
@@ -65,23 +55,16 @@ class view_context_trackerst
 			return revision_;
 			}
 
-		view_context_changest observe(
-			const void *main_viewport,
-			const view_signaturest &current,
-			int32_t current_pan_x,
-			int32_t current_pan_y)
+		// Returns true when the context reset: the signature (or the main viewport object) changed,
+		// and on the first observation.
+		bool observe(const void *main_viewport,const view_signaturest &current)
 			{
-			view_context_changest change;
-			change.reset=!has_signature||viewport!=main_viewport||signature!=current;
-			if(change.reset)++revision_;
+			const bool reset=!has_signature||viewport!=main_viewport||signature!=current;
+			if(reset)++revision_;
 			viewport=main_viewport;
 			signature=current;
 			has_signature=true;
-			change.panned=change.reset||!has_pan||pan_x!=current_pan_x||pan_y!=current_pan_y;
-			pan_x=current_pan_x;
-			pan_y=current_pan_y;
-			has_pan=true;
-			return change;
+			return reset;
 			}
 };
 
