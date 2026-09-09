@@ -181,7 +181,8 @@ class visual_animation_managerst
 			frame_time_ms=now_ms;
 			has_frame=true;
 			force_full_redraw=false;
-			// Keep one final full redraw when the last movement expires.
+			// Keep one final full redraw when the last movement expires: a viewport that enters
+			// the frame with movements asks for it here, whether or not they survive expiry.
 			for(viewport_animationst &state:viewports)
 				{
 				state.seen=false;
@@ -309,8 +310,6 @@ class visual_animation_managerst
 					viewports.end(),
 					[](const viewport_animationst &state){return !state.seen;}),
 				viewports.end());
-			for(const viewport_animationst &state:viewports)
-				if(!state.movements.empty())force_full_redraw=true;
 			}
 
 		uint32_t get_frame_time_ms() const
