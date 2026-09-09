@@ -223,6 +223,24 @@ void test_normalize()
 	expect_glide("normalize landed",scene.camera,-10,13);
 	}
 	{
+	// A restart before the camera's own write lands (the game paused, a recording started,
+	// the followed unit changed) forgets the pending landing, so the write is folded into
+	// rest at once: the window moved by a tile and rest must move the other way to keep the
+	// view where it was. Left out, the view sits a tile off for good.
+	scenest scene;
+	scene.camera.set_rest(-0.75,0.6);
+	scene.camera.normalize_rest(scene.window);
+	if(scene.window.x!=11||scene.window.y!=9)
+		printf("restart before landing: window not scrolled\n"),++failures;
+	scene.camera.restart();
+	expect_rest("restart before landing",scene.camera,0.25,-0.4);
+	scene.step();
+	scene.land(1,-1);
+	scene.step();
+	// The landing is a fresh baseline's first scroll, not the write: rest keeps its value.
+	expect_rest("landing after restart",scene.camera,0.25,-0.4);
+	}
+	{
 	// A rest within half a tile writes nothing; exactly half rounds away from zero.
 	scenest scene;
 	scene.camera.set_rest(0.4,-0.4);
@@ -273,17 +291,32 @@ void test_normalize()
 	expect_glide("write attributed once",scene.camera,-10-32,0);
 	}
 	{
-	// An abandoned scroll forgets the write: the landing is a plain scroll.
+	// An abandoned scroll ends the reporting of the write's landing, so the write is folded
+	// into rest at once; a landing that arrives after all is a plain scroll and glides.
 	scenest scene;
 	scene.camera.set_rest(0.7,0.0);
 	scene.camera.normalize_rest(scene.window);
 	scene.step();
 	scene.manager.scroll.abandoned=true;
 	scene.step();
+	expect_rest("abandoned",scene.camera,-0.3,0.0);
+	scene.manager.scroll.abandoned=false;
 	scene.land(-1,0);
 	scene.step();
-	expect_rest("abandoned",scene.camera,0.7,0.0);
-	expect_glide("abandoned",scene.camera,22-32,0);
+	expect_rest("landing after abandon",scene.camera,-0.3,0.0);
+	expect_glide("landing after abandon",scene.camera,-10-32,0);
+	}
+	{
+	// A view reset (z-level, zoom, resize) cancels the transients while a write is pending;
+	// the manager drops the pending landing with the view, so the write is folded into rest.
+	scenest scene;
+	scene.camera.set_rest(0.7,0.0);
+	scene.camera.normalize_rest(scene.window);
+	scene.camera.cancel_transients();
+	expect_rest("cancel before landing",scene.camera,-0.3,0.0);
+	scene.step();
+	scene.step();
+	expect_rest("cancel before landing settled",scene.camera,-0.3,0.0);
 	}
 }
 
