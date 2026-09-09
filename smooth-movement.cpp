@@ -321,27 +321,44 @@ void render_copy_maybe_mirrored(
 	state.sdl.render_copy_f(renderer,texture,nullptr,&destination);
 }
 
-void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
+// Where a sprite gliding from its source tile to its target tile sits on screen this frame:
+// the top left corner in pixels and the tile size. A bobbing sprite is lifted towards the
+// row above its path; the lift is zero at both ends of the step, so it lands on the grid.
+struct sprite_placementst
+{
+	float x;
+	float y;
+	float tile_size;
+};
+
+template<typename Proxy>
+sprite_placementst place_sprite(const df::renderer_2d_base *renderer,const Proxy &proxy)
 {
 	const int32_t zoom=renderer->viewport_zoom_factor;
-	const int32_t target_x=tile_pixel(proxy.target_x,renderer->origin_x,zoom);
-	const int32_t target_y=tile_pixel(proxy.target_y,renderer->origin_y,zoom);
+	const float target_x=float(tile_pixel(proxy.target_x,renderer->origin_x,zoom));
+	const float target_y=float(tile_pixel(proxy.target_y,renderer->origin_y,zoom));
 	const float tile_size=float(tile_size_px(zoom));
 	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
 	const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
-	const float mirror_offset=float(proxy.mirror_shift)*tile_size;
-	// A bobbing sprite is lifted towards the row above its path; the lift is zero at both
-	// ends of the step, so it lands on the grid.
 	const float bob_offset=proxy.bob?
 		-state.bob.lift(proxy.source_x,proxy.source_y,proxy.target_x,proxy.target_y,
 			proxy.progress)*tile_size:
 		0.0f;
+	return {
+		source_x+(target_x-source_x)*proxy.progress,
+		source_y+(target_y-source_y)*proxy.progress+bob_offset,
+		tile_size};
+}
+
+void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
+{
+	const sprite_placementst placement=place_sprite(renderer,proxy);
 	const SDL_FRect destination=
 		{
-		source_x+(target_x-source_x)*proxy.progress+mirror_offset,
-		source_y+(target_y-source_y)*proxy.progress+bob_offset,
-		tile_size,
-		tile_size
+		placement.x+float(proxy.mirror_shift)*placement.tile_size,
+		placement.y,
+		placement.tile_size,
+		placement.tile_size
 		};
 	render_copy_maybe_mirrored(
 		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
@@ -354,21 +371,9 @@ void draw_carried_item_proxy(
 	df::renderer_2d_base *renderer,
 	const carried_item_proxyst &proxy)
 {
-	const int32_t zoom=renderer->viewport_zoom_factor;
-	const float tile_size=float(tile_size_px(zoom));
-	const float target_x=tile_pixel(proxy.target_x,renderer->origin_x,zoom);
-	const float target_y=tile_pixel(proxy.target_y,renderer->origin_y,zoom);
-	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
-	const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
 	// The icon rides the creature's walk bob so it stays on the sprite that carries it.
-	const float bob_offset=proxy.bob?
-		-state.bob.lift(proxy.source_x,proxy.source_y,proxy.target_x,proxy.target_y,
-			proxy.progress)*tile_size:
-		0.0f;
-	const auto icon=carried_item_icon_rect(
-		source_x+(target_x-source_x)*proxy.progress,
-		source_y+(target_y-source_y)*proxy.progress+bob_offset,
-		tile_size);
+	const sprite_placementst placement=place_sprite(renderer,proxy);
+	const auto icon=carried_item_icon_rect(placement.x,placement.y,placement.tile_size);
 	const SDL_FRect destination={icon.x,icon.y,icon.width,icon.height};
 	state.sdl.render_copy_f(
 		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
