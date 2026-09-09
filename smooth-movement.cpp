@@ -81,10 +81,16 @@ struct scope_guardst
 
 plugin_statest state;
 
+// The side of a tile on screen in pixels at the renderer's zoom: 32 at the default zoom of
+// 128, scaled with the zoom otherwise and never below one pixel.
+int32_t tile_size_px(int32_t zoom)
+{
+	return zoom==128?32:std::max(1,zoom*32/128);
+}
+
 double tile_px(const df::renderer_2d_base *renderer)
 {
-	const int32_t zoom=renderer->viewport_zoom_factor;
-	return double(zoom==128?32:std::max(1,zoom*32/128));
+	return double(tile_size_px(renderer->viewport_zoom_factor));
 }
 
 // Scrolls the game's window position by whole tiles for the camera and says which axes it
@@ -320,7 +326,7 @@ void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
 	const int32_t zoom=renderer->viewport_zoom_factor;
 	const int32_t target_x=tile_pixel(proxy.target_x,renderer->origin_x,zoom);
 	const int32_t target_y=tile_pixel(proxy.target_y,renderer->origin_y,zoom);
-	const float tile_size=float(zoom==128?32:std::max(1,zoom*32/128));
+	const float tile_size=float(tile_size_px(zoom));
 	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
 	const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
 	const float mirror_offset=float(proxy.mirror_shift)*tile_size;
@@ -349,7 +355,7 @@ void draw_carried_item_proxy(
 	const carried_item_proxyst &proxy)
 {
 	const int32_t zoom=renderer->viewport_zoom_factor;
-	const float tile_size=float(zoom==128?32:std::max(1,zoom*32/128));
+	const float tile_size=float(tile_size_px(zoom));
 	const float target_x=tile_pixel(proxy.target_x,renderer->origin_x,zoom);
 	const float target_y=tile_pixel(proxy.target_y,renderer->origin_y,zoom);
 	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
@@ -728,7 +734,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 
 	SDL_Renderer *sdl_renderer=static_cast<SDL_Renderer *>(renderer->sdl_renderer);
 	const int32_t zoom=renderer->viewport_zoom_factor;
-	const int32_t tile_size=zoom==128?32:std::max(1,zoom*32/128);
+	const int32_t tile_size=tile_size_px(zoom);
 
 	if(glide)
 		{
