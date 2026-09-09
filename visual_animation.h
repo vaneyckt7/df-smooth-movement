@@ -521,6 +521,37 @@ class visual_animation_managerst
 		return hash;
 		}
 
+	// Counts, over one per-tile array, the non-zero entries whose source tile `dwx,dwy`
+	// away lies inside the viewport (`considered`) and how many of those `matches` the
+	// previous frame's entry at that source (`matched`): the votes an array casts for the
+	// hypothesis that the view shifted by that much.
+	template<typename Matches>
+	static void count_shift_matches(
+		const viewport_visual_animation_inputst &input,
+		const int32_t *current,
+		const int32_t *previous,
+		int32_t dwx,
+		int32_t dwy,
+		const Matches &matches,
+		int32_t &considered,
+		int32_t &matched)
+		{
+		for(int32_t x=0;x<input.dim_x;++x)
+			{
+			const int32_t sx=x+dwx;
+			if(sx<0||sx>=input.dim_x)continue;
+			for(int32_t y=0;y<input.dim_y;++y)
+				{
+				const int32_t sy=y+dwy;
+				if(sy<0||sy>=input.dim_y)continue;
+				const int32_t value=current[x*input.dim_y+y];
+				if(value==0)continue;
+				++considered;
+				if(matches(value,previous[sx*input.dim_y+sy]))++matched;
+				}
+			}
+		}
+
 	// Fraction of tracked sprites consistent with a buffer shift: current[x]==previous[x+dwx].
 	// Negative when there is nothing to compare.
 	static double background_shift_match_ratio(
@@ -531,20 +562,10 @@ class visual_animation_managerst
 		if(input.current_background==nullptr||input.previous_background==nullptr)return -1.0;
 		int32_t considered=0;
 		int32_t matches=0;
-		for(int32_t x=0;x<input.dim_x;++x)
-			{
-			const int32_t sx=x+dwx;
-			if(sx<0||sx>=input.dim_x)continue;
-			for(int32_t y=0;y<input.dim_y;++y)
-				{
-				const int32_t sy=y+dwy;
-				if(sy<0||sy>=input.dim_y)continue;
-				const int32_t value=input.current_background[x*input.dim_y+y];
-				if(value==0)continue;
-				++considered;
-				if(input.previous_background[sx*input.dim_y+sy]==value)++matches;
-				}
-			}
+		count_shift_matches(
+			input,input.current_background,input.previous_background,dwx,dwy,
+			[](int32_t value,int32_t previous){return previous==value;},
+			considered,matches);
 		return considered?double(matches)/considered:-1.0;
 		}
 
@@ -562,25 +583,13 @@ class visual_animation_managerst
 			// A layer matching any non-zero previous carries no position, so it would vote for
 			// every hypothesis and carry an unapplied scroll over the bar.
 			if(visual_layer_descriptor(id).matches_any_previous)continue;
-			const int32_t *current=input.current[layer];
-			const int32_t *previous=input.previous[layer];
-			for(int32_t x=0;x<input.dim_x;++x)
-				{
-				const int32_t sx=x+dwx;
-				if(sx<0||sx>=input.dim_x)continue;
-				for(int32_t y=0;y<input.dim_y;++y)
-					{
-					const int32_t texpos=current[x*input.dim_y+y];
-					if(texpos==0)continue;
-					const int32_t sy=y+dwy;
-					if(sy<0||sy>=input.dim_y)continue;
-					++considered;
-					if(visual_layer_matches(id,texpos,previous[sx*input.dim_y+sy]))++matches;
-					}
-				}
+			count_shift_matches(
+				input,input.current[layer],input.previous[layer],dwx,dwy,
+				[id](int32_t texpos,int32_t previous)
+					{return visual_layer_matches(id,texpos,previous);},
+				considered,matches);
 			}
-		if(considered==0)return -1.0;
-		return double(matches)/double(considered);
+		return considered?double(matches)/considered:-1.0;
 		}
 
 	static double scroll_shift_match_ratio(
