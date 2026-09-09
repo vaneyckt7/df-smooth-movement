@@ -15,7 +15,7 @@
 //         u32 tick_ms, i32 window x y z, u8 paused, i32 follow_unit, i32 mouse x y, u8 mbut,
 //         i32 zoom origin_x origin_y dimx dimy, f64 free-camera rest offset x y (tiles)
 //     u8 viewports; per viewport: u8 slot (0..7 lower, 8 main), i32 dim_x dim_y clipx0 clipx1
-//         clipy0 clipy1 screen_x screen_y, then every per-tile array in `for_each_buffer` order as
+//         clipy0 clipy1 screen_x screen_y, then every per-tile array in `for_each_tile_array` order as
 //         u8 present and, when present, a run-coded array
 //     u32 units; per unit: i32 x y z, i32 texture id (texpos) of the hauled item, u8 texture
 //         already cached.
@@ -49,38 +49,38 @@ constexpr int slot_count=9;
 
 // Every per-tile array of a viewport, current then old, in declaration order.
 template<typename Viewport,typename Callback>
-void for_each_buffer(Viewport &vp,Callback callback)
+void for_each_tile_array(Viewport &vp,Callback callback)
 {
-	#define buffer(name) callback(vp.name);
-	buffer(screentexpos_background) buffer(screentexpos_floor_flag)
-	buffer(screentexpos_background_two) buffer(screentexpos_liquid_flag)
-	buffer(screentexpos_spatter_flag) buffer(screentexpos_spatter)
-	buffer(screentexpos_ramp_flag) buffer(screentexpos_shadow_flag)
-	buffer(screentexpos_building_one) buffer(screentexpos_item)
-	buffer(screentexpos_vehicle) buffer(screentexpos_vermin)
-	buffer(screentexpos_left_creature) buffer(screentexpos)
-	buffer(screentexpos_right_creature) buffer(screentexpos_building_two)
-	buffer(screentexpos_projectile) buffer(screentexpos_high_flow)
-	buffer(screentexpos_top_shadow) buffer(screentexpos_signpost)
-	buffer(screentexpos_upleft_creature) buffer(screentexpos_up_creature)
-	buffer(screentexpos_upright_creature) buffer(screentexpos_designation)
-	buffer(screentexpos_interface)
-	buffer(screentexpos_background_old) buffer(screentexpos_floor_flag_old)
-	buffer(screentexpos_background_two_old) buffer(screentexpos_liquid_flag_old)
-	buffer(screentexpos_spatter_flag_old) buffer(screentexpos_spatter_old)
-	buffer(screentexpos_ramp_flag_old) buffer(screentexpos_shadow_flag_old)
-	buffer(screentexpos_building_one_old) buffer(screentexpos_item_old)
-	buffer(screentexpos_vehicle_old) buffer(screentexpos_vermin_old)
-	buffer(screentexpos_left_creature_old) buffer(screentexpos_old)
-	buffer(screentexpos_right_creature_old) buffer(screentexpos_building_two_old)
-	buffer(screentexpos_projectile_old) buffer(screentexpos_high_flow_old)
-	buffer(screentexpos_top_shadow_old) buffer(screentexpos_signpost_old)
-	buffer(screentexpos_upleft_creature_old) buffer(screentexpos_up_creature_old)
-	buffer(screentexpos_upright_creature_old) buffer(screentexpos_designation_old)
-	buffer(screentexpos_interface_old)
-	#undef buffer
+	#define tile_array(name) callback(vp.name);
+	tile_array(screentexpos_background) tile_array(screentexpos_floor_flag)
+	tile_array(screentexpos_background_two) tile_array(screentexpos_liquid_flag)
+	tile_array(screentexpos_spatter_flag) tile_array(screentexpos_spatter)
+	tile_array(screentexpos_ramp_flag) tile_array(screentexpos_shadow_flag)
+	tile_array(screentexpos_building_one) tile_array(screentexpos_item)
+	tile_array(screentexpos_vehicle) tile_array(screentexpos_vermin)
+	tile_array(screentexpos_left_creature) tile_array(screentexpos)
+	tile_array(screentexpos_right_creature) tile_array(screentexpos_building_two)
+	tile_array(screentexpos_projectile) tile_array(screentexpos_high_flow)
+	tile_array(screentexpos_top_shadow) tile_array(screentexpos_signpost)
+	tile_array(screentexpos_upleft_creature) tile_array(screentexpos_up_creature)
+	tile_array(screentexpos_upright_creature) tile_array(screentexpos_designation)
+	tile_array(screentexpos_interface)
+	tile_array(screentexpos_background_old) tile_array(screentexpos_floor_flag_old)
+	tile_array(screentexpos_background_two_old) tile_array(screentexpos_liquid_flag_old)
+	tile_array(screentexpos_spatter_flag_old) tile_array(screentexpos_spatter_old)
+	tile_array(screentexpos_ramp_flag_old) tile_array(screentexpos_shadow_flag_old)
+	tile_array(screentexpos_building_one_old) tile_array(screentexpos_item_old)
+	tile_array(screentexpos_vehicle_old) tile_array(screentexpos_vermin_old)
+	tile_array(screentexpos_left_creature_old) tile_array(screentexpos_old)
+	tile_array(screentexpos_right_creature_old) tile_array(screentexpos_building_two_old)
+	tile_array(screentexpos_projectile_old) tile_array(screentexpos_high_flow_old)
+	tile_array(screentexpos_top_shadow_old) tile_array(screentexpos_signpost_old)
+	tile_array(screentexpos_upleft_creature_old) tile_array(screentexpos_up_creature_old)
+	tile_array(screentexpos_upright_creature_old) tile_array(screentexpos_designation_old)
+	tile_array(screentexpos_interface_old)
+	#undef tile_array
 }
-constexpr int buffer_count=50;
+constexpr int tile_array_count=50;
 
 struct writerst
 {

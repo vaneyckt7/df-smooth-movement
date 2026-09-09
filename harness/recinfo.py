@@ -35,7 +35,7 @@ replaying it: its length, whether the game was paused, which frames painted, and
 anything changed under the hook."""
 import struct, sys
 
-BUFFERS = 50
+TILE_ARRAYS = 50  # per-tile arrays per viewport, current then old, in for_each_tile_array order
 SETTINGS = ['flip', 'hauled', 'camera', 'linear']  # the frame header's settings, in file order
 WORD = [4, 8, 4, 4, 4, 4, 8, 4] + [4] * 17  # element size per current array, repeated for old
 WORD = WORD + WORD
@@ -132,7 +132,7 @@ def main():
             slot = r.u8()
             dx, dy, cx0, cx1, cy0, cy1, sx, sy = (r.i32() for _ in range(8))
             present = 0
-            for b in range(BUFFERS):
+            for b in range(TILE_ARRAYS):
                 if r.u8():
                     present += 1
                     r.skip_words(dx * dy, WORD[b])
