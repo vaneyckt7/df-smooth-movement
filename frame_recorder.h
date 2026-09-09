@@ -42,7 +42,7 @@ struct frame_recorderst
 	bool units_pending=false;   // capture wrote the viewports; the unit list is still owed
 	frame_record::writerst writer;
 	// Raw bytes of every per-tile array as of the last captured frame, per slot and array.
-	std::vector<uint8_t> previous[frame_record::slot_count*frame_record::buffer_count];
+	std::vector<uint8_t> previous[frame_record::slot_count*frame_record::tile_array_count];
 
 	bool start(const std::string &to,uint32_t frames)
 		{
@@ -97,10 +97,10 @@ struct frame_recorderst
 				vp->clipx[0],vp->clipx[1],vp->clipy[0],vp->clipy[1],vp->screen_x,vp->screen_y});
 			const size_t count=size_t(vp->dim_x)*size_t(vp->dim_y);
 			int index=0;
-			frame_record::for_each_buffer(*vp,[&](auto pointer)
+			frame_record::for_each_tile_array(*vp,[&](auto pointer)
 				{
 				using T=std::remove_cv_t<std::remove_pointer_t<decltype(pointer)>>;
-				std::vector<uint8_t> &last=previous[slot*frame_record::buffer_count+index++];
+				std::vector<uint8_t> &last=previous[slot*frame_record::tile_array_count+index++];
 				if(pointer==nullptr)
 					{
 					writer.u8(0);
@@ -172,10 +172,10 @@ private:
 			const df::graphic_viewportst *vp=entry.second;
 			const size_t count=size_t(vp->dim_x)*size_t(vp->dim_y);
 			int index=0;
-			frame_record::for_each_buffer(*vp,[&](auto pointer)
+			frame_record::for_each_tile_array(*vp,[&](auto pointer)
 				{
 				using T=std::remove_cv_t<std::remove_pointer_t<decltype(pointer)>>;
-				const std::vector<uint8_t> &last=previous[slot*frame_record::buffer_count+index++];
+				const std::vector<uint8_t> &last=previous[slot*frame_record::tile_array_count+index++];
 				if(pointer==nullptr||last.size()!=count*sizeof(T))return;
 				const T *words=reinterpret_cast<const T *>(last.data());
 				for(size_t i=0;i<count;++i)

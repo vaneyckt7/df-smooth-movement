@@ -169,12 +169,12 @@ struct replay_slotst
 {
 	df::graphic_viewportst vp;
 	size_t bytes=0;
-	std::vector<uint8_t> storage[frame_record::buffer_count];
+	std::vector<uint8_t> storage[frame_record::tile_array_count];
 
 	void resize(size_t tiles)
 		{
 		int index=0;
-		frame_record::for_each_buffer(vp,[&](auto &pointer)
+		frame_record::for_each_tile_array(vp,[&](auto &pointer)
 			{
 			using T=std::remove_pointer_t<std::remove_reference_t<decltype(pointer)>>;
 			std::vector<uint8_t> &store=storage[index++];
@@ -223,7 +223,7 @@ bool decode_frame(frame_record::readerst &reader,replay_slotst *slots,df::graphi
 		slot.vp.clipx={vh.clipx0,vh.clipx1};slot.vp.clipy={vh.clipy0,vh.clipy1};
 		slot.vp.screen_x=vh.screen_x;slot.vp.screen_y=vh.screen_y;
 		int index=0;
-		frame_record::for_each_buffer(slot.vp,[&](auto &pointer)
+		frame_record::for_each_tile_array(slot.vp,[&](auto &pointer)
 			{
 			using T=std::remove_pointer_t<std::remove_reference_t<decltype(pointer)>>;
 			std::vector<uint8_t> &store=slot.storage[index++];
