@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The scroll detector counts the votes for a view shift over the background and over the sprite layers with one loop. Nothing the plugin draws changes.
 - The console commands read `on` and `off` through one parser, and a setting's bare command prints the same line the bare `smooth-movement` lists for it. Every command prints what it printed before.
 - `harness/test.sh` builds and runs each harness test through one shell function. Nothing the plugin does changes.
 - `sdl_apist::clear` assigns a fresh value instead of listing every binding. Nothing the plugin does changes.
