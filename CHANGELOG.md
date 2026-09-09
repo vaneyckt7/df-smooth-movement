@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The render hook looks the units in view up through one function, `units_in_view`, for the frame recorder and for the hauled item icons. Nothing the plugin draws or records changes.
 - A creature sprite and a hauled item's icon find their place on screen through one function, `place_sprite`, instead of each working out the glide and the bob lift. Nothing the plugin draws changes.
 - The tile size on screen is computed by one function, `tile_size_px`, where four places in the render hook each had the formula. Nothing the plugin draws changes.
 - `harness/test.sh` builds and runs the animation manager test with the other unit tests;
