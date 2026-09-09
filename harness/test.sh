@@ -15,8 +15,13 @@ src=$(cd "$1" && pwd); here=$(cd "$(dirname "$0")" && pwd); mkdir -p "$here/out"
 c++ -std=c++17 -O2 -Wall -Wextra -I"$src" -o "$here/out/test-visual-animation-manager" \
     "$src/test_visual_animation_manager.cpp"
 "$here/out/test-visual-animation-manager"
-c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-frame-record" "$here/test_frame_record.cpp"
-"$here/out/test-frame-record"
+# Builds and runs one harness test: harness/test_<name>.cpp against the stubs.
+run_test() {
+	c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-$1" \
+	    "$here/test_$(echo "$1" | tr - _).cpp"
+	"$here/out/test-$1"
+}
+run_test frame-record
 # recinfo.py must read a recording in the current format: the fixtures are older.
 "$here/out/test-frame-record" "$here/out/test-current.rec"
 fields='.* step=\([0-9]*\) sim=\(-*[0-9]*\) bob=\([a-z]*\) amount=\([0-9.]*\)'
@@ -27,21 +32,11 @@ expected="250,1234567,off,0.15,1,2,3,1 250,-1,off,0.15,1,2,3,1 250,1234569,on,0.
 if [ "$sample" != "$expected" ]; then
 	echo "recinfo.py misreads the current format: $sample"; exit 1
 fi
-c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-tile-repaint" \
-    "$here/test_tile_repaint.cpp"
-"$here/out/test-tile-repaint"
-c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-sprite-proxies" \
-    "$here/test_sprite_proxies.cpp"
-"$here/out/test-sprite-proxies"
-c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-free-camera" \
-    "$here/test_free_camera.cpp"
-"$here/out/test-free-camera"
-c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-view-context" \
-    "$here/test_view_context.cpp"
-"$here/out/test-view-context"
-c++ -std=c++17 -O2 -Wall -Wextra -I"$here/stubs" -I"$src" -o "$here/out/test-plugin-commands" \
-    "$here/test_plugin_commands.cpp"
-"$here/out/test-plugin-commands"
+run_test tile-repaint
+run_test sprite-proxies
+run_test free-camera
+run_test view-context
+run_test plugin-commands
 "$here/build.sh" "$src" test
 status=0
 for rec in "$here"/recordings/*.rec; do
