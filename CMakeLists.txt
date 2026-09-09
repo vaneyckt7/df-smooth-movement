@@ -2,37 +2,21 @@ dfhack_plugin(smooth-movement smooth-movement.cpp LINK_LIBRARIES lua)
 target_include_directories(smooth-movement PRIVATE ${SDL2_INCLUDE_DIRS})
 target_compile_features(smooth-movement PRIVATE cxx_std_17)
 
-add_executable(
-    smooth-movement-test
-    EXCLUDE_FROM_ALL
-    tests/test_visual_animation_manager.cpp)
-target_include_directories(smooth-movement-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(smooth-movement-test PRIVATE cxx_std_17)
-
-add_executable(
-    smooth-movement-render-test
-    EXCLUDE_FROM_ALL
-    tests/test_frame_render.cpp)
-target_include_directories(smooth-movement-render-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(smooth-movement-render-test PRIVATE cxx_std_17)
-
-add_executable(
-    smooth-movement-view-context-test
-    EXCLUDE_FROM_ALL
-    tests/test_view_context.cpp)
-target_include_directories(smooth-movement-view-context-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(smooth-movement-view-context-test PRIVATE cxx_std_17)
-
-add_executable(
-    smooth-movement-free-camera-test
-    EXCLUDE_FROM_ALL
-    tests/test_free_camera.cpp)
-target_include_directories(smooth-movement-free-camera-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(smooth-movement-free-camera-test PRIVATE cxx_std_17)
-
-add_executable(
-    smooth-movement-sdl-canvas-test
-    EXCLUDE_FROM_ALL
-    tests/test_sdl_canvas.cpp)
-target_include_directories(smooth-movement-sdl-canvas-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(smooth-movement-sdl-canvas-test PRIVATE cxx_std_17)
+# The unit tests and the render property fuzzer, built on request only (tests/run.sh is the
+# usual way to run them): each tests/<source>.cpp becomes the target smooth-movement-<name>.
+set(SMOOTH_MOVEMENT_TESTS
+    test:test_visual_animation_manager
+    render-test:test_frame_render
+    view-context-test:test_view_context
+    free-camera-test:test_free_camera
+    sdl-canvas-test:test_sdl_canvas
+    render-fuzz:render_fuzz)
+foreach(entry IN LISTS SMOOTH_MOVEMENT_TESTS)
+    string(REPLACE ":" ";" entry "${entry}")
+    list(GET entry 0 name)
+    list(GET entry 1 source)
+    add_executable(smooth-movement-${name} EXCLUDE_FROM_ALL tests/${source}.cpp)
+    target_include_directories(smooth-movement-${name}
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_compile_features(smooth-movement-${name} PRIVATE cxx_std_17)
+endforeach()
