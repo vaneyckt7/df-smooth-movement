@@ -549,20 +549,18 @@ void test_reset()
 	state.reset();
 	expect_true("reset clears flip",!state.flip_enabled);
 	expect_true("reset clears hauled",!state.hauled_enabled);
-	// `linear` survives a reset, `bob` does not: the plugin has kept
-	// linear easing across disable and enable since the setting was added, and the walk bob
-	// has always come back off.
+	// The interpolation survives a reset, `bob` included: the plugin has kept it across
+	// disable and enable since the setting was added (as the linear switch then).
 	expect_true("reset keeps linear",
 		&state.render.animation_manager.get_interpolation()==find_interpolation("linear"));
 	run(state,{"interpolation","bob"});
 	state.reset();
-	expect_true("reset drops bob",
-		&state.render.animation_manager.get_interpolation()==find_interpolation("smoothstep"));
+	expect_true("reset keeps the bob interpolation",
+		&state.render.animation_manager.get_interpolation()==find_interpolation("bob"));
 	expect_true("reset restores the step time",
 		state.render.animation_manager.step_duration_ms()==150);
 	expect_true("reset turns the camera off",!state.render.camera.is_enabled());
 	expect_near("reset zeroes the camera offset",state.render.camera.rest_offset_x(),0.0);
-	expect_true("reset clears the bob",!(&state.render.animation_manager.get_interpolation()==find_interpolation("bob")));
 	expect_near("reset restores the bob amount",state.render.animation_manager.bob.amplitude,0.1f);
 	expect_near("reset restores the bob multipliers",state.render.animation_manager.bob.diagonal_mult,2.4f);
 	expect_true("reset restores the hops",state.render.animation_manager.bob.hops==2);

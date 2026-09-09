@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <random>
+#include <string>
+#include <tuple>
 
 int main(int argc,char **argv)
 {
@@ -19,6 +21,7 @@ int main(int argc,char **argv)
 			frame_record::frame_headerst f;
 			f.settings.step_ms=250;
 			f.simulation_tick=i==1?-1:int64_t(1234567)+i;
+			if(i==1)f.settings.interpolation=find_interpolation("linear");
 			if(i==2)f.settings.interpolation=find_interpolation("bob");
 			f.settings.bob.amplitude=0.15f;
 			f.settings.bob.horizontal_mult=1.0f;f.settings.bob.diagonal_mult=2.0f;
@@ -113,40 +116,57 @@ int main(int argc,char **argv)
 	// A version 2 file has no step field in its frame header and reads back at the 150 ms
 	// every such recording was made with, a version 3 file no simulation tick and reads
 	// back as unknown, a version 4 file no walk bob settings and reads back with the bob
-	// off; a version past the current one is rejected, as is a step of zero, a tick below
-	// -1 and walk bob settings the commands would refuse.
+	// off, a version 5 file a linear switch and a bob switch that name the interpolation;
+	// a version past the current one is rejected, as is a step of zero, a tick below -1
+	// and walk bob settings the commands would refuse.
 	{
+	// A version 5 frame header: the current one with the interpolation's name replaced by
+	// the linear switch, and the bob switch in front of the walk bob settings.
+	const auto write_v5_header=[](frame_record::writerst &w,const frame_record::frame_headerst &g,
+		bool linear,bool bob)
+		{
+		frame_record::writerst current;
+		frame_record::write_frame_header(current,g);
+		const size_t name_at=4;
+		const size_t name_bytes=1+current.bytes[name_at];
+		const size_t bob_at=name_at+name_bytes+4+8;
+		w.u8('F');w.u8(g.settings.flip);w.u8(g.settings.hauled);w.u8(g.settings.camera);
+		w.u8(linear);
+		w.raw(current.bytes.data()+name_at+name_bytes,bob_at-name_at-name_bytes);
+		w.u8(bob);
+		w.raw(current.bytes.data()+bob_at,current.bytes.size()-bob_at);
+		};
 	frame_record::writerst w;
 	w.raw("SMRC",4);w.u32(2);
 	frame_record::frame_headerst f;
 	f.settings.interpolation=find_interpolation("bob");f.settings.step_ms=999;f.simulation_tick=77;
 	f.settings.bob.amplitude=0.3f;f.settings.bob.hops=1;
 	f.tick_ms=5;f.zoom=64;
-	frame_record::write_frame_header(w,f);
+	write_v5_header(w,f,true,true);
 	// Drop the step, tick and bob fields: 4, 8 and 18 bytes after the 'F' and four flags.
 	w.bytes.erase(w.bytes.begin()+8+5,w.bytes.begin()+8+35);
 	frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
 	frame_record::frame_headerst f2;
 	const bool ok=frame_record::read_file_header(r)&&frame_record::read_frame_header(r,f2)&&r.at_end();
-	if(!ok||r.version!=2||f2.settings.interpolation!=find_interpolation("smoothstep")||f2.settings.step_ms!=150||f2.simulation_tick!=-1||
+	if(!ok||r.version!=2||f2.settings.interpolation!=find_interpolation("linear")||f2.settings.step_ms!=150||f2.simulation_tick!=-1||
 		f2.settings.bob.amplitude!=walk_bob_settingst{}.amplitude||
 		f2.settings.bob.hops!=2||
 		f2.tick_ms!=5||f2.zoom!=64)
 		{puts("version 2 header read failed");++failures;}
 	frame_record::writerst w1;
 	w1.raw("SMRC",4);w1.u32(3);
-	frame_record::write_frame_header(w1,f);
+	write_v5_header(w1,f,true,true);
 	w1.bytes.erase(w1.bytes.begin()+8+9,w1.bytes.begin()+8+35); // drop the tick and bob fields
 	frame_record::readerst r1;r1.data=w1.bytes.data();r1.size=w1.bytes.size();
 	frame_record::frame_headerst f3;
 	const bool ok1=frame_record::read_file_header(r1)&&
 		frame_record::read_frame_header(r1,f3)&&r1.at_end();
-	if(!ok1||r1.version!=3||f3.settings.interpolation!=find_interpolation("smoothstep")||f3.settings.step_ms!=999||f3.simulation_tick!=-1||
+	if(!ok1||r1.version!=3||f3.settings.interpolation!=find_interpolation("linear")||f3.settings.step_ms!=999||f3.simulation_tick!=-1||
 		f3.settings.bob.hops!=2||f3.tick_ms!=5||f3.zoom!=64)
 		{puts("version 3 header read failed");++failures;}
 	frame_record::writerst w5;
 	w5.raw("SMRC",4);w5.u32(4);
-	frame_record::write_frame_header(w5,f);
+	write_v5_header(w5,f,true,true);
 	w5.bytes.erase(w5.bytes.begin()+8+17,w5.bytes.begin()+8+35); // drop the bob fields
 	frame_record::readerst r5;r5.data=w5.bytes.data();r5.size=w5.bytes.size();
 	// Read into a header that already holds a lifting interpolation, as a replay that reuses
@@ -154,44 +174,68 @@ int main(int argc,char **argv)
 	frame_record::frame_headerst f5=f;
 	const bool ok5=frame_record::read_file_header(r5)&&
 		frame_record::read_frame_header(r5,f5)&&r5.at_end();
-	if(!ok5||r5.version!=4||f5.settings.interpolation!=find_interpolation("smoothstep")||f5.settings.step_ms!=999||f5.simulation_tick!=77||
+	if(!ok5||r5.version!=4||f5.settings.interpolation!=find_interpolation("linear")||f5.settings.step_ms!=999||f5.simulation_tick!=77||
 		f5.settings.bob.amplitude!=walk_bob_settingst{}.amplitude||
 		f5.settings.bob.hops!=2||
 		f5.tick_ms!=5||f5.zoom!=64)
 		{puts("version 4 header read failed");++failures;}
-	// The current version reads the interpolation and the bob settings back as written.
-	frame_record::writerst w6;frame_record::write_file_header(w6);
-	frame_record::write_frame_header(w6,f);
-	frame_record::readerst r6;r6.data=w6.bytes.data();r6.size=w6.bytes.size();
-	frame_record::frame_headerst f6;
-	if(!frame_record::read_file_header(r6)||!frame_record::read_frame_header(r6,f6)||
-		!r6.at_end()||f6.settings.interpolation!=find_interpolation("bob")||f6.settings.bob.amplitude!=0.3f||
-		f6.settings.bob.hops!=1||
-		f6.settings.bob.vertical_mult!=walk_bob_settingst{}.vertical_mult)
-		{puts("version 5 bob settings read failed");++failures;}
-	// Each interpolation is one of the two switches, or neither, and comes back as itself;
-	// a frame with both switches set names none.
-	for(const char *name:{"smoothstep","linear","bob"})
+	// A version 5 header's two switches name the interpolation, and its bob settings read
+	// back as written; both switches on names none and is rejected.
+	for(const auto &[linear,bob,name]:{
+		std::tuple<bool,bool,const char *>{false,false,"smoothstep"},{true,false,"linear"},
+		{false,true,"bob"}})
 		{
-		frame_record::frame_headerst g=f;g.settings.interpolation=find_interpolation(name);
-		frame_record::writerst wn;frame_record::write_file_header(wn);
-		frame_record::write_frame_header(wn,g);
-		frame_record::readerst rn;rn.data=wn.bytes.data();rn.size=wn.bytes.size();
-		frame_record::frame_headerst gn;
-		if(!frame_record::read_file_header(rn)||!frame_record::read_frame_header(rn,gn)||
-			gn.settings.interpolation!=find_interpolation(name))
-			{printf("%s did not round trip\n",name);++failures;}
+		frame_record::writerst w6;w6.raw("SMRC",4);w6.u32(5);
+		write_v5_header(w6,f,linear,bob);
+		frame_record::readerst r6;r6.data=w6.bytes.data();r6.size=w6.bytes.size();
+		frame_record::frame_headerst f6;
+		if(!frame_record::read_file_header(r6)||!frame_record::read_frame_header(r6,f6)||
+			!r6.at_end()||r6.version!=5||f6.settings.interpolation!=find_interpolation(name)||
+			f6.settings.bob.amplitude!=0.3f||f6.settings.bob.hops!=1||
+			f6.settings.bob.vertical_mult!=walk_bob_settingst{}.vertical_mult)
+			{printf("version 5 header read as %s failed\n",name);++failures;}
 		}
 	{
-	frame_record::frame_headerst g=f;g.settings.interpolation=find_interpolation("bob");
-	frame_record::writerst wb;frame_record::write_file_header(wb);
-	frame_record::write_frame_header(wb,g);
-	wb.bytes[8+4]=1; // the linear byte, after 'F' flip hauled camera
+	frame_record::writerst wb;wb.raw("SMRC",4);wb.u32(5);
+	write_v5_header(wb,f,true,true);
 	frame_record::readerst rb;rb.data=wb.bytes.data();rb.size=wb.bytes.size();
-	frame_record::frame_headerst gb;
-	if(!frame_record::read_file_header(rb)||frame_record::read_frame_header(rb,gb)||rb.ok()||
-		rb.error!="a frame with the linear and the bob switch names no interpolation")
-		{puts("linear and bob together accepted");++failures;}
+	frame_record::frame_headerst fb;
+	if(frame_record::read_file_header(rb)&&frame_record::read_frame_header(rb,fb))
+		{puts("a version 5 header with linear and bob was accepted");++failures;}
+	}
+	// The current version stores the interpolation by name: every entry round trips, a
+	// name the table lacks is rejected and so is a name cut short by the end of the file.
+	for(const interpolationst &interpolation:interpolations())
+		{
+		frame_record::frame_headerst g=f;g.settings.interpolation=&interpolation;
+		frame_record::writerst w7;frame_record::write_file_header(w7);
+		frame_record::write_frame_header(w7,g);
+		frame_record::readerst r7;r7.data=w7.bytes.data();r7.size=w7.bytes.size();
+		frame_record::frame_headerst f7;
+		if(!frame_record::read_file_header(r7)||!frame_record::read_frame_header(r7,f7)||
+			!r7.at_end()||f7.settings.interpolation!=&interpolation||
+			f7.settings.bob.amplitude!=0.3f||f7.settings.bob.hops!=1)
+			{printf("interpolation %s round trip failed\n",interpolation.name);++failures;}
+		}
+	{
+	frame_record::writerst w8;frame_record::write_file_header(w8);
+	frame_record::write_frame_header(w8,f);
+	const size_t name_at=8+4;
+	const std::string bounce="bounce";
+	w8.bytes[name_at]=uint8_t(bounce.size());
+	w8.bytes.erase(w8.bytes.begin()+name_at+1,w8.bytes.begin()+name_at+1+3); // "bob"
+	w8.bytes.insert(w8.bytes.begin()+name_at+1,bounce.begin(),bounce.end());
+	frame_record::readerst r8;r8.data=w8.bytes.data();r8.size=w8.bytes.size();
+	frame_record::frame_headerst f8;
+	if(frame_record::read_file_header(r8)&&frame_record::read_frame_header(r8,f8))
+		{puts("an unknown interpolation name was accepted");++failures;}
+	frame_record::writerst w9;frame_record::write_file_header(w9);
+	frame_record::write_frame_header(w9,f);
+	w9.bytes.resize(name_at+2); // the length byte and "b" of "bob"
+	frame_record::readerst r9;r9.data=w9.bytes.data();r9.size=w9.bytes.size();
+	frame_record::frame_headerst f9;
+	if(frame_record::read_file_header(r9)&&frame_record::read_frame_header(r9,f9))
+		{puts("a truncated interpolation name was accepted");++failures;}
 	}
 	// Settings the commands would refuse: a zero amount, three hops, an amount whose
 	// product with a multiplier passes the cap, and a NaN multiplier.

@@ -24,11 +24,11 @@ run_test() {
 run_test frame-record
 # recinfo.py must read a recording in the current format: the fixtures are older.
 "$here/out/test-frame-record" "$here/out/test-current.rec"
-fields='.* step=\([0-9]*\) sim=\(-*[0-9]*\) bob=\([a-z]*\) amount=\([0-9.]*\)'
+fields='.* interpolation=\([a-z-]*\) step=\([0-9]*\) sim=\(-*[0-9]*\) amount=\([0-9.]*\)'
 fields="$fields"' mult=\([0-9.,]*\) hops=\([0-9]\) .*'
 sample=$("$here/recinfo.py" "$here/out/test-current.rec" |
 	sed -n "s/$fields/\1,\2,\3,\4,\5,\6/p;s/^frames //p" | tr '\n' ' ')
-expected="250,1234567,off,0.15,1,2,3,1 250,-1,off,0.15,1,2,3,1 250,1234569,on,0.15,1,2,3,1 3 "
+expected="smoothstep,250,1234567,0.15,1,2,3,1 linear,250,-1,0.15,1,2,3,1 bob,250,1234569,0.15,1,2,3,1 3 "
 if [ "$sample" != "$expected" ]; then
 	echo "recinfo.py misreads the current format: $sample"; exit 1
 fi

@@ -4,17 +4,20 @@ Usage: recinfo.py <recording> [first frame] [last frame]
 
     $ harness/recinfo.py harness/recordings/fortress-600.rec 0 9
     version 2
-        0 t=706920620 flip=1 hauled=0 camera=0 linear=0 step=150 w=76,83,158 P follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
-        2 t=706921277 flip=1 hauled=0 camera=0 linear=0 step=150 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
-        9 t=706921460 flip=1 hauled=0 camera=0 linear=0 step=150 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 painted repaints=38 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
+        0 t=706920620 flip=1 hauled=0 camera=0 interpolation=smoothstep step=150 w=76,83,158 P follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
+        2 t=706921277 flip=1 hauled=0 camera=0 interpolation=smoothstep step=150 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
+        9 t=706921460 flip=1 hauled=0 camera=0 interpolation=smoothstep step=150 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 painted repaints=38 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
     frames 600
 
-Per line: frame number; t, the frame clock in ms; the plugin's four settings; step, the
-one-tile step time in ms (a version 2 recording has no field and was made at 150); sim, the
+Per line: frame number; t, the frame clock in ms; the plugin's three switches and the
+interpolation by name (a recording older than version 6 has a linear switch and, from
+version 5, a bob switch instead, which name one of smoothstep, linear and bob, or none when
+both are on);
+step, the one-tile step time in ms (a version 2 recording has no field and was made at 150); sim, the
 simulation's frame counter when the game last filled the per-tile arrays, or -1 when no fill
-was seen since the previous frame or the recording is older than version 4; bob, amount,
-mult and hops, the walk bob settings (off, 0.1, 1,2.4,2.7 and 2 for a recording older
-than version 5, which has no fields for them); w, the window position x,y,z; P when the
+was seen since the previous frame or the recording is older than version 4; amount, mult
+and hops, the walk bob settings (0.1, 1,2.4,2.7 and 2 for a recording older than version 5,
+which has no fields for them); w, the window position x,y,z; P when the
 game was paused, - otherwise; follow, the followed unit id or -1;
 mouse, the mouse position with M when the middle button was down; zoom; o, the drawing origin
 in tiles; grid, the screen size in tiles; rest, the free camera's offset in tiles; units, how
@@ -36,7 +39,7 @@ anything changed under the hook."""
 import struct, sys
 
 TILE_ARRAYS = 50  # per-tile arrays per viewport, current then old, in for_each_tile_array order
-SETTINGS = ['flip', 'hauled', 'camera', 'linear']  # the frame header's settings, in file order
+SETTINGS = ['flip', 'hauled', 'camera']  # the frame header's switches, in file order
 WORD = [4, 8, 4, 4, 4, 4, 8, 4] + [4] * 17  # element size per current array, repeated for old
 WORD = WORD + WORD
 
@@ -104,21 +107,31 @@ def main():
     assert data[:4] == b'SMRC', 'not a recording'
     r.p = 4
     version = r.u32()
-    assert version in (2, 3, 4, 5), f'recording version {version}, this script reads 2 to 5'
+    assert version in (2, 3, 4, 5, 6), f'recording version {version}, this script reads 2 to 6'
     print('version', version)
     n = 0
     while r.p < len(data):
         assert r.u8() == ord('F')
-        flags = [r.u8() for _ in range(4)]
+        flags = [r.u8() for _ in range(3)]
         settings = ' '.join(f'{name}={value}' for name, value in zip(SETTINGS, flags))
+        if version >= 6:
+            length = r.u8()
+            interpolation = data[r.p:r.p + length].decode()
+            r.p += length
+        else:
+            linear = r.u8()
         step = r.u32() if version >= 3 else 150
         sim = r.i64() if version >= 4 else -1
         if version >= 5:
-            bob, amount = r.u8(), r.f32()
+            bob = r.u8() if version < 6 else 0
+            amount = r.f32()
             mults = [r.f32() for _ in range(3)]
             hops = r.u8()
         else:
             bob, amount, mults, hops = 0, 0.1, [1, 2.4, 2.7], 2
+        if version < 6:
+            interpolation = 'bob' if bob and not linear else 'none' if bob else 'linear' if linear else 'smoothstep'
+        settings += f' interpolation={interpolation}'
         tick = r.u32()
         wx, wy, wz = r.i32(), r.i32(), r.i32()
         paused = r.u8()
@@ -145,7 +158,7 @@ def main():
         changed = r.u32()
         if first <= n <= last:
             print(f'{n:5d} t={tick} {settings} step={step} sim={sim} '
-                  f'bob={"on" if bob else "off"} amount={amount:g} '
+                  f'amount={amount:g} '
                   f'mult={",".join(f"{m:g}" for m in mults)} hops={hops} w={wx},{wy},{wz} '
                   f'{"P" if paused else "-"} '
                   f'follow={follow} mouse={mx},{my}{"M" if mbut else ""} zoom={zoom} o={ox},{oy} '

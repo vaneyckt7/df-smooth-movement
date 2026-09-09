@@ -55,7 +55,8 @@ the old tile to the new one and how far above that line. There are three: `smoot
 `linear` keeps one speed on the line and paces consecutive steps to one cadence; `bob` starts
 and lands like `smoothstep` and hops above the line on the way, like footfalls.
 `interpolation <name>` picks one. `linear on` and `bob on` pick theirs too; `linear off` and
-`bob off` go back to `smoothstep` when that one is current and leave any other alone.
+`bob off` go back to `smoothstep` when that one is current and leave any other alone. The
+interpolation is kept when the plugin is disabled and enabled again.
 
 ### Walk bob
 
@@ -67,7 +68,8 @@ amount and multipliers is capped so the lift stays under one tile, because the p
 exactly one row above a bobbing sprite. On a row that is off the top of the screen, or on fire,
 the whole creature glides without the bob. Carried item icons bob with their creature; vehicles
 never bob. `all on` gives `linear`; `all off` leaves `bob` alone. Like `flip` and `hauled`, the
-bob settings (amount, multipliers, hops) return to their defaults when the plugin is disabled.
+bob settings (amount, multipliers, hops) return to their defaults when the plugin is disabled;
+the interpolation, `bob` included, is kept.
 
 ## Compatibility
 

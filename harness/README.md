@@ -109,7 +109,9 @@ followed unit, a scroll or a zoom change; a change to those paths needs its own 
 Both predate format version 4, so they carry no simulation tick and the replay treats every
 change of the per-tile arrays as a candidate step, as the plugin did when they were made.
 Both predate format version 5 as well, so they carry no walk bob settings and replay with
-the bob off; the bob's proxy marking and coverage are covered by the sprite proxy test.
+the bob off; the bob's proxy marking and coverage are covered by the sprite proxy test. They
+predate format version 6 too, which stores the interpolation by name where they have a linear
+switch; their switch is off, so they replay with the default `smoothstep` interpolation.
 The recordings are fixtures and stay fixed: every version of the plugin replays the same
 scenes. `expected/<name>.digest` holds, for each recording, one line per frame with the
 repaint count and the digest of the visible draws the current version asks for on it, made

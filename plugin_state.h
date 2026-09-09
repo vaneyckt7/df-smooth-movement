@@ -157,15 +157,14 @@ struct plugin_statest
 		}
 
 	// Everything back to how a freshly enabled plugin starts: the visual state, the settings
-	// at their defaults, the counters cleared and a running recording stopped. `linear` is
-	// the one setting kept: the plugin has kept linear easing across disable and enable
-	// since that setting was added, and the walk bob has always come back off.
+	// at their defaults, the counters cleared and a running recording stopped. The
+	// interpolation is the one setting kept: the plugin has kept it across disable and
+	// enable since the setting was added (as the linear switch then).
 	void reset()
 		{
 		reset_visual();
 		plugin_settingsst defaults;
-		const interpolationst *linear=find_interpolation("linear");
-		if(&render.animation_manager.get_interpolation()==linear)defaults.interpolation=linear;
+		defaults.interpolation=&render.animation_manager.get_interpolation();
 		apply_settings(defaults);
 		stats.enabled=false;
 		stats.clear();
