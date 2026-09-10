@@ -2,9 +2,10 @@
 
 ## Unreleased
 
+- Added: `interpolation <name>` picks how a step is spread over frames from three movements behind one interface (`movement.h`): `smoothstep` (the default), `linear` and `bob`. A movement is given the moment of the step and the step as a tile delta and answers with the sprite's offset from the old tile, in tiles; whatever it does between the tiles is its own. It also declares its reach, how far above and below the line it can take the sprite, which is the box of extra rows the plugin erases and repaints around a moving sprite (one at most, so settings reaching a whole tile are refused), and it owns its settings as named numbers: the walk bob's `amount`, `horizontal`, `diagonal`, `vertical` and `hops`, which the console words `bob`, `bobmult` and `hops` set by name. A creature whose reach rows are off the screen or burning glides with `smoothstep` for that step, where the release only dropped the bob. `linear on|off` and `bob on|off` still work: on picks that movement, off goes back to `smoothstep` from it; `all on` gives `linear`, `all off` leaves `bob`. Frame recordings store the movement by name with its settings by name (format version 7); older recordings read as before, the linear switch (and, in version 5, the bob switch) naming one of the three and the fixed bob fields becoming the `bob` movement's settings, and a version 5 frame with both switches on fails to read. A disabled and re-enabled plugin keeps the interpolation, `bob` included, where it kept `linear` alone. `recinfo.py` prints the name and the settings. What the plugin draws is unchanged to within float rounding: a sprite's pixel position is now the offset in tiles times the tile size, and on a step retargeted in flight or a bobbing sprite that can land one thousandth of a pixel from where the release put it.
 - Fix the free camera sitting a whole tile off after two camera commands within one frame of each other in a running game (`camera <x> <y>` followed at once by `camera reset` or by another `camera <x> <y>`): a command now asks for its offset against the window as written, so a window write of the camera's own that has not landed yet is taken off the offset and comes back when it lands.
 - Fix the free camera sitting one tile off after `camera <x> <y>` in a paused game, or when a recording started, the followed unit changed, the z-level or zoom changed, or the window was resized within a frame or two of the command. The camera folds whole tiles of the offset into the game's window and used to wait for that scroll to land before moving the offset the other way; a restart of the camera's tracking (every paused frame, a recording's first frame, a change of followed unit) forgot the wait, and the offset never moved. The restart now folds the write into the offset at once.
-- The timestep changelog entry said the step resets "like `linear`"; `linear` is the one setting the plugin keeps across disable and enable, and the entry now says so.
+- The timestep changelog entry said the step resets "like `linear`"; the interpolation (`linear` then) is the one setting the plugin keeps across disable and enable, and the entry now says so.
 - The scroll detector counts the votes for a view shift over the background and over the sprite layers with one loop. Nothing the plugin draws changes.
 - The console commands read `on` and `off` through one parser, and a setting's bare command prints the same line the bare `smooth-movement` lists for it. Every command prints what it printed before.
 - `harness/test.sh` builds and runs each harness test through one shell function. Nothing the plugin does changes.
@@ -53,8 +54,8 @@
   to the movements that start after it. With `linear` on, the adaptive duration's floor is
   the step time and its 500 ms ceiling rises to the step time when that is longer, and a
   movement in flight keeps its own duration as the ceiling when the step time is lowered.
-  The setting returns to its default when the plugin is disabled or enabled; `linear` alone
-  is kept, as it has been since it was added.
+  The setting returns to its default when the plugin is disabled or enabled; the
+  interpolation alone is kept, as `linear` has been since it was added.
 - Add `smooth-movement stats [on|off|reset]`: counts frames, frames that reached the draw
   stage and tile repaints by the game, and (while on) times the render hook split into movement
   detection and drawing. Timing is off by default; counting costs one increment per frame,

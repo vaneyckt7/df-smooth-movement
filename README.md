@@ -34,6 +34,7 @@ smooth-movement all on      # enable flip, linear and hauled (not the WIP free c
 smooth-movement all off     # disable flip, linear and hauled
 smooth-movement flip on     # enable sprites flip
 smooth-movement camera on   # enable the free camera
+smooth-movement interpolation bob  # how a step is spread over frames: smoothstep|linear|bob
 smooth-movement linear on   # use linear easing with adaptive <timestep>–500 ms movement tweens
 smooth-movement timestep 200 # a one-tile glide takes 200 ms (default 150, range 20-2000)
 smooth-movement hauled on   # show icons for carried boulders, bars, and wood
@@ -45,17 +46,36 @@ smooth-movement stats on    # time the render hook; `smooth-movement stats` prin
 smooth-movement record f.rec # write what the render hook sees for the next 900 frames to f.rec
 ```
 
+### Interpolation
+
+The game moves a creature a whole tile at once; the plugin spreads that step over frames. An
+interpolation is a movement: given the moment of the step and the step as a tile delta, it says
+where the sprite is, as an offset in tiles from the old tile. There are three: `smoothstep`, the
+default, slows at both ends of the step and stays on the line between the tiles; `linear` keeps
+one speed on the line and paces consecutive steps to one cadence; `bob` starts and lands like
+`smoothstep` and hops above the line on the way, like footfalls. `interpolation <name>` picks
+one. `linear on` and `bob on` pick theirs too; `linear off` and `bob off` go back to
+`smoothstep` when that one is current and leave any other alone. The interpolation is kept when
+the plugin is disabled and enabled again.
+
+A movement owns its settings, named numbers the console sets by name and a recording stores by
+name; `smoothstep` and `linear` have none. A movement also declares how far above and below the
+line it can take the sprite, its reach, and the plugin erases and repaints that many extra rows
+around every moving sprite, one at most: settings that would reach a whole tile are refused. When
+a row within reach is off the top or bottom of the screen, or on fire, the creature glides on the
+line with `smoothstep` instead, for that step.
+
 ### Walk bob
 
-The bob is off by default and does not change how creatures glide; it only lifts the sprite
-along the way. The height is `bob <amount>` times a per-direction multiplier: a step with a
-vertical component already moves the sprite a whole tile up or down, which drowns a small hop,
-so diagonal and straight vertical steps get larger multipliers by default. Every combination of
-amount and multipliers is capped so the lift stays under one tile, because the plugin repaints
-exactly one row above a bobbing sprite. On a row that is off the top of the screen, or on fire,
-the whole creature glides without the bob. Carried item icons bob with their creature; vehicles
-never bob. `all on|off` leaves the bob alone. Like `flip` and `hauled`, the bob settings return
-to their defaults when the plugin is disabled.
+The bob is off by default (the interpolation is `smoothstep`); `bob on` is `interpolation bob`.
+Its settings are `amount`, the height of a hop in tiles (`bob <amount>`), `horizontal`, `diagonal`
+and `vertical`, the multipliers for the step's direction (`bobmult`), and `hops` per step. A step
+with a vertical component already moves the sprite a whole tile up or down, which drowns a small
+hop, so diagonal and straight vertical steps get larger multipliers by default. The reach of the
+bob is the amount times its largest multiplier, so every combination is capped under one tile.
+Carried item icons bob with their creature; vehicles never bob. `all on` gives `linear`; `all
+off` leaves `bob` alone. Like `flip` and `hauled`, the bob's settings return to their defaults
+when the plugin is disabled; the interpolation, `bob` included, is kept.
 
 ## Compatibility
 

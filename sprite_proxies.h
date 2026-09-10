@@ -52,13 +52,20 @@ struct render_proxyst
 	int32_t target_x;
 	int32_t target_y;
 	int32_t texpos;
-	float progress;
+	// Where the sprite is drawn, in tiles from the source tile: `offset` by the current
+	// movement, `fallback` by the default one, which the sprite takes when `fell_back` is
+	// set (see collect_proxies).
+	float offset_x;
+	float offset_y;
+	float fallback_x;
+	float fallback_y;
 	SDL_Texture *texture;
 	bool mirrored=false;
 	int32_t mirror_shift=0;
-	// The walk bob is decided per creature: fragments, status icons and carried items point
-	// at their centre proxy (an index into the proxy list, -1 for none) and follow its bob.
-	bool bob=false;
+	// The fallback is decided per creature: fragments, status icons and carried items point
+	// at their centre proxy (an index into the proxy list, -1 for none) and follow its
+	// decision.
+	bool fell_back=false;
 	int32_t anchor=-1;
 	std::set<std::pair<int32_t,int32_t>> coverage;
 };
@@ -70,10 +77,14 @@ struct carried_item_proxyst
 	float source_y;
 	int32_t target_x;
 	int32_t target_y;
-	float progress;
+	float offset_x;
+	float offset_y;
+	float fallback_x;
+	float fallback_y;
 	SDL_Texture *texture;
-	// Set when the creature carrying it bobs: the icon then rides the same lift.
-	bool bob=false;
+	// Set when the creature carrying it fell back to the default movement: the icon then
+	// rides the same fallback.
+	bool fell_back=false;
 	std::set<std::pair<int32_t,int32_t>> coverage;
 };
 
@@ -81,17 +92,29 @@ struct carried_item_proxyst
 // the animation manager tracks whose path stays inside the clip and off burning tiles, and,
 // with flipping on, every resting sprite that faces the mirrored way. `cached_texture(texpos)`
 // returns the renderer's texture for a tile, or null when it has none, in which case the
-// sprite is left to the game. With `bob_enabled`, every moving creature proxy and whatever
-// rides on it is marked to bob, and the row above its path joins its coverage.
+// sprite is left to the game.
+//
+// The movement the manager follows (movement.h) can take a sprite beyond the straight path
+// between its tiles, by its reach: rows above and below the path that must be erasable and
+// repaintable too. A creature's walk takes the movement: a centre proxy and whatever rides
+// on it (fragments, status icons, carried items); anything else, a vehicle or an item moving
+// on its own, keeps to the path. When a tile of the reach rows is outside the clip or
+// burning, or the sprite is not a creature's, the proxy falls back to the default movement,
+// which never leaves the path; the fallback is decided per creature (see
+// resolve_creature_fallback). The reach rows of a proxy that did not fall back join its
+// coverage.
 template<typename Viewport,typename TextureLookup>
 std::vector<render_proxyst> collect_proxies(
 	Viewport *vp,
 	visual_animation_managerst &animation_manager,
 	bool flip_enabled,
-	bool bob_enabled,
 	const TextureLookup &cached_texture)
 {
 	std::vector<render_proxyst> proxies;
+	const movement_reachst reach=animation_manager.movement().reach();
+	const int32_t rows_above=int32_t(std::ceil(reach.above));
+	const int32_t rows_below=int32_t(std::ceil(reach.below));
+	const bool reaches=rows_above>0||rows_below>0;
 	// Only a tile the movement tracker lists can have a movement, so the walk over every
 	// layer visits those instead of every tile of the viewport; a viewport with none is
 	// skipped before the resting-mirrored sweep, which does not depend on movements.
@@ -120,31 +143,33 @@ std::vector<render_proxyst> collect_proxies(
 			const bool inherited_source_in_bounds=
 				inherited_source_x>=0&&inherited_source_x<vp->dim_x&&
 				inherited_source_y>=0&&inherited_source_y<vp->dim_y;
-			// A fragment, icon or item rides on a centre proxy moving the same way. Two
-			// looks at the centres collected so far: `anchored`, whether any within a tile
-			// moves this way, which is what lets a fragment through at all; and
-			// `anchor_index`, the centre at this layer's own offset, the one the tile bobs
-			// with. The bob takes only the owner, since centres come in tile order and a
-			// neighbour stepping in lockstep (a squad column, a dwarf beside the barrow it
-			// pushes) can come first: riding on it would leave a fragment on the glide
-			// line while its own creature hops, or hop one whose creature cannot. A centre
-			// is its own root and a vehicle takes no part in the bob.
+			// A fragment, icon or item rides on a centre proxy moving the same way: the
+			// same step, at the same point of it. Two looks at the centres collected so far:
+			// `anchored`, whether any within a tile moves this way, which is what lets a
+			// fragment through at all; and `anchor_index`, the centre at this layer's own
+			// offset, the one the tile follows the movement with. That takes only the
+			// owner, since centres come in tile order and a neighbour stepping in lockstep
+			// (a squad column, a dwarf beside the barrow it pushes) can come first: riding
+			// on it would leave a fragment on the path while its own creature leaves it, or
+			// take one off the path whose creature cannot. A centre is its own root and a
+			// vehicle takes no part.
 			int32_t anchor_index=-1;
 			bool anchored=false;
 			const auto &owner=visual_layer_descriptor(visual_layer);
-			const bool bob_rider=visual_layer!=viewport_visual_layer::center&&
+			const bool rider=visual_layer!=viewport_visual_layer::center&&
 				visual_layer!=viewport_visual_layer::vehicle;
 			for(size_t i=0;i<proxies.size()&&
-				(bob_rider||!visual_layer_moves_independently(visual_layer));++i)
+				(rider||!visual_layer_moves_independently(visual_layer));++i)
 				{
 				const render_proxyst &anchor=proxies[i];
 				if(anchor.layer!=viewport_visual_layer::center||
 					anchor.source_x-anchor.target_x!=movement.source_x-x||
 					anchor.source_y-anchor.target_y!=movement.source_y-y||
-					anchor.progress!=movement.progress)continue;
+					anchor.offset_x!=movement.offset_x||
+					anchor.offset_y!=movement.offset_y)continue;
 				if(std::abs(anchor.target_x-x)<=1&&std::abs(anchor.target_y-y)<=1)
 					anchored=true;
-				if(bob_rider&&anchor.target_x==x+owner.center_x&&
+				if(rider&&anchor.target_x==x+owner.center_x&&
 					anchor.target_y==y+owner.center_y)
 					{
 					anchor_index=int32_t(i);
@@ -187,7 +212,8 @@ std::vector<render_proxyst> collect_proxies(
 						anchor.target_y==y+descriptor.center_y&&
 						anchor.source_x-anchor.target_x==movement.source_x-x&&
 						anchor.source_y-anchor.target_y==movement.source_y-y&&
-						anchor.progress==movement.progress)
+						anchor.offset_x==movement.offset_x&&
+						anchor.offset_y==movement.offset_y)
 						{
 						owns_fragment=true;
 						anchor_index=int32_t(i);
@@ -225,38 +251,49 @@ std::vector<render_proxyst> collect_proxies(
 				x,
 				y,
 				texpos,
-				movement.progress,
+				movement.offset_x,
+				movement.offset_y,
+				movement.fallback_x,
+				movement.fallback_y,
 				nullptr,
 				mirrored,
 				mirror_shift,
-				// Creatures bob; whatever rides on a creature (fragments, status icons,
-				// carried items) bobs with it. Vehicles never do.
-				bob_enabled&&
-					(visual_layer==viewport_visual_layer::center||anchor_index>=0),
-				bob_rider?anchor_index:-1,
+				// A creature's walk takes the movement: a centre and whatever rides on it
+				// (fragments, status icons, carried items). Anything else, a vehicle, an
+				// item on its own, keeps to the path: with a movement that reaches beyond
+				// it, it takes the default movement instead.
+				reaches&&visual_layer!=viewport_visual_layer::center&&anchor_index<0,
+				rider?anchor_index:-1,
 				{}
 				};
-			// The bob lifts the sprite into the row above its path, so that row (and its
-			// mirrored image) must be erasable and repaintable too. If it is outside the
-			// clip or burning, this tile cannot bob; the whole creature then glides
-			// without the bob (resolved below), because the bob is optional and the glide
-			// is not. Only the candidate is decided here; the coverage is added after the
-			// creature-level decision.
-			if(proxy.bob)
+			// The rows the movement reaches into beyond the path (and their mirrored
+			// image) must be erasable and repaintable too. If any tile of them is outside
+			// the clip or burning, this tile cannot follow the movement there; the whole
+			// creature then takes the default movement (resolved below), because the
+			// reach is optional and the glide is not. Only the candidate is decided here;
+			// the coverage is added after the creature-level decision.
+			if(reaches&&!proxy.fell_back)
 				{
-				const int32_t bob_row=int32_t(std::floor(
-					std::min(proxy.source_y,float(y))))-1;
-				for(int32_t bob_x=int32_t(std::floor(
+				const int32_t first_row=int32_t(std::floor(
+					std::min(proxy.source_y,float(y))));
+				const int32_t last_row=int32_t(std::ceil(
+					std::max(proxy.source_y,float(y))));
+				for(int32_t reach_x=int32_t(std::floor(
 						std::min(proxy.source_x,float(x))));
-					bob_x<=int32_t(std::ceil(
-						std::max(proxy.source_x,float(x))))&&proxy.bob;++bob_x)
-					for(const int32_t shifted_x:{bob_x,bob_x+proxy.mirror_shift})
-						if(!inside_clip(vp,shifted_x,bob_row)||
-							has_fire(vp,shifted_x,bob_row))
-							{
-							proxy.bob=false;
-							break;
-							}
+					reach_x<=int32_t(std::ceil(
+						std::max(proxy.source_x,float(x))))&&!proxy.fell_back;++reach_x)
+					for(int32_t reach_y=first_row-rows_above;
+						reach_y<=last_row+rows_below&&!proxy.fell_back;++reach_y)
+						{
+						if(reach_y>=first_row&&reach_y<=last_row)continue;
+						for(const int32_t shifted_x:{reach_x,reach_x+proxy.mirror_shift})
+							if(!inside_clip(vp,shifted_x,reach_y)||
+								has_fire(vp,shifted_x,reach_y))
+								{
+								proxy.fell_back=true;
+								break;
+								}
+						}
 				}
 			bool blocked=false;
 			for(int32_t coverage_x=int32_t(std::floor(
@@ -315,37 +352,42 @@ std::vector<render_proxyst> collect_proxies(
 			}
 		}
 
-	// One bob per creature: if any tile riding on a centre cannot bob, none of them do, so a
-	// multi-tile creature never tears and an icon never detaches from its creature. Then the
-	// row above every bobbing tile joins its coverage; the candidate check above already
-	// established that row is inside the clip and not burning.
-	if(bob_enabled)
+	// One movement per creature: if any tile riding on a centre must fall back, all of them
+	// do, so a multi-tile creature never tears and an icon never detaches from its creature.
+	// Then the reach rows of every proxy that follows the movement join its coverage; the
+	// candidate check above already established they are inside the clip and not burning.
+	if(reaches)
 		{
 		std::vector<int32_t> anchors;
-		std::vector<bool> bobs;
+		std::vector<bool> fallbacks;
 		anchors.reserve(proxies.size());
-		bobs.reserve(proxies.size());
+		fallbacks.reserve(proxies.size());
 		for(const render_proxyst &proxy:proxies)
 			{
 			anchors.push_back(proxy.anchor);
-			bobs.push_back(proxy.bob);
+			fallbacks.push_back(proxy.fell_back);
 			}
-		resolve_creature_bob(anchors,bobs);
+		resolve_creature_fallback(anchors,fallbacks);
 		for(size_t i=0;i<proxies.size();++i)
 			{
 			render_proxyst &proxy=proxies[i];
-			proxy.bob=bobs[i];
-			if(!proxy.bob)continue;
-			const int32_t bob_row=int32_t(std::floor(
-				std::min(proxy.source_y,float(proxy.target_y))))-1;
-			for(int32_t bob_x=int32_t(std::floor(
+			proxy.fell_back=fallbacks[i];
+			if(proxy.fell_back)continue;
+			const int32_t first_row=int32_t(std::floor(
+				std::min(proxy.source_y,float(proxy.target_y))));
+			const int32_t last_row=int32_t(std::ceil(
+				std::max(proxy.source_y,float(proxy.target_y))));
+			for(int32_t reach_x=int32_t(std::floor(
 					std::min(proxy.source_x,float(proxy.target_x))));
-				bob_x<=int32_t(std::ceil(
-					std::max(proxy.source_x,float(proxy.target_x))));++bob_x)
-				{
-				proxy.coverage.emplace(bob_x,bob_row);
-				proxy.coverage.emplace(bob_x+proxy.mirror_shift,bob_row);
-				}
+				reach_x<=int32_t(std::ceil(
+					std::max(proxy.source_x,float(proxy.target_x))));++reach_x)
+				for(int32_t reach_y=first_row-rows_above;
+					reach_y<=last_row+rows_below;++reach_y)
+					{
+					if(reach_y>=first_row&&reach_y<=last_row)continue;
+					proxy.coverage.emplace(reach_x,reach_y);
+					proxy.coverage.emplace(reach_x+proxy.mirror_shift,reach_y);
+					}
 			}
 		}
 
@@ -385,7 +427,7 @@ std::vector<render_proxyst> collect_proxies(
 						already_drawn=true;
 				if(already_drawn)continue;
 
-				// source == target at progress 1.0 draws in place, moved only by mirror_shift.
+				// source == target with no offset draws in place, moved only by mirror_shift.
 				render_proxyst proxy=
 					{
 					visual_layer,
@@ -394,7 +436,10 @@ std::vector<render_proxyst> collect_proxies(
 					x,
 					y,
 					texpos,
-					1.0f,
+					0.0f,
+					0.0f,
+					0.0f,
+					0.0f,
 					nullptr,
 					true,
 					mirrored_tile_x(x,anchor_x)-x,
@@ -430,24 +475,29 @@ std::vector<render_proxyst> collect_proxies(
 	return proxies;
 }
 
-// Marks each carried item whose carrier bobs. The item rides on the centre proxy of the
-// viewport it is drawn over, the one on its own tile at the same point of the same step,
-// matched the way a fragment finds its anchor above: same target, same source, same
-// progress. The proxy's coverage already holds the row the lift reaches into, so the item
-// adds nothing to it. With the bob off no proxy bobs, so no item does.
-inline void mark_carried_item_bobs(
+// Marks each carried item whose carrier follows the movement. The item rides on the centre
+// proxy of the viewport it is drawn over, the one on its own tile at the same point of the
+// same step, matched the way a fragment finds its anchor above: same target, same source,
+// same offset. The proxy's coverage already holds the rows the movement reaches into, so
+// the item adds nothing to it. An item comes in fallen back whenever the movement reaches
+// beyond the path (it keeps to the path on its own, like a vehicle); a carrier that follows
+// the movement takes it along.
+inline void mark_carried_item_movements(
 	std::vector<carried_item_proxyst> &items,
 	const std::vector<render_proxyst> &proxies)
 {
 	for(carried_item_proxyst &item:items)
+		{
+		if(!item.fell_back)continue;
 		for(const render_proxyst &proxy:proxies)
-			if(proxy.bob&&proxy.layer==viewport_visual_layer::center&&
+			if(!proxy.fell_back&&proxy.layer==viewport_visual_layer::center&&
 				proxy.target_x==item.target_x&&proxy.target_y==item.target_y&&
 				proxy.source_x==item.source_x&&proxy.source_y==item.source_y&&
-				proxy.progress==item.progress)
+				proxy.offset_x==item.offset_x&&proxy.offset_y==item.offset_y)
 				{
-				item.bob=true;
+				item.fell_back=false;
 				break;
 				}
+		}
 }
 #endif

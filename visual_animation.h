@@ -3,6 +3,8 @@
 #ifndef VISUAL_ANIMATION_H
 #define VISUAL_ANIMATION_H
 
+#include "movement.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -159,7 +161,14 @@ struct visual_movement_renderst
 	bool active=false;
 	float source_x=0.0f;
 	float source_y=0.0f;
-	float progress=1.0f;
+	// Where the sprite is drawn, in tiles from the source tile: `offset` by the current
+	// movement, `fallback` by the default one, for a sprite that cannot follow the current
+	// movement beyond the straight path (see sprite_proxies.h). Both are the step itself at
+	// its end.
+	float offset_x=0.0f;
+	float offset_y=0.0f;
+	float fallback_x=0.0f;
+	float fallback_y=0.0f;
 	bool inherited=false;
 	uint64_t movement_id=0;
 };
@@ -218,45 +227,21 @@ constexpr bool native_follow_changed(int32_t previous_id,int32_t current_id)
 	return previous_id!=current_id;
 }
 
-inline float animation_progress(
-	uint32_t now_ms,
-	uint32_t start_time_ms,
-	uint32_t duration_ms,
-	bool linear=false)
+// Where a step is in time at 'now_ms': its progress from 0 at the start to 1 at the end,
+// capped there.
+inline float step_progress(uint32_t now_ms,uint32_t start_time_ms,uint32_t duration_ms)
 {
-	const float progress=std::min(
-		1.0f,float(now_ms-start_time_ms)/duration_ms);
-	return linear?progress:progress*progress*(3.0f-2.0f*progress);
+	return std::min(1.0f,float(now_ms-start_time_ms)/duration_ms);
 }
 
-// Walk bob: how far, in tiles, a moving sprite is lifted at 'progress' through a step.
-// |sin(pi*hops*progress)| rises and falls once per hop and is zero at both ends, so the
-// sprite always lands on the grid. 'multiplier' is the per-direction factor.
-inline float walk_bob_lift(float progress,int hops,float amplitude,float multiplier)
-{
-	return std::fabs(std::sin(progress*3.14159265f*float(hops)))*amplitude*multiplier;
-}
-
-// Which multiplier a step takes. The source can be fractional when a step retargets from an
-// in-flight position, so it is rounded back to the tile the creature was last seen on; the
-// direction is that of the whole tile step, not of the remaining fraction.
-enum class walk_bob_directionst{horizontal,diagonal,vertical};
-
-inline walk_bob_directionst walk_bob_direction(
-	float source_x,float source_y,int32_t target_x,int32_t target_y)
-{
-	const bool same_x=std::lround(source_x)==target_x;
-	const bool same_y=std::lround(source_y)==target_y;
-	if(same_y)return walk_bob_directionst::horizontal;
-	if(same_x)return walk_bob_directionst::vertical;
-	return walk_bob_directionst::diagonal;
-}
-
-// One bob per creature. anchors[i] is the index of the proxy that i rides on (-1 for a root:
-// a creature's centre tile), bob[i] whether i could bob on its own. Afterwards every proxy
-// carries its root's decision, which is the AND over everything riding on that root. Anchors
-// are followed to the root, so the depth of the chain does not matter.
-inline void resolve_creature_bob(const std::vector<int32_t> &anchors,std::vector<bool> &bob)
+// One movement per creature. anchors[i] is the index of the proxy that i rides on (-1 for a
+// root: a creature's centre tile), fell_back[i] whether i on its own must fall back to the
+// default movement. Afterwards every proxy carries its root's decision, which is the OR over
+// everything riding on that root: a multi-tile creature never tears and an icon never
+// detaches from its creature. Anchors are followed to the root, so the depth of the chain
+// does not matter.
+inline void resolve_creature_fallback(
+	const std::vector<int32_t> &anchors,std::vector<bool> &fell_back)
 {
 	const size_t count=anchors.size();
 	auto root_of=[&](size_t i)
@@ -265,51 +250,10 @@ inline void resolve_creature_bob(const std::vector<int32_t> &anchors,std::vector
 		return i;
 		};
 	for(size_t i=0;i<count;++i)
-		if(!bob[i])bob[root_of(i)]=false;
+		if(fell_back[i])fell_back[root_of(i)]=true;
 	for(size_t i=0;i<count;++i)
-		bob[i]=bob[root_of(i)];
+		fell_back[i]=fell_back[root_of(i)];
 }
-
-// The plugin erases and repaints exactly one row above a bobbing sprite's path, so the
-// tallest possible lift must stay under a tile or the apex leaves stale pixels behind.
-constexpr float max_walk_bob_lift=0.9f;
-
-inline bool walk_bob_lift_fits(
-	float amplitude,float horizontal,float diagonal,float vertical)
-{
-	// A little slack so a product landing on the cap (0.3 x 3.0) is not rejected by rounding.
-	return amplitude*std::max({horizontal,diagonal,vertical})<=max_walk_bob_lift+1e-4f;
-}
-
-// The walk bob's settings, off by default. While a creature glides its sprite is lifted by
-// the amplitude (a fraction of a tile) times the multiplier for the step's direction. A step
-// with a vertical component glides the sprite a whole tile up or down, which drowns a small
-// hop, so those steps get more; on a straight up or down step the hop is parallel to the
-// travel and shows only as a stall, so it needs more still. Two hops per step read as two
-// footfalls, one as a single bounce.
-struct walk_bob_settingst
-{
-	bool enabled=false;
-	float amplitude=0.10f;
-	float horizontal_mult=1.0f;
-	float diagonal_mult=2.4f;
-	float vertical_mult=2.7f;
-	int hops=2;
-
-	float multiplier(walk_bob_directionst direction) const
-	{
-		return direction==walk_bob_directionst::horizontal?horizontal_mult:
-			direction==walk_bob_directionst::vertical?vertical_mult:diagonal_mult;
-	}
-
-	// The lift, in tiles, of a sprite 'progress' through a step from its source to its target.
-	float lift(float source_x,float source_y,int32_t target_x,int32_t target_y,
-		float progress) const
-	{
-		return walk_bob_lift(progress,hops,amplitude,
-			multiplier(walk_bob_direction(source_x,source_y,target_x,target_y)));
-	}
-};
 
 inline bool visual_moved_between_tiles(
 	viewport_visual_layer layer,
@@ -357,7 +301,7 @@ constexpr int32_t mirrored_tile_x(int32_t piece_x,int32_t anchor_x)
 
 class visual_animation_managerst
 {
-	struct movementst
+	struct movement_recordst
 	{
 		visual_movement_idst id=no_visual_movement;
 		viewport_visual_layer layer;
@@ -379,7 +323,7 @@ class visual_animation_managerst
 		uint64_t context_revision=0;
 		bool has_context=false;
 		bool seen=false;
-		std::vector<movementst> movements;
+		std::vector<movement_recordst> movements;
 		// One facing per tile, not per unit: the viewport exposes one creature texpos per tile.
 		std::vector<int8_t> facing;
 		// Stationary mirrored creatures are repainted every frame; this is the cheap pre-check.
@@ -413,7 +357,9 @@ class visual_animation_managerst
 	uint32_t frame_delta_ms=0;
 	bool has_frame=false;
 	bool force_full_redraw=false;
-	bool linear=false;
+	// The movement every step follows (whether it keeps its cadence decides the rules
+	// below). Owned elsewhere, with its settings; the manager only follows it.
+	const movementst *current_movement=&default_movement();
 	visual_movement_idst next_movement_id=1;
 	std::vector<viewport_animationst> viewports;
 
@@ -655,19 +601,43 @@ class visual_animation_managerst
 		return viewports.back();
 		}
 
-	float movement_progress(const movementst &movement) const
+	// How far along its step a movement has travelled this frame, a fraction: what a step
+	// continuing from it, or the camera following it, starts from.
+	float movement_progress(const movement_recordst &movement) const
 		{
-		return animation_progress(
-			frame_time_ms,movement.start_time_ms,movement.duration_ms,linear);
+		return current_movement->travelled(step_progress(
+			frame_time_ms,movement.start_time_ms,movement.duration_ms));
 		}
 
-	bool movement_active(const movementst &movement) const
+	// Where a movement's sprite is this frame by a given movement, in tiles from the source.
+	sprite_offsetst movement_offset(
+		const movementst &by,const movement_recordst &movement) const
+		{
+		return by.position(
+			step_progress(frame_time_ms,movement.start_time_ms,movement.duration_ms),
+			{float(movement.target_x)-movement.source_x,
+				float(movement.target_y)-movement.source_y});
+		}
+
+	// What the render code is told about a movement: its offsets by the current movement and
+	// by the default one (the same when the current one is the default).
+	visual_movement_renderst movement_render(
+		const movement_recordst &movement,float source_x,float source_y,bool inherited) const
+		{
+		const sprite_offsetst offset=movement_offset(*current_movement,movement);
+		const sprite_offsetst fallback=current_movement==&default_movement()?offset:
+			movement_offset(default_movement(),movement);
+		return {true,source_x,source_y,offset.x,offset.y,fallback.x,fallback.y,inherited,
+			movement.id};
+		}
+
+	bool movement_active(const movement_recordst &movement) const
 		{
 		return !movement.historical&&
 			frame_time_ms-movement.start_time_ms<movement.duration_ms;
 		}
 
-	// The longest a linear movement lasts and the oldest predecessor its cadence follows:
+	// The longest a paced movement lasts and the oldest predecessor its cadence follows:
 	// 500 ms, or the step time when that is longer, so a long step is never cut short.
 	uint32_t linear_limit_ms() const
 		{
@@ -676,7 +646,7 @@ class visual_animation_managerst
 
 	// The same limit for a movement already in flight: its own duration is kept as the
 	// floor, so lowering the step time never cuts a longer movement short.
-	uint32_t linear_limit_ms(const movementst &movement) const
+	uint32_t linear_limit_ms(const movement_recordst &movement) const
 		{
 		return std::max(linear_limit_ms(),movement.duration_ms);
 		}
@@ -703,14 +673,16 @@ class visual_animation_managerst
 			movement_duration_ms=std::max(1U,ms);
 			}
 
-		void set_linear(bool enabled)
+		// The movement every step follows from now on; it must outlive the manager's use of
+		// it. Steps in flight switch to it too.
+		void set_movement(const movementst &selected)
 			{
-			linear=enabled;
+			current_movement=&selected;
 			}
 
-		bool is_linear() const
+		const movementst &movement() const
 			{
-			return linear;
+			return *current_movement;
 			}
 
 		void begin_frame(uint32_t now_ms)
@@ -727,11 +699,11 @@ class visual_animation_managerst
 				state.abandoned_this_frame=false;
 				state.landed_shift={};
 				state.follow_candidate=no_visual_movement;
-				for(movementst &movement:state.movements)
+				for(movement_recordst &movement:state.movements)
 					{
 					if(movement.historical)continue;
 					force_full_redraw=true;
-					if(linear&&frame_time_ms-movement.start_time_ms>=movement.duration_ms)
+					if(current_movement->keeps_cadence()&&frame_time_ms-movement.start_time_ms>=movement.duration_ms)
 						movement.historical=true;
 					}
 				}
@@ -904,7 +876,7 @@ class visual_animation_managerst
 						std::remove_if(
 							state.movements.begin(),
 							state.movements.end(),
-							[&](movementst &movement)
+							[&](movement_recordst &movement)
 								{
 								movement.source_x-=dwx;
 								movement.source_y-=dwy;
@@ -1090,15 +1062,15 @@ class visual_animation_managerst
 							claimed_sources[source]=1;
 							float visual_source_x=float(source/input.dim_y);
 							float visual_source_y=float(source%input.dim_y);
-							const movementst *predecessor=nullptr;
+							const movement_recordst *predecessor=nullptr;
 							for(size_t i=0;i<existing_movement_count;++i)
 								{
-								const movementst &movement=state.movements[i];
+								const movement_recordst &movement=state.movements[i];
 								if(movement.layer!=
 									static_cast<viewport_visual_layer>(layer)||
 									movement.target_x!=visual_source_x||
 									movement.target_y!=visual_source_y||
-									(linear&&frame_time_ms-movement.start_time_ms>
+									(current_movement->keeps_cadence()&&frame_time_ms-movement.start_time_ms>
 										linear_limit_ms(movement)))continue;
 								if(predecessor==nullptr||
 									frame_time_ms-movement.start_time_ms<
@@ -1116,7 +1088,7 @@ class visual_animation_managerst
 									visual_source_y=predecessor->source_y+
 										(predecessor->target_y-predecessor->source_y)*progress;
 									}
-								if(linear)duration_ms=std::clamp(
+								if(current_movement->keeps_cadence())duration_ms=std::clamp(
 									frame_time_ms-predecessor->start_time_ms,
 									movement_duration_ms,linear_limit_ms());
 								}
@@ -1185,14 +1157,14 @@ class visual_animation_managerst
 				std::remove_if(
 					state.movements.begin(),
 					state.movements.end(),
-					[&](movementst &movement)
+					[&](movement_recordst &movement)
 						{
 						const size_t layer=static_cast<size_t>(movement.layer);
 						const int32_t target=movement.target_x*input.dim_y+movement.target_y;
 						const int32_t current=input.current[layer][target];
 						const bool invalid=current==0||
 							!visual_layer_matches(movement.layer,current,movement.texpos);
-						if(linear)
+						if(current_movement->keeps_cadence())
 							{
 							if(invalid||frame_time_ms-movement.start_time_ms>=movement.duration_ms)
 								movement.historical=true;
@@ -1217,7 +1189,7 @@ class visual_animation_managerst
 					}
 				state.has_mirrored=any_mirrored;
 				}
-			for(const movementst &movement:state.movements)
+			for(const movement_recordst &movement:state.movements)
 				if(movement_active(movement))force_full_redraw=true;
 			}
 
@@ -1231,7 +1203,7 @@ class visual_animation_managerst
 				viewports.end());
 			for(const viewport_animationst &state:viewports)
 				{
-				for(const movementst &movement:state.movements)
+				for(const movement_recordst &movement:state.movements)
 					if(movement_active(movement))force_full_redraw=true;
 				}
 			}
@@ -1274,7 +1246,7 @@ class visual_animation_managerst
 			for(const viewport_animationst &state:viewports)
 				{
 				if(state.viewport!=viewport)continue;
-				for(const movementst &movement:state.movements)
+				for(const movement_recordst &movement:state.movements)
 					if(movement.id==movement_id&&movement_active(movement))
 						{
 						const float remaining=1.0f-movement_progress(movement);
@@ -1360,7 +1332,7 @@ class visual_animation_managerst
 			for(const viewport_animationst &state:viewports)
 				{
 				if(state.viewport!=viewport)continue;
-				for(const movementst &movement:state.movements)
+				for(const movement_recordst &movement:state.movements)
 					{
 					if(!movement_active(movement))continue;
 					const int32_t reach=movement.layer==viewport_visual_layer::center?1:0;
@@ -1385,22 +1357,16 @@ class visual_animation_managerst
 			for(const viewport_animationst &state:viewports)
 				{
 				if(state.viewport!=viewport)continue;
-				const movementst *companion=nullptr;
+				const movement_recordst *companion=nullptr;
 				bool ambiguous=false;
-				for(const movementst &movement:state.movements)
+				for(const movement_recordst &movement:state.movements)
 					{
 					if(!movement_active(movement))continue;
 					if(movement.layer==layer&&movement.target_x==target_x&&
 						movement.target_y==target_y)
 						{
-						return {
-							true,
-							movement.source_x,
-							movement.source_y,
-							movement_progress(movement),
-							false,
-							movement.id
-							};
+						return movement_render(
+							movement,movement.source_x,movement.source_y,false);
 						}
 					if(layer==viewport_visual_layer::vehicle||
 						layer==viewport_visual_layer::center||
@@ -1420,14 +1386,11 @@ class visual_animation_managerst
 					}
 				if(ambiguous)return {};
 				if(companion!=nullptr)
-					return {
-						true,
+					return movement_render(
+						*companion,
 						target_x+companion->source_x-companion->target_x,
 						target_y+companion->source_y-companion->target_y,
-						movement_progress(*companion),
-						true,
-						companion->id
-						};
+						true);
 				break;
 				}
 			return {};

@@ -7,7 +7,9 @@
 #include "df/graphic_viewportst.h"
 #include "sprite_proxies.h"
 
+#include <cmath>
 #include <cstdio>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -94,7 +96,8 @@ struct scenest
 {
 	viewportst v;
 	visual_animation_managerst manager;
-	bool bob=false;
+	// The movements the scene can select on its manager: `bob` reaches above the path.
+	movement_sett movements=make_movements();
 
 	// With `vehicle`, a vehicle on the creature's own tile steps east with it.
 	// With `neighbour`, a one-tile creature a column to the left on the row above, that is,
@@ -130,9 +133,15 @@ struct scenest
 		manager.end_frame();
 		}
 
+	// Selects the bob movement, which reaches into the row above the path.
+	void select_bob()
+		{
+		manager.set_movement(*movements.find("bob"));
+		}
+
 	std::vector<render_proxyst> collect(bool flip,int32_t missing_texpos=0)
 		{
-		return collect_proxies(&v.vp,manager,flip,bob,[missing_texpos](int32_t texpos)
+		return collect_proxies(&v.vp,manager,flip,[missing_texpos](int32_t texpos)
 			{
 			static int token;
 			return texpos==missing_texpos?nullptr:reinterpret_cast<SDL_Texture *>(&token);
@@ -185,8 +194,9 @@ void test_moving()
 		{
 		if(proxy.source_x!=float(proxy.target_x-1)||proxy.source_y!=float(proxy.target_y))
 			printf("flip off: source (%g,%g)\n",proxy.source_x,proxy.source_y),++failures;
-		if(proxy.progress<0.0f||proxy.progress>=1.0f||proxy.progress!=proxies[0].progress)
-			printf("flip off: progress %g\n",proxy.progress),++failures;
+		if(proxy.offset_x<0.0f||proxy.offset_x>=1.0f||proxy.offset_x!=proxies[0].offset_x||
+			proxy.offset_y!=0.0f||proxy.fallback_x!=proxy.offset_x||proxy.fell_back)
+			printf("flip off: offset %g,%g\n",proxy.offset_x,proxy.offset_y),++failures;
 		}
 	}
 	{
@@ -254,7 +264,7 @@ void test_blocked()
 	expect_proxy("clip at the source, flip on, right",proxies,L::right,to_x+1,row,true,-2,
 		{{to_x-1,row},{to_x,row},{to_x+1,row}},right_texpos);
 	const render_proxyst *right=find(proxies,L::right);
-	if(right!=nullptr&&right->progress!=1.0f)
+	if(right!=nullptr&&(right->offset_x!=0.0f||right->source_x!=float(right->target_x)))
 		printf("clip at the source, flip on: right fragment still moving\n"),++failures;
 	}
 	{
@@ -268,7 +278,7 @@ void test_blocked()
 	expect_proxy("fire on the mirrored path, right",proxies,L::right,to_x+1,row,true,-2,
 		{{to_x-1,row},{to_x,row},{to_x+1,row}},right_texpos);
 	const render_proxyst *right=find(proxies,L::right);
-	if(right!=nullptr&&right->progress!=1.0f)
+	if(right!=nullptr&&(right->offset_x!=0.0f||right->source_x!=float(right->target_x)))
 		printf("fire on the mirrored path: right fragment still moving\n"),++failures;
 	}
 	{
@@ -303,7 +313,7 @@ void test_resting()
 		{{to_x-1,row},{to_x,row},{to_x+1,row}},right_texpos);
 	expect_proxy("resting, up",proxies,L::up,to_x,row-1,true,0,{{to_x,row-1}},up_texpos);
 	for(const render_proxyst &proxy:proxies)
-		if(proxy.progress!=1.0f||proxy.source_x!=float(proxy.target_x)||
+		if(proxy.offset_x!=0.0f||proxy.offset_y!=0.0f||proxy.source_x!=float(proxy.target_x)||
 			proxy.source_y!=float(proxy.target_y))
 			printf("resting: proxy not in place\n"),++failures;
 	// Fire under a resting main-group sprite blocks it as it does a moving one.
@@ -374,13 +384,17 @@ void test_coverage()
 		printf("viewport coverage union wrong\n"),++failures;
 }
 
-void test_bob()
+// With a movement that reaches beyond the path (the bob, into the row above), each proxy
+// also covers the rows reached, and a creature any of whose reach tiles is blocked falls
+// back to the default movement, as a whole.
+void test_reach()
 {
-	// With the walk bob on, the creature bobs and both fragments ride on its centre proxy, so
-	// each proxy also covers the row above its path. The centre is the first proxy collected.
+	// With the bob selected, the creature follows it and both fragments ride on its centre
+	// proxy, so each proxy also covers the row above its path. The centre is the first proxy
+	// collected.
 	{
 	scenest scene;
-	scene.bob=true;
+	scene.select_bob();
 	const auto proxies=scene.collect(false);
 	expect_count("bob on",proxies,3);
 	expect_proxy("bob on, center",proxies,L::center,to_x,row,false,0,
@@ -392,27 +406,52 @@ void test_bob()
 	for(const render_proxyst &proxy:proxies)
 		{
 		const bool centre=proxy.layer==L::center;
-		if(!proxy.bob)printf("bob on: %s not bobbing\n",centre?"centre":"fragment"),++failures;
+		if(proxy.fell_back)printf("bob on: %s fell back\n",centre?"centre":"fragment"),++failures;
 		if(proxy.anchor!=(centre?-1:0))
 			printf("bob on: anchor %d\n",proxy.anchor),++failures;
 		}
 	if(!proxies.empty()&&proxies[0].layer!=L::center)
 		printf("bob on: centre not first\n"),++failures;
 	}
+	// The offset comes out with the movement, in tiles: with the bob, a frame in the middle
+	// of a one-hop step lifts the centre to the hop's peak, the bob amount for a horizontal
+	// step, and the fragments, whose movement is inherited from the centre, are lifted just
+	// as far. The fallback offset beside it is the default movement's: on the path.
 	{
-	// With the bob off, the proxies, their coverage and the anchors are what they were.
+	scenest scene;
+	std::unique_ptr<movementst> bob=scene.movements.find("bob")->clone();
+	if(apply_movement_settings(*bob,{{"hops",1.0f},{"amount",0.2f}})!="")
+		printf("bob lift: settings refused\n"),++failures;
+	scene.manager.set_movement(*bob);
+	scene.manager.begin_frame(1016+visual_animation_managerst::default_step_duration_ms/2);
+	scene.manager.synchronize_viewport(scene.v.input());
+	scene.manager.end_frame();
+	const auto proxies=scene.collect(false);
+	expect_count("bob lift",proxies,3);
+	for(const render_proxyst &proxy:proxies)
+		{
+		const bool centre=proxy.layer==L::center;
+		if(std::fabs(proxy.offset_x-0.5f)>0.01f||proxy.fallback_x!=proxy.offset_x)
+			printf("bob lift: %s offset x %g\n",centre?"centre":"fragment",proxy.offset_x),++failures;
+		if(std::fabs(proxy.offset_y+0.2f)>0.001f||proxy.fallback_y!=0.0f)
+			printf("bob lift: %s offset y %g\n",centre?"centre":"fragment",proxy.offset_y),++failures;
+		}
+	}
+	{
+	// With the default movement, the proxies, their coverage and the anchors are what they
+	// were, and nothing falls back.
 	scenest scene;
 	const auto proxies=scene.collect(false);
 	for(const render_proxyst &proxy:proxies)
-		if(proxy.bob)printf("bob off: bobbing\n"),++failures;
+		if(proxy.fell_back)printf("bob off: fell back\n"),++failures;
 	expect_proxy("bob off, up",proxies,L::up,to_x,row-1,false,0,
 		{{from_x,row-1},{to_x,row-1}},up_texpos);
 	}
 	{
 	// With flipping on, the mirrored image's row above is covered too: the right fragment
-	// lands two tiles to the left, so its bob row spans both places.
+	// lands two tiles to the left, so its reach row spans both places.
 	scenest scene;
-	scene.bob=true;
+	scene.select_bob();
 	const auto proxies=scene.collect(true);
 	expect_count("bob and flip",proxies,3);
 	expect_proxy("bob and flip, right",proxies,L::right,to_x+1,row,true,-2,
@@ -420,69 +459,71 @@ void test_bob()
 		{from_x-1,row},{from_x,row},{from_x+1,row},{to_x+1,row}},right_texpos);
 	}
 	{
-	// Fire on the row above the up fragment's path: that fragment cannot bob, so the whole
-	// creature glides without the bob, and every proxy covers only its path. (Fire under the
-	// up fragment itself does not block it, since the upper group is drawn over fire.)
+	// Fire on the row above the up fragment's path: that fragment cannot reach it, so the
+	// whole creature falls back to the default movement, and every proxy covers only its
+	// path. (Fire under the up fragment itself does not block it, since the upper group is
+	// drawn over fire.)
 	scenest scene;
-	scene.bob=true;
+	scene.select_bob();
 	scene.v.spatter_flags[to_x*dim_y+row-2]=0x10000000U;
 	const auto proxies=scene.collect(false);
-	expect_count("fire on the bob row",proxies,3);
+	expect_count("fire on the reach row",proxies,3);
 	for(const render_proxyst &proxy:proxies)
-		if(proxy.bob)printf("fire on the bob row: still bobbing\n"),++failures;
-	expect_proxy("fire on the bob row, center",proxies,L::center,to_x,row,false,0,
+		if(!proxy.fell_back)printf("fire on the reach row: not fallen back\n"),++failures;
+	expect_proxy("fire on the reach row, center",proxies,L::center,to_x,row,false,0,
 		{{from_x,row},{to_x,row}},center_texpos);
-	expect_proxy("fire on the bob row, up",proxies,L::up,to_x,row-1,false,0,
+	expect_proxy("fire on the reach row, up",proxies,L::up,to_x,row-1,false,0,
 		{{from_x,row-1},{to_x,row-1}},up_texpos);
 	}
 	{
 	// The row above the mirrored image is burning: the same, with flipping on.
 	scenest scene;
-	scene.bob=true;
+	scene.select_bob();
 	scene.v.spatter_flags[(from_x-1)*dim_y+row-1]=0x20000000U;
 	const auto proxies=scene.collect(true);
-	expect_count("fire on the mirrored bob row",proxies,3);
+	expect_count("fire on the mirrored reach row",proxies,3);
 	for(const render_proxyst &proxy:proxies)
-		if(proxy.bob)printf("fire on the mirrored bob row: still bobbing\n"),++failures;
-	expect_proxy("fire on the mirrored bob row, right",proxies,L::right,to_x+1,row,true,-2,
+		if(!proxy.fell_back)printf("fire on the mirrored reach row: not fallen back\n"),++failures;
+	expect_proxy("fire on the mirrored reach row, right",proxies,L::right,to_x+1,row,true,-2,
 		{{from_x-1,row},{from_x,row},{from_x+1,row},{to_x+1,row}},right_texpos);
 	}
 	{
-	// A creature walking along the top row has no row above inside the clip: it glides
-	// without the bob rather than being dropped.
+	// A creature walking along the top row has no row above inside the clip: it falls back
+	// to the default movement rather than being dropped.
 	scenest top(0);
-	top.bob=true;
+	top.select_bob();
 	const auto proxies=top.collect(false);
 	expect_count("bob on the top row",proxies,2);
 	for(const render_proxyst &proxy:proxies)
-		if(proxy.bob)printf("bob on the top row: bobbing\n"),++failures;
+		if(!proxy.fell_back)printf("bob on the top row: not fallen back\n"),++failures;
 	expect_proxy("bob on the top row, center",proxies,L::center,to_x,0,false,0,
 		{{from_x,0},{to_x,0}},center_texpos);
 	}
 	{
-	// A vehicle stepping on the creature's own tile with it (a pushed minecart) never bobs
-	// and never rides on the creature's proxy, while the creature bobs as before.
+	// A vehicle stepping on the creature's own tile with it (a pushed minecart) keeps to the
+	// path, falling back on its own, and never rides on the creature's proxy, while the
+	// creature follows the bob as before.
 	scenest scene(row,true);
-	scene.bob=true;
+	scene.select_bob();
 	const auto proxies=scene.collect(false);
 	expect_count("vehicle",proxies,4);
 	const render_proxyst *vehicle=find(proxies,L::vehicle);
 	if(vehicle==nullptr)printf("vehicle: no proxy\n"),++failures;
-	else if(vehicle->bob||vehicle->anchor!=-1)
-		printf("vehicle: bob %d anchor %d\n",vehicle->bob,vehicle->anchor),++failures;
+	else if(!vehicle->fell_back||vehicle->anchor!=-1)
+		printf("vehicle: fell back %d anchor %d\n",vehicle->fell_back,vehicle->anchor),++failures;
 	else if(vehicle->coverage!=tilest{{from_x,row},{to_x,row}})
 		printf("vehicle: covers %s\n",tiles_text(vehicle->coverage).c_str()),++failures;
 	const render_proxyst *centre=find(proxies,L::center);
-	if(centre==nullptr||!centre->bob)printf("vehicle: creature not bobbing\n"),++failures;
+	if(centre==nullptr||centre->fell_back)printf("vehicle: creature fell back\n"),++failures;
 	}
 	{
 	// A one-tile creature stepping in lockstep beside the up fragment, with fire on its own
-	// bob row so it cannot bob: the fragments still ride on their own centre and bob with
-	// it. The neighbour's centre comes first in collection order and moves the same way, so
-	// a match on any centre within a tile would tie the up fragment to the neighbour and
-	// leave it on the glide line while its creature hops.
+	// reach row so it falls back: the fragments still ride on their own centre and follow
+	// the bob with it. The neighbour's centre comes first in collection order and moves the
+	// same way, so a match on any centre within a tile would tie the up fragment to the
+	// neighbour and leave it on the path while its creature hops.
 	scenest scene(row,false,true);
-	scene.bob=true;
+	scene.select_bob();
 	scene.v.spatter_flags[(from_x-1)*dim_y+row-2]=0x10000000U;
 	const auto proxies=scene.collect(false);
 	expect_count("neighbour",proxies,4);
@@ -494,76 +535,85 @@ void test_bob()
 	else
 		{
 		if(other>own)printf("neighbour: not collected first\n"),++failures;
-		if(proxies[other].bob)printf("neighbour: neighbour bobbing\n"),++failures;
-		if(!proxies[own].bob)printf("neighbour: creature not bobbing\n"),++failures;
+		if(!proxies[other].fell_back)printf("neighbour: neighbour not fallen back\n"),++failures;
+		if(proxies[own].fell_back)printf("neighbour: creature fell back\n"),++failures;
 		for(const render_proxyst &proxy:proxies)
-			if(proxy.layer!=L::center&&(proxy.anchor!=own||!proxy.bob))
-				printf("neighbour: fragment anchor %d bob %d\n",proxy.anchor,proxy.bob),
-					++failures;
+			if(proxy.layer!=L::center&&(proxy.anchor!=own||proxy.fell_back))
+				printf("neighbour: fragment anchor %d fell back %d\n",proxy.anchor,
+					proxy.fell_back),++failures;
 		}
 	expect_proxy("neighbour, up",proxies,L::up,to_x,row-1,false,0,
 		{{from_x,row-2},{to_x,row-2},{from_x,row-1},{to_x,row-1}},up_texpos);
 	}
 	{
-	// A resting mirrored sprite never bobs.
+	// A resting mirrored sprite has no movement to follow: zero offsets, no reach rows.
 	scenest scene;
-	scene.bob=true;
+	scene.select_bob();
 	scene.manager.cancel_transitions();
 	const auto proxies=scene.collect(true);
 	expect_count("resting with bob on",proxies,3);
 	for(const render_proxyst &proxy:proxies)
-		if(proxy.bob||proxy.anchor!=-1)printf("resting with bob on: bobbing\n"),++failures;
+		if(proxy.offset_x!=0.0f||proxy.offset_y!=0.0f||proxy.anchor!=-1)
+			printf("resting with bob on: moving\n"),++failures;
 	expect_proxy("resting with bob on, center",proxies,L::center,to_x,row,true,0,
 		{{to_x,row}},center_texpos);
 	}
 }
 
-// A carried item bobs only with a bobbing centre proxy on its own tile moving the same
-// way: the same source and progress. Each field a step off on its own, a fragment on the
-// tile, or a centre proxy that does not bob leaves it still.
-void test_carried_item_bob()
+// A carried item follows the movement only with a centre proxy on its own tile that did
+// not fall back and moves the same way: the same source and offset. Each field a step off
+// on its own, a fragment on the tile, or a centre proxy that fell back leaves it on the
+// fallback.
+void test_carried_item_movement()
 {
 	scenest scene;
-	scene.bob=true;
+	scene.select_bob();
 	const auto proxies=scene.collect(false);
 	const render_proxyst *centre=find(proxies,L::center);
 	if(centre==nullptr){printf("carried item: no centre proxy\n");++failures;return;}
 	auto item=[&](int32_t target_x,int32_t target_y,float source_x,float source_y,
-		float progress)
+		float offset_x,float offset_y)
 		{
-		return carried_item_proxyst{source_x,source_y,target_x,target_y,progress,
-			centre->texture,false,{}};
+		return carried_item_proxyst{source_x,source_y,target_x,target_y,offset_x,offset_y,
+			centre->fallback_x,centre->fallback_y,centre->texture,true,{}};
 		};
 	std::vector<carried_item_proxyst> items={
 		item(centre->target_x,centre->target_y,centre->source_x,centre->source_y,
-			centre->progress),
+			centre->offset_x,centre->offset_y),
 		item(centre->target_x,centre->target_y,centre->source_x,centre->source_y,
-			centre->progress+0.25f),
+			centre->offset_x+0.25f,centre->offset_y),
+		item(centre->target_x,centre->target_y,centre->source_x,centre->source_y,
+			centre->offset_x,centre->offset_y-0.1f),
 		item(centre->target_x,centre->target_y,centre->source_x-1.0f,centre->source_y,
-			centre->progress),
+			centre->offset_x,centre->offset_y),
 		item(centre->target_x,centre->target_y,centre->source_x,centre->source_y-1.0f,
-			centre->progress),
+			centre->offset_x,centre->offset_y),
 		item(centre->target_x+1,centre->target_y,centre->source_x,centre->source_y,
-			centre->progress),
+			centre->offset_x,centre->offset_y),
 		item(centre->target_x,centre->target_y+1,centre->source_x,centre->source_y,
-			centre->progress),
-		item(to_x+1,row,float(from_x+1),float(row),centre->progress)};
-	mark_carried_item_bobs(items,proxies);
-	if(!items[0].bob)printf("carried item on its bobbing carrier: still\n"),++failures;
-	if(items[1].bob)printf("carried item a different progress: bobs\n"),++failures;
-	if(items[2].bob)printf("carried item from a different source: bobs\n"),++failures;
-	if(items[3].bob)printf("carried item from a different source row: bobs\n"),++failures;
-	if(items[4].bob)printf("carried item a column off the carrier: bobs\n"),++failures;
-	if(items[5].bob)printf("carried item a row off the carrier: bobs\n"),++failures;
-	if(items[6].bob)printf("carried item on a fragment's tile: bobs\n"),++failures;
-	// The same carrier with the bob off, or no proxies at all, marks nothing.
-	std::vector<render_proxyst> still=proxies;
-	for(render_proxyst &proxy:still)proxy.bob=false;
-	items[0].bob=false;
-	mark_carried_item_bobs(items,still);
-	if(items[0].bob)printf("carried item on a still carrier: bobs\n"),++failures;
-	mark_carried_item_bobs(items,{});
-	if(items[0].bob)printf("carried item with no proxies: bobs\n"),++failures;
+			centre->offset_x,centre->offset_y),
+		item(to_x+1,row,float(from_x+1),float(row),centre->offset_x,centre->offset_y)};
+	mark_carried_item_movements(items,proxies);
+	if(items[0].fell_back)printf("carried item on its carrier: fell back\n"),++failures;
+	if(!items[1].fell_back)printf("carried item a different offset x: follows\n"),++failures;
+	if(!items[2].fell_back)printf("carried item a different offset y: follows\n"),++failures;
+	if(!items[3].fell_back)printf("carried item from a different source: follows\n"),++failures;
+	if(!items[4].fell_back)printf("carried item from a different source row: follows\n"),++failures;
+	if(!items[5].fell_back)printf("carried item a column off the carrier: follows\n"),++failures;
+	if(!items[6].fell_back)printf("carried item a row off the carrier: follows\n"),++failures;
+	if(!items[7].fell_back)printf("carried item on a fragment's tile: follows\n"),++failures;
+	// The same carrier fallen back, or no proxies at all, clears nothing; an item that did
+	// not come in fallen back (a movement on the path) is left alone.
+	std::vector<render_proxyst> fallen=proxies;
+	for(render_proxyst &proxy:fallen)proxy.fell_back=true;
+	items[0].fell_back=true;
+	mark_carried_item_movements(items,fallen);
+	if(!items[0].fell_back)printf("carried item on a fallen-back carrier: follows\n"),++failures;
+	mark_carried_item_movements(items,{});
+	if(!items[0].fell_back)printf("carried item with no proxies: follows\n"),++failures;
+	items[1].fell_back=false;
+	mark_carried_item_movements(items,proxies);
+	if(items[1].fell_back)printf("carried item on the path: fell back\n"),++failures;
 }
 
 void test_tile_checks()
@@ -595,8 +645,8 @@ int main()
 	test_blocked();
 	test_resting();
 	test_coverage();
-	test_bob();
-	test_carried_item_bob();
+	test_reach();
+	test_carried_item_movement();
 	test_tile_checks();
 	if(failures!=0){printf("sprite proxy tests: %d failures\n",failures);return 1;}
 	printf("sprite proxy tests: OK\n");

@@ -5,13 +5,25 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
+#include <string>
+#include <tuple>
 #include <limits>
 
 #include "visual_animation.h"
 
 namespace {
+
+// The fraction of its step a render has travelled, read back from the offset by the step's
+// tile delta: what the movement's time progress was, for a movement with constant speed.
+float travelled(const visual_movement_renderst &render,int32_t target_x,int32_t target_y)
+{
+	const float dx=float(target_x)-render.source_x,dy=float(target_y)-render.source_y;
+	return dx!=0.0f?render.offset_x/dx:render.offset_y/dy;
+}
 
 viewport_visual_animation_inputst make_input(
 	const void *viewport,
@@ -452,11 +464,26 @@ int main()
 	assert(manager.get_facing(gap_viewport,2,3)==native_sprite_facing);
 	}
 
-	assert(animation_progress(150,0,150)==1.0f);
-	assert(animation_progress(75,0,150)==0.5f);
-	assert(animation_progress(75,0,150,true)==0.5f);
-	assert(animation_progress(25,0,150,true)==float(1)/6);
-	assert(animation_progress(25,0,150)<float(1)/6);
+	const movement_sett movements=make_movements();
+	const movementst &linear=*movements.find("linear");
+	const movementst &smoothstep=default_movement();
+	assert(step_progress(150,0,150)==1.0f&&step_progress(75,0,150)==0.5f);
+	assert(step_progress(200,0,150)==1.0f);
+	assert(smoothstep.travelled(1.0f)==1.0f&&smoothstep.travelled(0.5f)==0.5f);
+	assert(linear.travelled(step_progress(25,0,150))==float(1)/6);
+	assert(smoothstep.travelled(step_progress(25,0,150))<float(1)/6);
+	// Every movement leaves from and lands on the grid, on the step, whatever the step
+	// (within float rounding of a sine at pi, for the bob).
+	for(const std::unique_ptr<movementst> &movement:movements.all)
+		for(const tile_stepst step:{tile_stepst{1,0},tile_stepst{0,-1},tile_stepst{-1,1}})
+			{
+			const sprite_offsetst start=movement->position(0.0f,step);
+			const sprite_offsetst end=movement->position(1.0f,step);
+			assert(start.x==0.0f&&start.y==0.0f&&end.x==step.x);
+			assert(std::fabs(end.y-step.y)<1e-6f);
+			}
+	assert(smoothstep.position(0.5f,{1,0}).x==0.5f&&smoothstep.position(0.5f,{1,0}).y==0.0f);
+	assert(linear.position(0.25f,{0,-1}).y==-0.25f&&linear.position(0.25f,{0,-1}).x==0.0f);
 	const auto carried_icon=carried_item_icon_rect(100.0f,200.0f,20.0f);
 	assert(carried_icon.x==101.0f&&carried_icon.y==204.0f);
 	assert(carried_icon.width==14.0f&&carried_icon.height==14.0f);
@@ -488,7 +515,7 @@ int main()
 	auto render=movement.get_movement(viewport,viewport_visual_layer::center,1,1);
 	assert(render.active);
 	assert(render.source_x==0&&render.source_y==1);
-	assert(render.progress==0.0f);
+	assert(travelled(render,1,1)==0.0f);
 	assert(movement.requires_full_redraw());
 
 	previous=current;
@@ -496,7 +523,7 @@ int main()
 	run_frame(movement,input,2075);
 	render=movement.get_movement(viewport,viewport_visual_layer::center,1,1);
 	assert(render.active);
-	assert(render.progress==0.5f);
+	assert(travelled(render,1,1)==0.5f);
 
 	run_frame(movement,input,2150);
 	assert(!movement.get_movement(
@@ -507,7 +534,7 @@ int main()
 	assert(!movement.requires_full_redraw());
 
 	visual_animation_managerst linear_movement;
-	linear_movement.set_linear(true);
+	linear_movement.set_movement(linear);
 	current.fill(0);
 	previous.fill(0);
 	set_layer(input,viewport_visual_layer::center,current.data(),previous.data());
@@ -517,8 +544,7 @@ int main()
 	run_frame(linear_movement,input,2200);
 	previous=current;
 	run_frame(linear_movement,input,2225);
-	assert(linear_movement.get_movement(
-		viewport,viewport_visual_layer::center,1,1).progress==float(1)/6);
+	assert(travelled(linear_movement.get_movement(viewport,viewport_visual_layer::center,1,1),1,1)==float(1)/6);
 
 	// Linear cadence follows the latest step, while completed movement stays silent history.
 	{
@@ -530,14 +556,13 @@ int main()
 	at_two[2*3+1]=42;
 
 	visual_animation_managerst adaptive;
-	adaptive.set_linear(true);
+	adaptive.set_movement(linear);
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(adaptive,input,1000);
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
 	run_frame(adaptive,input,1010);
 	run_frame(adaptive,input,1085);
-	assert(adaptive.get_movement(
-		viewport,viewport_visual_layer::center,1,1).progress==0.5f); // first: 150 ms
+	assert(travelled(adaptive.get_movement(viewport,viewport_visual_layer::center,1,1),1,1)==0.5f); // first: 150 ms
 	run_frame(adaptive,input,1160);
 	assert(!adaptive.get_movement(
 		viewport,viewport_visual_layer::center,1,1).active);
@@ -546,11 +571,10 @@ int main()
 	set_layer(input,viewport_visual_layer::center,at_two.data(),at_one.data());
 	run_frame(adaptive,input,1310);
 	run_frame(adaptive,input,1460);
-	assert(adaptive.get_movement(
-		viewport,viewport_visual_layer::center,2,1).progress==0.5f); // cadence: 300 ms
+	assert(travelled(adaptive.get_movement(viewport,viewport_visual_layer::center,2,1),2,1)==0.5f); // cadence: 300 ms
 
 	visual_animation_managerst minimum;
-	minimum.set_linear(true);
+	minimum.set_movement(linear);
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(minimum,input,2000);
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
@@ -558,11 +582,10 @@ int main()
 	set_layer(input,viewport_visual_layer::center,at_two.data(),at_one.data());
 	run_frame(minimum,input,2110);
 	run_frame(minimum,input,2185);
-	assert(minimum.get_movement(
-		viewport,viewport_visual_layer::center,2,1).progress==0.5f); // clamped to 150 ms
+	assert(travelled(minimum.get_movement(viewport,viewport_visual_layer::center,2,1),2,1)==0.5f); // clamped to 150 ms
 
 	visual_animation_managerst maximum;
-	maximum.set_linear(true);
+	maximum.set_movement(linear);
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(maximum,input,3000);
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
@@ -570,17 +593,15 @@ int main()
 	set_layer(input,viewport_visual_layer::center,at_two.data(),at_one.data());
 	run_frame(maximum,input,3510);
 	run_frame(maximum,input,3760);
-	assert(maximum.get_movement(
-		viewport,viewport_visual_layer::center,2,1).progress==0.5f); // clamped to 500 ms
+	assert(travelled(maximum.get_movement(viewport,viewport_visual_layer::center,2,1),2,1)==0.5f); // clamped to 500 ms
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_two.data());
 	run_frame(maximum,input,4111);
 	run_frame(maximum,input,4186);
-	assert(maximum.get_movement(
-		viewport,viewport_visual_layer::center,1,1).progress==0.5f); // history expired: 150 ms
+	assert(travelled(maximum.get_movement(viewport,viewport_visual_layer::center,1,1),1,1)==0.5f); // history expired: 150 ms
 
 	// Reversal leaves two predecessors at B; the newer B->A step must win for A->B.
 	visual_animation_managerst reversal;
-	reversal.set_linear(true);
+	reversal.set_movement(linear);
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(reversal,input,4000);
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
@@ -590,8 +611,7 @@ int main()
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_zero.data());
 	run_frame(reversal,input,4510);
 	run_frame(reversal,input,4610);
-	assert(reversal.get_movement(
-		viewport,viewport_visual_layer::center,1,1).progress==0.5f); // latest cadence: 200 ms
+	assert(travelled(reversal.get_movement(viewport,viewport_visual_layer::center,1,1),1,1)==0.5f); // latest cadence: 200 ms
 
 	visual_animation_managerst smoothstep;
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
@@ -601,8 +621,7 @@ int main()
 	set_layer(input,viewport_visual_layer::center,at_two.data(),at_one.data());
 	run_frame(smoothstep,input,5110);
 	run_frame(smoothstep,input,5185);
-	assert(smoothstep.get_movement(
-		viewport,viewport_visual_layer::center,2,1).progress==0.5f); // fixed 150 ms
+	assert(travelled(smoothstep.get_movement(viewport,viewport_visual_layer::center,2,1),2,1)==0.5f); // fixed 150 ms
 	}
 
 	// The step time is a runtime setting; a movement keeps the one it started with.
@@ -629,8 +648,7 @@ int main()
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_one.data());
 	stepped.set_step_duration_ms(50); // mid-flight: the 200 ms movement is unaffected
 	run_frame(stepped,input,6110);
-	assert(stepped.get_movement(
-		viewport,viewport_visual_layer::center,1,1).progress==0.5f);
+	assert(travelled(stepped.get_movement(viewport,viewport_visual_layer::center,1,1),1,1)==0.5f);
 	run_frame(stepped,input,6209);
 	assert(stepped.get_movement(viewport,viewport_visual_layer::center,1,1).active);
 	run_frame(stepped,input,6210);
@@ -640,15 +658,14 @@ int main()
 	run_frame(stepped,input,6300); // the next movement takes the new 50 ms
 	set_layer(input,viewport_visual_layer::center,at_two.data(),at_two.data());
 	run_frame(stepped,input,6325);
-	assert(stepped.get_movement(
-		viewport,viewport_visual_layer::center,2,1).progress==0.5f);
+	assert(travelled(stepped.get_movement(viewport,viewport_visual_layer::center,2,1),2,1)==0.5f);
 	run_frame(stepped,input,6350);
 	assert(!stepped.get_movement(viewport,viewport_visual_layer::center,2,1).active);
 
 	// With linear on, the step time is the adaptive duration's floor, and a step longer
 	// than 500 ms lifts the ceiling with it so the movement is neither clamped nor cut short.
 	visual_animation_managerst long_linear;
-	long_linear.set_linear(true);
+	long_linear.set_movement(linear);
 	long_linear.set_step_duration_ms(800);
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(long_linear,input,7000);
@@ -656,11 +673,9 @@ int main()
 	run_frame(long_linear,input,7010);
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_one.data());
 	run_frame(long_linear,input,7410);
-	assert(long_linear.get_movement(
-		viewport,viewport_visual_layer::center,1,1).progress==0.5f); // first: 800 ms
+	assert(travelled(long_linear.get_movement(viewport,viewport_visual_layer::center,1,1),1,1)==0.5f); // first: 800 ms
 	run_frame(long_linear,input,7610); // past 500 ms, still in flight
-	assert(long_linear.get_movement(
-		viewport,viewport_visual_layer::center,1,1).progress==0.75f);
+	assert(travelled(long_linear.get_movement(viewport,viewport_visual_layer::center,1,1),1,1)==0.75f);
 	// The next step follows a predecessor older than 500 ms: its visual source is where
 	// that movement is, and its duration is the 600 ms cadence raised to the 800 ms floor.
 	set_layer(input,viewport_visual_layer::center,at_two.data(),at_one.data());
@@ -669,8 +684,7 @@ int main()
 		viewport,viewport_visual_layer::center,2,1).source_x==0.75f);
 	set_layer(input,viewport_visual_layer::center,at_two.data(),at_two.data());
 	run_frame(long_linear,input,8010);
-	assert(long_linear.get_movement(
-		viewport,viewport_visual_layer::center,2,1).progress==0.5f);
+	assert(travelled(long_linear.get_movement(viewport,viewport_visual_layer::center,2,1),2,1)==0.5f);
 	run_frame(long_linear,input,8410);
 	assert(!long_linear.get_movement(viewport,viewport_visual_layer::center,2,1).active);
 	// A step back at an 800 ms cadence lasts 800 ms, the floor; the predecessor filter
@@ -679,14 +693,13 @@ int main()
 	run_frame(long_linear,input,8410);
 	set_layer(input,viewport_visual_layer::center,at_one.data(),at_one.data());
 	run_frame(long_linear,input,8810);
-	assert(long_linear.get_movement(
-		viewport,viewport_visual_layer::center,1,1).progress==0.5f);
+	assert(travelled(long_linear.get_movement(viewport,viewport_visual_layer::center,1,1),1,1)==0.5f);
 
 	// Lowering the step time while a longer linear movement is in flight leaves that
 	// movement its own duration: it is neither erased at the new 500 ms limit nor
 	// dropped as a predecessor, and only the movements that start after it are shorter.
 	visual_animation_managerst lowered_linear;
-	lowered_linear.set_linear(true);
+	lowered_linear.set_movement(linear);
 	lowered_linear.set_step_duration_ms(2000);
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(lowered_linear,input,10000);
@@ -696,11 +709,9 @@ int main()
 	run_frame(lowered_linear,input,10310);
 	lowered_linear.set_step_duration_ms(150);
 	run_frame(lowered_linear,input,11010); // 1000 ms in, past the 500 ms limit
-	assert(lowered_linear.get_movement(
-		viewport,viewport_visual_layer::center,1,1).progress==0.5f);
+	assert(travelled(lowered_linear.get_movement(viewport,viewport_visual_layer::center,1,1),1,1)==0.5f);
 	run_frame(lowered_linear,input,11510);
-	assert(lowered_linear.get_movement(
-		viewport,viewport_visual_layer::center,1,1).progress==0.75f);
+	assert(travelled(lowered_linear.get_movement(viewport,viewport_visual_layer::center,1,1),1,1)==0.75f);
 	// The next step still follows it as its predecessor, and its 1500 ms cadence is
 	// clamped to the new 500 ms ceiling.
 	set_layer(input,viewport_visual_layer::center,at_two.data(),at_one.data());
@@ -709,13 +720,12 @@ int main()
 		viewport,viewport_visual_layer::center,2,1).source_x==0.75f);
 	set_layer(input,viewport_visual_layer::center,at_two.data(),at_two.data());
 	run_frame(lowered_linear,input,11760);
-	assert(lowered_linear.get_movement(
-		viewport,viewport_visual_layer::center,2,1).progress==0.5f);
+	assert(travelled(lowered_linear.get_movement(viewport,viewport_visual_layer::center,2,1),2,1)==0.5f);
 	run_frame(lowered_linear,input,12010);
 	assert(!lowered_linear.get_movement(viewport,viewport_visual_layer::center,2,1).active);
 
 	visual_animation_managerst short_linear;
-	short_linear.set_linear(true);
+	short_linear.set_movement(linear);
 	short_linear.set_step_duration_ms(100);
 	set_layer(input,viewport_visual_layer::center,at_zero.data(),empty.data());
 	run_frame(short_linear,input,9000);
@@ -725,14 +735,22 @@ int main()
 	run_frame(short_linear,input,9040); // cadence 30 ms, clamped up to the 100 ms step
 	set_layer(input,viewport_visual_layer::center,at_two.data(),at_two.data());
 	run_frame(short_linear,input,9090);
-	assert(short_linear.get_movement(
-		viewport,viewport_visual_layer::center,2,1).progress==0.5f);
+	assert(travelled(short_linear.get_movement(viewport,viewport_visual_layer::center,2,1),2,1)==0.5f);
 	}
 
 	visual_animation_managerst ambiguous;
-	assert(!ambiguous.is_linear());
-	ambiguous.set_linear(true);
-	assert(ambiguous.is_linear());
+	assert(&ambiguous.movement()==&default_movement());
+	ambiguous.set_movement(linear);
+	assert(&ambiguous.movement()==&linear);
+	assert(linear.keeps_cadence()&&!linear.reach().any());
+	ambiguous.set_movement(*movements.find("bob"));
+	assert(!ambiguous.movement().keeps_cadence()&&ambiguous.movement().reach().any());
+	assert(!default_movement().keeps_cadence()&&!default_movement().reach().any());
+	assert(movements.find("bounce")==nullptr);
+	assert(movements.names()=="smoothstep, linear, bob");
+	assert(&movements.default_movement()==movements.all.front().get());
+	assert(std::string(movements.default_movement().name())=="smoothstep");
+	ambiguous.set_movement(linear);
 	set_layer(input,viewport_visual_layer::center,current.data(),previous.data());
 	run_frame(ambiguous,input,2990);
 	previous.fill(0);
@@ -927,7 +945,7 @@ int main()
 	status_current[1*3+0]=92;
 	run_frame(companion,input,9075);
 	status=companion.get_movement(viewport,viewport_visual_layer::designation,1,0);
-	assert(status.active&&status.progress==0.5f);
+	assert(status.active&&travelled(status,1,0)==0.5f);
 
 	// Divergent nearby creature movements make companion ownership ambiguous, so the overlay snaps.
 	current.fill(0);
@@ -985,7 +1003,7 @@ int main()
 	run_frame(vehicle,input,12075);
 	const auto cart=vehicle.get_movement(
 		viewport,viewport_visual_layer::vehicle,1,1);
-	assert(cart.active&&cart.progress==0.5f);
+	assert(cart.active&&travelled(cart,1,1)==0.5f);
 	previous=current;
 	current.fill(0);
 	current[2*3+1]=80;
@@ -993,7 +1011,7 @@ int main()
 	const auto chained=vehicle.get_movement(
 		viewport,viewport_visual_layer::vehicle,2,1);
 	assert(chained.active&&chained.source_x>0.0f&&chained.source_x<1.0f&&
-		chained.progress==0.0f);
+		travelled(chained,2,1)==0.0f);
 
 	// Every cardinal and diagonal follow step gets a stable inverse visual anchor.
 	for(int32_t dx=-1;dx<=1;++dx)
@@ -1033,9 +1051,9 @@ int main()
 			const auto follow=follow_manager.get_follow(&token,scroll.follow_candidate);
 			assert(movement.active&&follow.active&&
 				movement.movement_id==scroll.follow_candidate);
-			assert(std::abs((movement.source_x-center)*(1.0f-movement.progress)+
+			assert(std::abs((movement.source_x-center)+movement.offset_x+
 				follow.offset_x)<0.000001f);
-			assert(std::abs((movement.source_y-center)*(1.0f-movement.progress)+
+			assert(std::abs((movement.source_y-center)+movement.offset_y+
 				follow.offset_y)<0.000001f);
 			run_frame(follow_manager,follow_input,20095);
 			const auto fractional=follow_manager.get_follow(&token,scroll.follow_candidate);
@@ -1341,85 +1359,196 @@ int main()
 	assert(scrolled.get_facing(viewport,2,2)==native_sprite_facing);
 	}
 
-	// The walk bob lifts once per hop, returns to the grid at both ends of a step, and never
-	// exceeds amplitude times the direction multiplier.
+	// The bob movement hops once or twice per step above the straight path, returns to the
+	// grid at both ends, and its hop is the amount times the direction's multiplier high.
 	{
-	const float amplitude=0.10f,multiplier=2.7f,peak=amplitude*multiplier;
 	auto near=[](float a,float b){return std::fabs(a-b)<1e-5f;};
+	// The hop is the negative y of the offset beyond the path: y minus the path's share.
+	auto hop=[](const movementst &m,float progress,tile_stepst step)
+		{
+		const sprite_offsetst at=m.position(progress,step);
+		return step.y*m.travelled(progress)-at.y;
+		};
+	const tile_stepst east{1,0},north{0,-1},north_east{1,-1};
+	// A plain bob: every multiplier 1, so the hop is the bare hop shape, `high` tall.
+	const float high=0.5f;
+	std::unique_ptr<movementst> unit=movements.find("bob")->clone();
+	assert(apply_movement_settings(*unit,{{"amount",high},{"horizontal",1.0f},
+		{"diagonal",1.0f},{"vertical",1.0f}})=="");
 	for(int hops:{1,2})
 		{
-		assert(near(walk_bob_lift(0.0f,hops,amplitude,multiplier),0.0f));
-		assert(near(walk_bob_lift(1.0f,hops,amplitude,multiplier),0.0f));
+		assert(unit->set("hops",float(hops))=="");
+		assert(near(hop(*unit,0.0f,east),0.0f)&&unit->position(0.0f,east).x==0.0f);
+		assert(near(hop(*unit,1.0f,east),0.0f)&&unit->position(1.0f,east).x==1.0f);
 		float highest=0.0f;
 		for(int i=0;i<=1000;++i)
 			{
-			const float lift=walk_bob_lift(float(i)/1000.0f,hops,amplitude,multiplier);
-			assert(lift>=0.0f);
-			highest=std::max(highest,lift);
+			const float progress=float(i)/1000.0f;
+			const sprite_offsetst at=unit->position(progress,east);
+			assert(hop(*unit,progress,east)>=0.0f&&at.x>=0.0f&&at.x<=1.0f);
+			// The bob follows the default's path, whatever the direction.
+			assert(at.x==default_movement().position(progress,east).x);
+			assert(unit->position(progress,north).x==0.0f&&
+				near(hop(*unit,progress,north),hop(*unit,progress,east)));
+			highest=std::max(highest,hop(*unit,progress,east));
 			}
-		assert(near(highest,peak));
+		assert(near(highest,high));
 		}
-	assert(near(walk_bob_lift(0.5f,1,amplitude,multiplier),peak));
-	assert(near(walk_bob_lift(0.25f,2,amplitude,multiplier),peak));
-	// The foot lands between the two hops.
-	assert(near(walk_bob_lift(0.5f,2,amplitude,multiplier),0.0f));
-	assert(near(walk_bob_lift(0.25f,2,amplitude,1.0f),amplitude));
-	assert(near(walk_bob_lift(0.25f,2,0.0f,multiplier),0.0f));
-	// The lift guard keys off the largest multiplier and admits exactly up to the cap.
-	assert(walk_bob_lift_fits(0.10f,1.0f,2.4f,2.7f));
-	assert(walk_bob_lift_fits(0.30f,1.0f,3.0f,2.0f));
-	assert(!walk_bob_lift_fits(0.30f,1.0f,3.0f,3.5f));
-	assert(!walk_bob_lift_fits(0.30f,4.0f,1.0f,1.0f));
-	assert(walk_bob_lift_fits(0.0f,5.0f,5.0f,5.0f));
-	// The settings pick the multiplier by the step's direction and default to fitting values.
-	const walk_bob_settingst defaults;
-	assert(!defaults.enabled&&defaults.hops==2);
-	assert(walk_bob_lift_fits(defaults.amplitude,defaults.horizontal_mult,
-		defaults.diagonal_mult,defaults.vertical_mult));
-	assert(near(defaults.lift(0.0f,5.0f,1,5,0.25f),0.10f));
-	assert(near(defaults.lift(0.0f,5.0f,1,4,0.25f),0.24f));
-	assert(near(defaults.lift(0.0f,5.0f,0,4,0.25f),0.27f));
-	assert(near(defaults.lift(0.0f,5.0f,0,4,0.5f),0.0f));
-	walk_bob_settingst single=defaults;
-	single.hops=1;
-	assert(near(single.lift(0.0f,5.0f,0,4,0.5f),0.27f));
+	// The hop peaks halfway along the line (the time progress 0.5 is halfway through
+	// smoothstep too); with two hops the foot lands there and the peaks are at a quarter
+	// and three quarters of the line, which the soft start reaches later than in time.
+	assert(unit->set("hops",1.0f)=="");
+	assert(near(hop(*unit,0.5f,east),high));
+	assert(unit->set("hops",2.0f)=="");
+	assert(near(hop(*unit,0.5f,east),0.0f));
+	float peak_along=0.0f,peak_hop=0.0f;
+	for(int i=0;i<=1000;++i)
+		{
+		const float progress=float(i)/1000.0f;
+		const float along=unit->position(progress,east).x,h=hop(*unit,progress,east);
+		if(along<0.5f&&h>peak_hop){peak_hop=h;peak_along=along;}
+		}
+	assert(std::fabs(peak_along-0.25f)<0.002f&&near(peak_hop,high));
+	assert(hop(*unit,0.25f,east)<high);
+	// The reach is the amount times the largest multiplier, above the path only, and a list
+	// of settings is refused as a whole when its reach passes what the render code repaints:
+	// the movement is then left as it was.
+	auto reach_of=[&](float amount,float h,float d,float v)
+		{
+		std::unique_ptr<movementst> bob=movements.find("bob")->clone();
+		return apply_movement_settings(*bob,{{"amount",amount},{"horizontal",h},
+			{"diagonal",d},{"vertical",v}});
+		};
+	assert(reach_of(0.10f,1.0f,2.4f,2.7f)=="");
+	assert(reach_of(0.30f,1.0f,3.0f,2.0f)=="");
+	assert(reach_of(0.30f,1.0f,3.0f,3.5f)==
+		"bob settings reach 1.05 tile beyond the path; the most the plugin repaints is 0.90");
+	assert(reach_of(0.30f,4.0f,1.0f,1.0f)!="");
+	assert(reach_of(0.90f,1.0f,1.0f,1.0f)=="");
+	assert(reach_of(0.91f,1.0f,1.0f,1.0f)!="");
+	{
+	std::unique_ptr<movementst> kept=movements.find("bob")->clone();
+	assert(apply_movement_settings(*kept,{{"amount",0.3f},{"vertical",3.5f}})!="");
+	assert(kept->settings()==movements.find("bob")->settings());
+	}
+	// Each setting checks its own range, NaN included; an unknown name is refused, and the
+	// movements without settings refuse every name.
+	{
+	std::unique_ptr<movementst> bob=movements.find("bob")->clone();
+	assert(bob->set("amount",0.0f)=="bob amount must be within 0..0.90 tile");
+	assert(bob->set("amount",0.91f)!=""&&bob->set("amount",std::nanf(""))!="");
+	assert(bob->set("amount",0.9f)==""&&bob->set("amount",0.2f)=="");
+	assert(bob->set("horizontal",5.1f)=="bob multipliers must be within 0..5");
+	assert(bob->set("diagonal",-0.1f)!=""&&bob->set("vertical",std::nanf(""))!="");
+	assert(bob->set("vertical",0.0f)==""&&bob->set("vertical",5.0f)=="");
+	assert(bob->set("hops",3.0f)=="hops per step must be 1 or 2");
+	assert(bob->set("hops",1.5f)!=""&&bob->set("hops",std::nanf(""))!="");
+	assert(bob->set("stride",1.0f)=="bob has no setting named stride");
+	assert(linear.settings().empty()&&default_movement().settings().empty());
+	assert(std::unique_ptr<movementst>(linear.clone())->set("amount",0.1f)==
+		"linear has no setting named amount");
+	assert(check_movement_settings("bounce",{})=="unknown movement bounce");
+	assert(check_movement_settings("bob",{{"amount",0.4f}})!="");
+	assert(check_movement_settings("bob",{{"amount",0.3f},{"hops",1.0f}})=="");
+	assert(check_movement_settings("linear",{})=="");
+	}
+	// The default settings fit, and scale the hop by the step's direction: a one-hop step
+	// peaks at the amount times the multiplier.
+	{
+	std::unique_ptr<movementst> defaults=movements.find("bob")->clone();
+	const std::vector<movement_settingst> expected={{"amount",0.10f},{"horizontal",1.0f},
+		{"diagonal",2.4f},{"vertical",2.7f},{"hops",2.0f}};
+	assert(defaults->settings()==expected);
+	assert(near(defaults->reach().above,0.27f)&&defaults->reach().below==0.0f);
+	assert(defaults->set("hops",1.0f)=="");
+	assert(near(hop(*defaults,0.5f,east),0.10f));
+	assert(near(hop(*defaults,0.5f,north_east),0.24f));
+	assert(near(hop(*defaults,0.5f,north),0.27f));
+	assert(hop(*defaults,0.0f,north)==0.0f);
+	// A retargeted step starts from a fractional source: a delta under half a tile on an
+	// axis counts as no move on it.
+	assert(near(hop(*defaults,0.5f,{0.4f,-1.0f}),0.27f));
+	assert(near(hop(*defaults,0.5f,{1.0f,0.4f}),0.10f));
+	assert(near(hop(*defaults,0.5f,{0.6f,-0.6f}),0.24f));
+	// At exactly half a tile the source rounds up: a delta of +0.5 is no move on that axis,
+	// -0.5 is one.
+	assert(near(hop(*defaults,0.5f,{1.0f,0.5f}),0.10f));
+	assert(near(hop(*defaults,0.5f,{1.0f,-0.5f}),0.24f));
+	assert(near(hop(*defaults,0.5f,{0.5f,-1.0f}),0.27f));
+	assert(near(hop(*defaults,0.5f,{-0.5f,-1.0f}),0.24f));
+	// The other movements stay on the path whatever the step.
+	assert(hop(default_movement(),0.5f,north)==0.0f);
+	assert(hop(linear,0.5f,north_east)==0.0f&&linear.position(0.5f,north_east).x==0.5f);
+	}
+	// The manager hands the offset out with the movement, from the movement it was given,
+	// and the default movement's offset beside it as the fallback.
+	{
+	visual_animation_managerst lifted;
+	std::unique_ptr<movementst> bob=movements.find("bob")->clone();
+	assert(apply_movement_settings(*bob,{{"hops",1.0f},{"amount",0.2f}})=="");
+	lifted.set_movement(*bob);
+	int32_t lift_empty[9]={},lift_before[9]={},lift_after[9]={};
+	lift_before[0]=7;lift_after[3]=7; // x 0 -> 1 on row 0: a horizontal step
+	auto input=make_input(viewport,3,lift_empty);
+	set_layer(input,viewport_visual_layer::center,lift_before,lift_empty);
+	run_frame(lifted,input,1000);
+	set_layer(input,viewport_visual_layer::center,lift_after,lift_before);
+	run_frame(lifted,input,1075);
+	set_layer(input,viewport_visual_layer::center,lift_after,lift_after);
+	run_frame(lifted,input,1150);
+	const visual_movement_renderst mid=lifted.get_movement(viewport,viewport_visual_layer::center,1,0);
+	assert(mid.active&&mid.offset_x==0.5f&&near(mid.offset_y,-0.2f*1.0f));
+	assert(mid.fallback_x==0.5f&&mid.fallback_y==0.0f);
+	lifted.set_movement(default_movement());
+	const visual_movement_renderst plain=lifted.get_movement(viewport,viewport_visual_layer::center,1,0);
+	assert(plain.offset_y==0.0f&&plain.fallback_x==plain.offset_x&&plain.fallback_y==0.0f);
+	}
+	// The step the manager hands a movement is the movement's own: a vertical and a diagonal
+	// step hop by their multipliers, not the horizontal one.
+	for(const auto &[target_x,target_y,mult]:
+		{std::tuple{0,1,2.7f},std::tuple{1,1,2.4f}})
+	{
+	visual_animation_managerst lifted;
+	std::unique_ptr<movementst> bob=movements.find("bob")->clone();
+	assert(apply_movement_settings(*bob,{{"hops",1.0f},{"amount",0.2f}})=="");
+	lifted.set_movement(*bob);
+	int32_t lift_empty[9]={},lift_before[9]={},lift_after[9]={};
+	lift_before[0]=7;lift_after[target_x*3+target_y]=7;
+	auto input=make_input(viewport,3,lift_empty);
+	set_layer(input,viewport_visual_layer::center,lift_before,lift_empty);
+	run_frame(lifted,input,1000);
+	set_layer(input,viewport_visual_layer::center,lift_after,lift_before);
+	run_frame(lifted,input,1075);
+	set_layer(input,viewport_visual_layer::center,lift_after,lift_after);
+	run_frame(lifted,input,1150);
+	const visual_movement_renderst mid=
+		lifted.get_movement(viewport,viewport_visual_layer::center,target_x,target_y);
+	assert(mid.active&&mid.offset_x==0.5f*target_x&&
+		near(mid.offset_y,0.5f*target_y-0.2f*mult));
+	assert(mid.fallback_x==0.5f*target_x&&mid.fallback_y==0.5f*target_y);
+	}
 	}
 
-	// The creature-level bob decision: any rider that cannot bob takes its whole creature
-	// with it, riders copy their root, chains of any depth resolve, and independent groups
-	// do not affect each other.
+	// The creature-level fallback decision: any rider that must fall back takes its whole
+	// creature with it, riders copy their root, chains of any depth resolve, and independent
+	// groups do not affect each other.
 	{
 	// 0: centre A; 1: fragment of A; 2: icon riding on fragment 1 (depth 2); 3: centre B;
 	// 4: icon on B; 5: a lone item with no creature.
 	const std::vector<int32_t> anchors={-1,0,1,-1,3,-1};
-	std::vector<bool> bob={true,true,false,true,true,false};
-	resolve_creature_bob(anchors,bob);
-	assert(!bob[0]&&!bob[1]&&!bob[2]); // the grandchild's fire row stops all of A
-	assert(bob[3]&&bob[4]);            // B is untouched
-	assert(!bob[5]);
-	std::vector<bool> all={true,true,true,true,true,false};
-	resolve_creature_bob(anchors,all);
-	assert(all[0]&&all[1]&&all[2]&&all[3]&&all[4]&&!all[5]);
-	std::vector<bool> root_off={false,true,true,true,true,true};
-	resolve_creature_bob(anchors,root_off);
-	assert(!root_off[0]&&!root_off[1]&&!root_off[2]&&root_off[3]&&root_off[4]);
+	std::vector<bool> fell={false,false,true,false,false,true};
+	resolve_creature_fallback(anchors,fell);
+	assert(fell[0]&&fell[1]&&fell[2]); // the grandchild's blocked row stops all of A
+	assert(!fell[3]&&!fell[4]);        // B is untouched
+	assert(fell[5]);
+	std::vector<bool> none={false,false,false,false,false,true};
+	resolve_creature_fallback(anchors,none);
+	assert(!none[0]&&!none[1]&&!none[2]&&!none[3]&&!none[4]&&none[5]);
+	std::vector<bool> root_off={true,false,false,false,false,false};
+	resolve_creature_fallback(anchors,root_off);
+	assert(root_off[0]&&root_off[1]&&root_off[2]&&!root_off[3]&&!root_off[4]);
 	std::vector<bool> empty;
-	resolve_creature_bob({},empty);
-	}
-
-	// The bob direction is that of the tile step, even when the source is a fractional
-	// in-flight position left by a retarget.
-	{
-	using D=walk_bob_directionst;
-	assert(walk_bob_direction(0.0f,5.0f,1,5)==D::horizontal);
-	assert(walk_bob_direction(0.0f,5.0f,0,4)==D::vertical);
-	assert(walk_bob_direction(0.0f,5.0f,1,4)==D::diagonal);
-	assert(walk_bob_direction(1.0f,4.0f,0,5)==D::diagonal);
-	// East step retargeted north from (0.6,5): a vertical step, not a diagonal one.
-	assert(walk_bob_direction(0.6f,5.0f,1,4)==D::vertical);
-	// Diagonal step retargeted east from (0.6,4.4): a horizontal step.
-	assert(walk_bob_direction(0.6f,4.4f,2,4)==D::horizontal);
-	assert(walk_bob_direction(0.4f,5.0f,1,5)==D::horizontal);
+	resolve_creature_fallback({},empty);
 	}
 	printf("visual animation manager tests: OK\n");
 }

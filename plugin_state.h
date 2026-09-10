@@ -12,6 +12,7 @@
 #include "frame_recorder.h"
 #include "frame_stats.h"
 #include "free_camera.h"
+#include "movement.h"
 #include "plugin_settings.h"
 #include "tile_repaint.h"
 #include "view_context.h"
@@ -22,6 +23,7 @@
 #include <atomic>
 #include <cstdint>
 #include <set>
+#include <string>
 #include <utility>
 
 // The SDL functions the plugin binds at load; the game's own SDL, looked up by name.
@@ -106,18 +108,25 @@ struct plugin_statest
 	frame_recorderst recorder;
 	bool flip_enabled=false;
 	bool hauled_enabled=false;
-	walk_bob_settingst bob;
+	// Every movement the console can pick, each with its settings; the animation manager
+	// follows one of them. A movement keeps its settings while another is current.
+	movement_sett movements=make_movements();
 	render_statest render;
+
+	plugin_statest()
+		{
+		render.animation_manager.set_movement(movements.default_movement());
+		}
 
 	// The animation and camera state a freshly enabled plugin starts from, keeping the
 	// settings; the recorder's first frame resets to it so the replay, which starts from
 	// plugin_enable, sees the same start.
 	void reset_visual()
 		{
-		const bool linear=render.animation_manager.is_linear();
+		const movementst &movement=render.animation_manager.movement();
 		const uint32_t step_ms=render.animation_manager.step_duration_ms();
 		render.animation_manager=visual_animation_managerst();
-		render.animation_manager.set_linear(linear);
+		render.animation_manager.set_movement(movement);
 		render.animation_manager.set_step_duration_ms(step_ms);
 		render.previous_coverage.clear();
 		render.view_context=view_context_trackerst();
@@ -135,35 +144,52 @@ struct plugin_statest
 		s.camera=render.camera.is_enabled();
 		s.rest_x=render.camera.rest_offset_x();
 		s.rest_y=render.camera.rest_offset_y();
-		s.linear=render.animation_manager.is_linear();
+		s.movement=render.animation_manager.movement().name();
+		s.movement_settings=render.animation_manager.movement().settings();
 		s.step_ms=render.animation_manager.step_duration_ms();
-		s.bob=bob;
 		return s;
 		}
 
 	// Every setting to the value given, where its owner reads it; the harness restores a
 	// recorded frame's settings with it. The camera's rest offset goes after its switch,
-	// which zeroes the offset when it changes.
-	void apply_settings(const plugin_settingsst &s)
+	// which zeroes the offset when it changes. The settings list is the movement's whole
+	// state, as a recording stores it: it is applied to a fresh movement, which replaces
+	// the one of that name, so a frame reads back exactly as the recording reader checked
+	// it. Returns the error when the list is refused (the movement is then current with the
+	// settings it had), or an unknown movement is named (the default is then current), else
+	// an empty string.
+	std::string apply_settings(const plugin_settingsst &s)
 		{
 		flip_enabled=s.flip;
 		hauled_enabled=s.hauled;
 		render.camera.set_enabled(s.camera);
 		render.camera.set_rest(s.rest_x,s.rest_y);
-		render.animation_manager.set_linear(s.linear);
 		render.animation_manager.set_step_duration_ms(s.step_ms);
-		bob=s.bob;
+		for(std::unique_ptr<movementst> &movement:movements.all)
+			{
+			if(s.movement!=movement->name())continue;
+			std::unique_ptr<movementst> fresh=make_movements().find(s.movement)->clone();
+			const std::string error=apply_movement_settings(*fresh,s.movement_settings);
+			if(error.empty())movement=std::move(fresh);
+			render.animation_manager.set_movement(*movement);
+			return error;
+			}
+		render.animation_manager.set_movement(movements.default_movement());
+		return "unknown movement "+s.movement;
 		}
 
 	// Everything back to how a freshly enabled plugin starts: the visual state, the settings
-	// at their defaults, the counters cleared and a running recording stopped. Linear easing
-	// is the one setting kept: the plugin has kept it across disable and enable since the
-	// setting was added.
+	// at their defaults, the counters cleared and a running recording stopped. The choice of
+	// movement is the one setting kept: the plugin has kept it across disable and enable
+	// since the setting was added (as the linear switch then). Its settings go back to their
+	// defaults with the rest.
 	void reset()
 		{
 		reset_visual();
 		plugin_settingsst defaults;
-		defaults.linear=render.animation_manager.is_linear();
+		defaults.movement=render.animation_manager.movement().name();
+		movements=make_movements();
+		// The manager pointed into the old set; apply_settings points it at the new one.
 		apply_settings(defaults);
 		stats.enabled=false;
 		stats.clear();
