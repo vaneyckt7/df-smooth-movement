@@ -72,13 +72,6 @@ inline const char *on_off(bool on)
 	return on?"on":"off";
 }
 
-// Whether the movement of that name is the one the plugin follows. The console calls the
-// movement the interpolation.
-inline bool has_movement(const plugin_statest &state,std::string_view name)
-{
-	return name==state.render.animation_manager.movement().name();
-}
-
 // The movement of that name, current or not, with its settings. The words `bob`, `bobmult`
 // and `hops` set the `bob` movement's settings by their names whether or not it is current.
 inline movementst &named_movement(plugin_statest &state,std::string_view name)
@@ -93,17 +86,8 @@ inline float movement_setting(const movementst &movement,std::string_view name)
 	return 0.0f;
 }
 
-// The switches `linear on|off` and `bob on|off`: on picks that movement; off goes back to
-// the default when that one is current and leaves any other alone.
-inline void switch_movement(plugin_statest &state,std::string_view name,bool on)
-{
-	if(on)state.render.animation_manager.set_movement(named_movement(state,name));
-	else if(has_movement(state,name))
-		state.render.animation_manager.set_movement(state.movements.default_movement());
-}
-
 // One line per setting, named by the setting's command word. Printed by the setting's bare
-// command and by the bare `smooth-movement`, which lists them all.
+// command and by `smooth-movement status`, which lists them all.
 template<typename Output>
 void print_setting(Output &out,const plugin_statest &state,const std::string &word)
 {
@@ -111,14 +95,10 @@ void print_setting(Output &out,const plugin_statest &state,const std::string &wo
 	if(word=="flip")out.print("sprite flipping: {}\n",on_off(state.flip_enabled));
 	if(word=="interpolation")
 		out.print("interpolation: {}\n",state.render.animation_manager.movement().name());
-	if(word=="linear")
-		out.print("linear movement: {}\n",on_off(has_movement(state,"linear")));
 	if(word=="timestep")
 		out.print("time step: {} ms\n",state.render.animation_manager.step_duration_ms());
 	if(word=="hauled")out.print("hauled item icons: {}\n",on_off(state.hauled_enabled));
-	if(word=="bob")
-		out.print("walk bob: {}, amount {:.2f}\n",
-			on_off(has_movement(state,"bob")),movement_setting(bob,"amount"));
+	if(word=="bob")out.print("walk bob: amount {:.2f}\n",movement_setting(bob,"amount"));
 	if(word=="bobmult")
 		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
 			movement_setting(bob,"horizontal"),movement_setting(bob,"diagonal"),
@@ -126,7 +106,7 @@ void print_setting(Output &out,const plugin_statest &state,const std::string &wo
 	if(word=="hops")out.print("hops per step: {}\n",int(movement_setting(bob,"hops")));
 }
 
-// Prints every setting, for the bare command.
+// Prints every setting, for `status`.
 template<typename Output>
 void print_settings(Output &out,const plugin_statest &state,const command_hostst &host)
 {
@@ -137,7 +117,7 @@ void print_settings(Output &out,const plugin_statest &state,const command_hostst
 	out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
 		on_off(state.render.camera.is_enabled()),
 		-state.render.camera.requested_offset_x(),-state.render.camera.requested_offset_y());
-	for(const char *word:{"flip","interpolation","linear","timestep","hauled","bob","bobmult","hops"})
+	for(const char *word:{"flip","interpolation","timestep","hauled","bob","bobmult","hops"})
 		print_setting(out,state,word);
 	out.print("frame stats: {}\n",on_off(state.stats.enabled));
 }
@@ -281,16 +261,8 @@ command_outcomest bob_command(
 		return command_outcomest::ok;
 		}
 	if(parameters.size()!=2)return command_outcomest::wrong_usage;
-	bool on=false;
-	if(parse_on_off(parameters,on))
-		{
-		switch_movement(state,"bob",on);
-		host.full_redraw();
-		out.print("smooth-movement: walk bob {}\n",on_off(on));
-		return command_outcomest::ok;
-		}
-	// Anything else is an amount, in tiles. It only sets the height: turning the bob off
-	// is `bob off`, so zero is rejected with the rest (by the movement).
+	// The amount, in tiles. It only sets the height: the bob is picked with
+	// `interpolation bob`, so zero is rejected with the rest (by the movement).
 	const float amount=parse_bob_value(parameters[1]);
 	if(amount<0.0f)return command_outcomest::wrong_usage;
 	const std::string error=
@@ -339,12 +311,14 @@ command_outcomest run_command(
 	plugin_statest &state,
 	const command_hostst &host)
 {
-	if(parameters.empty())
+	if(parameters.empty())return command_outcomest::wrong_usage;
+	const std::string &word=parameters[0];
+	if(word=="status")
 		{
+		if(parameters.size()!=1)return command_outcomest::wrong_usage;
 		print_settings(out,state,host);
 		return command_outcomest::ok;
 		}
-	const std::string &word=parameters[0];
 	if(word=="stats")return stats_command(out,parameters,state);
 	if(word=="record")return record_command(out,parameters,state,host);
 	if(word=="all")
@@ -352,10 +326,9 @@ command_outcomest run_command(
 		bool on=false;
 		if(!parse_on_off(parameters,on))return command_outcomest::wrong_usage;
 		state.flip_enabled=on;
-		switch_movement(state,"linear",on);
 		state.hauled_enabled=on;
 		host.full_redraw();
-		out.print("smooth-movement: flip, linear and hauled {}\n",on_off(on));
+		out.print("smooth-movement: flip and hauled {}\n",on_off(on));
 		return command_outcomest::ok;
 		}
 	if(word=="camera")return camera_command(out,parameters,state,host);
@@ -391,19 +364,6 @@ command_outcomest run_command(
 		state.render.animation_manager.set_movement(*movement);
 		host.full_redraw();
 		out.print("smooth-movement: interpolation {}\n",movement->name());
-		return command_outcomest::ok;
-		}
-	if(word=="linear")
-		{
-		if(parameters.size()==1)
-			{
-			print_setting(out,state,word);
-			return command_outcomest::ok;
-			}
-		bool on=false;
-		if(!parse_on_off(parameters,on))return command_outcomest::wrong_usage;
-		switch_movement(state,"linear",on);
-		out.print("smooth-movement: linear movement {}\n",on_off(on));
 		return command_outcomest::ok;
 		}
 	if(word=="timestep")

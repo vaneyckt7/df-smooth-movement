@@ -28,18 +28,17 @@ enable smooth-movement
 ## Useful commands
 
 ```text
-smooth-movement             # show plugin status
+smooth-movement status      # show the plugin's settings; bare `smooth-movement` prints the usage
 disable smooth-movement     # disable the plugin
-smooth-movement all on      # enable flip, linear and hauled (not the WIP free camera or stats)
-smooth-movement all off     # disable flip, linear and hauled
+smooth-movement all on      # enable flip and hauled (not the interpolation, the WIP free camera or stats)
+smooth-movement all off     # disable flip and hauled
 smooth-movement flip on     # enable sprites flip
 smooth-movement camera on   # enable the free camera
 smooth-movement interpolation bob  # how a step is spread over frames: smoothstep|linear|bob
-smooth-movement linear on   # use linear easing with adaptive <timestep>–500 ms movement tweens
+smooth-movement interpolation linear  # constant speed, consecutive steps paced to one cadence
 smooth-movement timestep 200 # a one-tile glide takes 200 ms (default 150, range 20-2000)
 smooth-movement hauled on   # show icons for carried boulders, bars, and wood
-smooth-movement bob on      # enable the walk bob
-smooth-movement bob 0.15    # bob height in tiles (default 0.10); does not turn the bob on
+smooth-movement bob 0.15    # bob height in tiles (default 0.10); does not pick the bob
 smooth-movement bobmult 1 2.4 2.7  # bob multipliers for horizontal, diagonal, vertical steps
 smooth-movement hops 1      # one hop per step instead of two
 smooth-movement stats on    # time the render hook; `smooth-movement stats` prints the numbers
@@ -54,8 +53,7 @@ where the sprite is, as an offset in tiles from the old tile. There are three: `
 default, slows at both ends of the step and stays on the line between the tiles; `linear` keeps
 one speed on the line and paces consecutive steps to one cadence; `bob` starts and lands like
 `smoothstep` and hops above the line on the way, like footfalls. `interpolation <name>` picks
-one. `linear on` and `bob on` pick theirs too; `linear off` and `bob off` go back to
-`smoothstep` when that one is current and leave any other alone. The interpolation is kept when
+one; bare `interpolation` prints the current one and the names. The interpolation is kept when
 the plugin is disabled and enabled again.
 
 A movement owns its settings, named numbers the console sets by name and a recording stores by
@@ -67,15 +65,15 @@ line with `smoothstep` instead, for that step.
 
 ### Walk bob
 
-The bob is off by default (the interpolation is `smoothstep`); `bob on` is `interpolation bob`.
+The bob is off by default (the interpolation is `smoothstep`); `interpolation bob` picks it.
 Its settings are `amount`, the height of a hop in tiles (`bob <amount>`), `horizontal`, `diagonal`
 and `vertical`, the multipliers for the step's direction (`bobmult`), and `hops` per step. A step
 with a vertical component already moves the sprite a whole tile up or down, which drowns a small
 hop, so diagonal and straight vertical steps get larger multipliers by default. The reach of the
 bob is the amount times its largest multiplier, so every combination is capped under one tile.
-Carried item icons bob with their creature; vehicles never bob. `all on` gives `linear`; `all
-off` leaves `bob` alone. Like `flip` and `hauled`, the bob's settings return to their defaults
-when the plugin is disabled; the interpolation, `bob` included, is kept.
+Carried item icons bob with their creature; vehicles never bob. `all on|off` switches `flip`
+and `hauled` and leaves the interpolation alone. Like `flip` and `hauled`, the bob's settings
+return to their defaults when the plugin is disabled; the interpolation, `bob` included, is kept.
 
 ## Compatibility
 
