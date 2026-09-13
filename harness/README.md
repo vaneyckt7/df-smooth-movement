@@ -72,14 +72,14 @@ such as the repository root (`.`) or an export of another branch, for example
   traces it prints the frames whose lines differ.
 - `test.sh <plugin dir>`: builds and runs the animation manager test
   (`test_visual_animation_manager.cpp` in the plugin directory, which steps creatures
-  through the animation manager and checks the transitions, easing, retargets and bob
+  through the animation manager and checks the transitions, easing, retargets and hop
   decisions it makes), the recording codec test, the tile repaint test
   (`test_tile_repaint.cpp`, which checks against the stub viewport which of the 25 arrays
   each repaint pass zeroes and that every entry is restored) and the sprite proxy test
   (`test_sprite_proxies.cpp`, which steps a creature through the animation manager on the
   stub viewport and checks which sprites get a proxy, what tiles each covers, that fire,
-  the clip and a missing texture block one, which proxies bob with the walk bob on and
-  the row above each then covers, and which hauled icons bob with their carrier) and the
+  the clip and a missing texture block one, which proxies hop with the walk hop on and
+  the row above each then covers, and which hauled icons hop with their carrier) and the
   free camera test
   (`test_free_camera.cpp`, which drives the camera with a stand-in manager and checks the
   render offset a landed scroll, a window jump, a followed movement, a normalization write
@@ -108,8 +108,8 @@ walking left so their sprites are mirrored. Neither has hauled item icons, linea
 followed unit, a scroll or a zoom change; a change to those paths needs its own recording.
 Both predate format version 4, so they carry no simulation tick and the replay treats every
 change of the per-tile arrays as a candidate step, as the plugin did when they were made.
-Both predate format version 5 as well, so they carry no walk bob settings and replay with
-the bob off; the bob's proxy marking and coverage are covered by the sprite proxy test.
+Both predate format version 5 as well, so they carry no walk hop settings and replay with
+the hop off; the hop's proxy marking and coverage are covered by the sprite proxy test.
 The recordings are fixtures and stay fixed: every version of the plugin replays the same
 scenes. `expected/<name>.digest` holds, for each recording, one line per frame with the
 repaint count and the digest of the visible draws the current version asks for on it, made

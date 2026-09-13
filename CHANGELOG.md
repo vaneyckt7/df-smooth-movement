@@ -14,12 +14,12 @@
 - Every request for a full redraw by the game goes through `full_redraw`, which the console commands already used. Nothing the plugin does changes.
 - The repaint passes of `tile_repaint.h` get the callable that asks the game for a tile repaint from one function, `staged_repainter`. Nothing the plugin draws changes.
 - The render hook looks the units in view up through one function, `units_in_view`, for the frame recorder and for the hauled item icons. Nothing the plugin draws or records changes.
-- A creature sprite and a hauled item's icon find their place on screen through one function, `place_sprite`, instead of each working out the glide and the bob lift. Nothing the plugin draws changes.
+- A creature sprite and a hauled item's icon find their place on screen through one function, `place_sprite`, instead of each working out the glide and the hop lift. Nothing the plugin draws changes.
 - The tile size on screen is computed by one function, `tile_size_px`, where four places in the render hook each had the formula. Nothing the plugin draws changes.
 - `harness/test.sh` builds and runs the animation manager test with the other unit tests;
   it prints a line when it passes, like them. Nothing the plugin does changes.
-- The match that makes a hauled item's icon bob with its carrier moved out of the render
-  hook into `sprite_proxies.h`, beside the rule that decides which sprites bob, and is
+- The match that makes a hauled item's icon hop with its carrier moved out of the render
+  hook into `sprite_proxies.h`, beside the rule that decides which sprites hop, and is
   covered by the sprite proxy test. Nothing the plugin draws changes.
 - The plugin's settings are one value, `plugin_settingsst` in `plugin_settings.h`, that the
   state hands out and takes back whole; a frame recording stores it with every frame and the
@@ -30,15 +30,15 @@
 - The plugin's state and its console commands moved out of `smooth-movement.cpp` into
   `plugin_state.h` and `plugin_commands.h`; the commands are now covered by a harness test.
   Nothing the plugin draws or prints changes.
-- Frame recordings carry the walk bob settings (format version 5), so a recording made
-  with the bob on replays with it. The harness reads versions 2 to 4 as well, with the bob
+- Frame recordings carry the walk hop settings (format version 5), so a recording made
+  with the hop on replays with it. The harness reads versions 2 to 4 as well, with the hop
   off, which replays them as before.
-- Added: an optional walk bob. `bob on` lifts every gliding creature sprite twice per step,
-  like two footfalls, by `bob <amount>` (default 0.10 tile) times a multiplier for the step's
-  direction (`bobmult <horizontal> <diagonal> <vertical>`, default 1, 2.4, 2.7); `hops 1`
+- Added: an optional walk hop. `hop on` lifts every gliding creature sprite twice per step,
+  like two footfalls, by `hop <amount>` (default 0.10 tile) times a multiplier for the step's
+  direction (`hopmult <horizontal> <diagonal> <vertical>`, default 1, 2.4, 2.7); `hops 1`
   gives a single bounce. Off by default, and with it off nothing the plugin draws changes.
-  Carried item icons bob with their creature, vehicles never do, and a creature whose row
-  above is off the screen or burning glides without the bob.
+  Carried item icons hop with their creature, vehicles never do, and a creature whose row
+  above is off the screen or burning glides without the hop.
 - Fixed: a repaint while the game is paused can no longer be read as a step, so sprites do
   not slide or flip with the simulation standing still. A redraw at a simulation tick the
   per-tile arrays were already drawn at (the game showing the units sharing a tile in turn,

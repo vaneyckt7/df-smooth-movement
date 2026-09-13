@@ -45,10 +45,10 @@ inline int32_t parse_step_ms(const std::string &text)
 	return ms>=20&&ms<=2000?ms:-1;
 }
 
-// A bob amount or multiplier: decimal digits with at most one point, so that a stray
+// A hop amount or multiplier: decimal digits with at most one point, so that a stray
 // character is a usage error rather than a number cut short at it. Negative when the text
 // is not one.
-inline float parse_bob_value(const std::string &text)
+inline float parse_hop_value(const std::string &text)
 {
 	if(text.empty()||text.size()>8||
 		text.find_first_not_of("0123456789.")!=std::string::npos||
@@ -82,12 +82,12 @@ void print_setting(Output &out,const plugin_statest &state,const std::string &wo
 	if(word=="timestep")
 		out.print("time step: {} ms\n",state.render.animation_manager.step_duration_ms());
 	if(word=="hauled")out.print("hauled item icons: {}\n",on_off(state.hauled_enabled));
-	if(word=="bob")
-		out.print("walk bob: {}, amount {:.2f}\n",on_off(state.bob.enabled),state.bob.amplitude);
-	if(word=="bobmult")
-		out.print("bob multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-			state.bob.horizontal_mult,state.bob.diagonal_mult,state.bob.vertical_mult);
-	if(word=="hops")out.print("hops per step: {}\n",state.bob.hops);
+	if(word=="hop")
+		out.print("walk hop: {}, amount {:.2f}\n",on_off(state.hop.enabled),state.hop.amplitude);
+	if(word=="hopmult")
+		out.print("hop multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
+			state.hop.horizontal_mult,state.hop.diagonal_mult,state.hop.vertical_mult);
+	if(word=="hops")out.print("hops per step: {}\n",state.hop.hops);
 }
 
 // Prints every setting, for the bare command.
@@ -101,7 +101,7 @@ void print_settings(Output &out,const plugin_statest &state,const command_hostst
 	out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
 		on_off(state.render.camera.is_enabled()),
 		-state.render.camera.requested_offset_x(),-state.render.camera.requested_offset_y());
-	for(const char *word:{"flip","linear","timestep","hauled","bob","bobmult","hops"})
+	for(const char *word:{"flip","linear","timestep","hauled","hop","hopmult","hops"})
 		print_setting(out,state,word);
 	out.print("frame stats: {}\n",on_off(state.stats.enabled));
 }
@@ -234,75 +234,75 @@ command_outcomest camera_command(
 }
 
 template<typename Output>
-command_outcomest bob_command(
+command_outcomest hop_command(
 	Output &out,const std::vector<std::string> &parameters,plugin_statest &state,
 	const command_hostst &host)
 {
 	if(parameters.size()==1)
 		{
-		print_setting(out,state,"bob");
+		print_setting(out,state,"hop");
 		return command_outcomest::ok;
 		}
 	if(parameters.size()!=2)return command_outcomest::wrong_usage;
 	bool on=false;
 	if(parse_on_off(parameters,on))
 		{
-		state.bob.enabled=on;
+		state.hop.enabled=on;
 		host.full_redraw();
-		out.print("smooth-movement: walk bob {}\n",on_off(on));
+		out.print("smooth-movement: walk hop {}\n",on_off(on));
 		return command_outcomest::ok;
 		}
-	// Anything else is an amount, in tiles. It only sets the height: turning the bob off
-	// is `bob off`, so zero is rejected with the rest.
-	const float amount=parse_bob_value(parameters[1]);
+	// Anything else is an amount, in tiles. It only sets the height: turning the hop off
+	// is `hop off`, so zero is rejected with the rest.
+	const float amount=parse_hop_value(parameters[1]);
 	if(amount<0.0f)return command_outcomest::wrong_usage;
-	if(amount==0.0f||amount>max_walk_bob_lift)
+	if(amount==0.0f||amount>max_walk_hop_lift)
 		{
-		out.printerr("bob amount must be within 0..{:.2f} tile\n",max_walk_bob_lift);
+		out.printerr("hop amount must be within 0..{:.2f} tile\n",max_walk_hop_lift);
 		return command_outcomest::failed;
 		}
-	if(!walk_bob_lift_fits(amount,state.bob.horizontal_mult,state.bob.diagonal_mult,
-			state.bob.vertical_mult))
+	if(!walk_hop_lift_fits(amount,state.hop.horizontal_mult,state.hop.diagonal_mult,
+			state.hop.vertical_mult))
 		{
-		out.printerr("bob {:.2f} times the current multipliers lifts more than {:.2f} "
-			"tile; lower the multipliers first\n",amount,max_walk_bob_lift);
+		out.printerr("hop {:.2f} times the current multipliers lifts more than {:.2f} "
+			"tile; lower the multipliers first\n",amount,max_walk_hop_lift);
 		return command_outcomest::failed;
 		}
-	state.bob.amplitude=amount;
+	state.hop.amplitude=amount;
 	host.full_redraw();
-	out.print("smooth-movement: bob amount {:.2f}\n",state.bob.amplitude);
+	out.print("smooth-movement: hop amount {:.2f}\n",state.hop.amplitude);
 	return command_outcomest::ok;
 }
 
 template<typename Output>
-command_outcomest bobmult_command(
+command_outcomest hopmult_command(
 	Output &out,const std::vector<std::string> &parameters,plugin_statest &state)
 {
 	if(parameters.size()==1)
 		{
-		print_setting(out,state,"bobmult");
+		print_setting(out,state,"hopmult");
 		return command_outcomest::ok;
 		}
 	if(parameters.size()!=4)return command_outcomest::wrong_usage;
-	const float horizontal=parse_bob_value(parameters[1]);
-	const float diagonal=parse_bob_value(parameters[2]);
-	const float vertical=parse_bob_value(parameters[3]);
+	const float horizontal=parse_hop_value(parameters[1]);
+	const float diagonal=parse_hop_value(parameters[2]);
+	const float vertical=parse_hop_value(parameters[3]);
 	if(horizontal<0.0f||diagonal<0.0f||vertical<0.0f)return command_outcomest::wrong_usage;
 	if(horizontal>5.0f||diagonal>5.0f||vertical>5.0f)
 		{
-		out.printerr("bob multipliers must be within 0..5\n");
+		out.printerr("hop multipliers must be within 0..5\n");
 		return command_outcomest::failed;
 		}
-	if(!walk_bob_lift_fits(state.bob.amplitude,horizontal,diagonal,vertical))
+	if(!walk_hop_lift_fits(state.hop.amplitude,horizontal,diagonal,vertical))
 		{
-		out.printerr("bob {:.2f} times that multiplier lifts more than {:.2f} tile; "
-			"lower one of them\n",state.bob.amplitude,max_walk_bob_lift);
+		out.printerr("hop {:.2f} times that multiplier lifts more than {:.2f} tile; "
+			"lower one of them\n",state.hop.amplitude,max_walk_hop_lift);
 		return command_outcomest::failed;
 		}
-	state.bob.horizontal_mult=horizontal;
-	state.bob.diagonal_mult=diagonal;
-	state.bob.vertical_mult=vertical;
-	out.print("smooth-movement: bob multipliers horizontal {:.2f}, diagonal {:.2f}, "
+	state.hop.horizontal_mult=horizontal;
+	state.hop.diagonal_mult=diagonal;
+	state.hop.vertical_mult=vertical;
+	out.print("smooth-movement: hop multipliers horizontal {:.2f}, diagonal {:.2f}, "
 		"vertical {:.2f}\n",horizontal,diagonal,vertical);
 	return command_outcomest::ok;
 }
@@ -397,8 +397,8 @@ command_outcomest run_command(
 		out.print("smooth-movement: hauled item icons {}\n",on_off(on));
 		return command_outcomest::ok;
 		}
-	if(word=="bob")return bob_command(out,parameters,state,host);
-	if(word=="bobmult")return bobmult_command(out,parameters,state);
+	if(word=="hop")return hop_command(out,parameters,state,host);
+	if(word=="hopmult")return hopmult_command(out,parameters,state);
 	if(word=="hops")
 		{
 		if(parameters.size()==1)
@@ -408,8 +408,8 @@ command_outcomest run_command(
 			}
 		if(parameters.size()==2&&(parameters[1]=="1"||parameters[1]=="2"))
 			{
-			state.bob.hops=parameters[1]=="1"?1:2;
-			out.print("smooth-movement: hops per step {}\n",state.bob.hops);
+			state.hop.hops=parameters[1]=="1"?1:2;
+			out.print("smooth-movement: hops per step {}\n",state.hop.hops);
 			return command_outcomest::ok;
 			}
 		return command_outcomest::wrong_usage;
