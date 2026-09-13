@@ -244,6 +244,25 @@ int main(int argc,char **argv)
 		}
 	#endif
 	{
+	// A replay decodes every frame into the same header. Settings from one frame must not
+	// remain when the next frame names a movement with none.
+	frame_record::frame_headerst hop=f;
+	hop.settings.movement="hop";
+	frame_record::frame_headerst linear=f;
+	linear.settings.movement="linear";
+	linear.settings.movement_settings.clear();
+	frame_record::writerst w;frame_record::write_file_header(w);
+	frame_record::write_frame_header(w,hop);
+	frame_record::write_frame_header(w,linear);
+	frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
+	frame_record::frame_headerst out;
+	if(!frame_record::read_file_header(r)||!frame_record::read_frame_header(r,out)||
+		out.settings.movement_settings!=hop.settings.movement_settings||
+		!frame_record::read_frame_header(r,out)||out.settings.movement!="linear"||
+		!out.settings.movement_settings.empty()||!r.at_end())
+		{puts("reused frame header retained movement settings");++failures;}
+	}
+	{
 	// The current version stores the movement by name with its settings: every movement
 	// round trips with its own defaults, a name the table lacks is rejected and so is a
 	// name cut short by the end of the file, or a setting's name cut short.

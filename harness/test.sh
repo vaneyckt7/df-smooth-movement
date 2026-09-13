@@ -1,10 +1,13 @@
 #!/bin/sh
 # Builds and runs the unit tests (the animation manager, recording codec, tile repaint,
 # sprite proxy, free camera, view context and console command tests) against the stub
-# headers in stubs/, then
+# headers in stubs/, then replays the recording the codec test writes, which is three
+# frames in the current format naming a different movement each, so that the replay's
+# two-pass decode of a frame header is exercised without a fixture, then
 # replays every recording in recordings/ and requires that every frame's draws digest to
 # what expected/<name>.digest holds, and that recinfo.py reads the same number of frames.
-# Exits non-zero when any fails. The game's own repaint count from the recording's
+# Exits non-zero when any fails, and says so when recordings/ is empty and that last part
+# therefore checked nothing. The game's own repaint count from the recording's
 # self-check is printed for information: it matches only for the plugin version that made
 # the recording.
 # Usage: harness/test.sh <plugin dir>
@@ -37,9 +40,13 @@ run_test free-camera
 run_test view-context
 run_test plugin-commands
 "$here/build.sh" "$src" test
+# Exercise the replay's two-pass decoder with the generated current-format recording.
+"$here/out/bench-test" replay "$here/out/test-current.rec" -
 status=0
+replayed=0
 for rec in "$here"/recordings/*.rec; do
 	[ -e "$rec" ] || continue
+	replayed=$((replayed+1))
 	name=$(basename "$rec" .rec)
 	trace="$here/out/test-$name.trace"
 	rc=0; "$here/out/bench-test" replay "$rec" "$trace" >"$here/out/test-$name.txt" || rc=$?
@@ -49,9 +56,9 @@ for rec in "$here"/recordings/*.rec; do
 	"$here/digest.py" "$trace" >"$here/out/test-$name.digest"
 	# recinfo.py walks the file on its own; it must agree with the replay on the frame count.
 	frames=$("$here/recinfo.py" "$rec" 0 -1 | sed -n 's/^frames //p')
-	replayed=$(wc -l <"$here/out/test-$name.digest" | tr -d ' ')
-	if [ "$frames" != "$replayed" ]; then
-		echo "recinfo.py of $name: $frames frames, the replay $replayed"; exit 1
+	digested=$(wc -l <"$here/out/test-$name.digest" | tr -d ' ')
+	if [ "$frames" != "$digested" ]; then
+		echo "recinfo.py of $name: $frames frames, the replay $digested"; exit 1
 	fi
 	if cmp -s "$here/out/test-$name.digest" "$here/expected/$name.digest"; then
 		game=$(sed -n 's/^game: *//p' "$here/out/test-$name.txt")
@@ -64,4 +71,13 @@ for rec in "$here"/recordings/*.rec; do
 		status=1
 	fi
 done
+if [ "$replayed" -eq 0 ]; then
+	# The loop above is the only check that a change leaves the drawing alone on a real
+	# scene. With no recordings it runs zero times, which used to leave the run looking
+	# like a pass, so say plainly that nothing checked the digests.
+	echo "NOTE: recordings/ holds no recordings, so nothing replayed a recorded scene or"
+	echo "      compared it with expected/. The replay coverage in this run was the three"
+	echo "      generated frames above. Record a scene in the game to restore it; see the"
+	echo "      \"Recordings in the repository\" section of harness/README.md."
+fi
 exit $status

@@ -301,6 +301,7 @@ inline bool read_frame_header(readerst &r,frame_headerst &f)
 {
 	if(r.u8()!='F'){r.fail("expected frame");return false;}
 	plugin_settingsst &s=f.settings;
+	s.movement_settings.clear();
 	s.flip=r.u8()!=0;s.hauled=r.u8()!=0;s.camera=r.u8()!=0;
 	auto read_name=[&](std::string &name,const char *what)
 		{

@@ -88,11 +88,16 @@ such as the repository root (`.`) or an export of another branch, for example
   that a map scroll only pans) and the console command test (`test_plugin_commands.cpp`,
   which runs every `smooth-movement` command word with valid and invalid arguments against
   a plugin state and checks the outcome, what each sets and prints, and when it asks the
-  game for a full redraw), then replays every recording
+  game for a full redraw), then replays the three-frame recording the codec test writes.
+  That recording is in the current format and names a different movement on each frame,
+  which is what a replay's two passes over a frame header need to be wrong about for the
+  decode to carry one frame's movement settings into the next, so it holds whether or not
+  there is a fixture. It then replays every recording
   in `recordings/` and fails when any frame's digest differs from `expected/<name>.digest`
   or `recinfo.py` reads a different number of frames than the replay.
   It prints the replay's repaint total alongside the game's from the self-check, which
-  match only for the plugin version that made the recording.
+  match only for the plugin version that made the recording. With `recordings/` empty that
+  last part checks nothing, and the run says so rather than passing quietly.
 - `compile.sh <plugin dir>`: builds the plugin in DFHack's docker build image against the real
   headers. Needs `DFHACK_SRC` pointing at a DFHack checkout with `build/linux` configured,
   and touches nothing outside that build directory.
