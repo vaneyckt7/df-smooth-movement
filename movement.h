@@ -218,17 +218,108 @@ class linear_movementst:public movementst
 			}
 };
 
-// The walk hop: the soft start and landing of the default, and a hop above the path per
-// step, or two, like footfalls. The hop follows the distance travelled rather than the time,
-// so its peaks sit between the tiles and the sprite is on the path exactly when it is on a
-// tile: |sin(pi*hops*travelled)| rises and falls once per hop and is zero at both ends. Its
-// height is the amount times a multiplier for the direction of the step: a step with a
+// The walk hop: the smoothstep pace, and a path that hops above the straight line once per
+// step, or twice, like footfalls. The hop follows the fraction travelled rather than the
+// time, so its peaks sit between the tiles and the sprite is on the line exactly when it is
+// on a tile: |sin(pi*hops*travelled)| rises and falls once per hop and is zero at both ends.
+// Its height is the amount times a multiplier for the direction of the step: a step with a
 // vertical part glides the sprite a whole tile up or down, which drowns a small hop, so
 // diagonal steps get more; on a straight up or down step the hop is parallel to the travel
 // and shows only as a stall, so it needs more still.
 //
 // Settings: `amount`, the height of a hop in tiles; `horizontal`, `diagonal` and `vertical`,
 // the multipliers; `hops`, 1 or 2 per step.
+class hop_movementst:public movementst
+{
+	public:
+		const char *name() const override
+			{
+			return "hop";
+			}
+
+		float travelled_pct(float elapsed_pct) const override
+			{
+			return smoothstep_pct(elapsed_pct);
+			}
+
+		sprite_offsetst path(float travelled_pct,tile_stepst step) const override
+			{
+			const sprite_offsetst line=straight_path(travelled_pct,step);
+			const float hop_tiles=std::fabs(std::sin(travelled_pct*3.14159265f*float(hops)))*
+				amount_tiles*multiplier(step);
+			return {line.x_tiles,line.y_tiles-hop_tiles};
+			}
+
+		movement_overshootst overshoot() const override
+			{
+			return {amount_tiles*std::max({horizontal,diagonal,vertical}),0.0f};
+			}
+
+		std::vector<movement_settingst> settings() const override
+			{
+			return {
+				{"amount",amount_tiles},{"horizontal",horizontal},{"diagonal",diagonal},
+				{"vertical",vertical},{"hops",float(hops)}};
+			}
+
+		std::string set(std::string_view name,float value) override
+			{
+			// Written so that NaN fails too.
+			if(name=="amount")
+				{
+				if(!(value>0.0f&&value<=1.0f))return "hop amount must be within 0..1 tile";
+				amount_tiles=value;
+				return {};
+				}
+			if(name=="horizontal"||name=="diagonal"||name=="vertical")
+				{
+				if(!(value>=0.0f&&value<=5.0f))return "hop multipliers must be within 0..5";
+				(name=="horizontal"?horizontal:name=="diagonal"?diagonal:vertical)=value;
+				return {};
+				}
+			if(name=="hops")
+				{
+				if(value!=1.0f&&value!=2.0f)return "hops per step must be 1 or 2";
+				hops=int(value);
+				return {};
+				}
+			return movementst::set(name,value);
+			}
+
+		std::unique_ptr<movementst> clone() const override
+			{
+			return std::make_unique<hop_movementst>(*this);
+			}
+
+	private:
+		float amount_tiles=0.10f;
+		float horizontal=1.0f;
+		float diagonal=2.4f;
+		float vertical=2.7f;
+		int hops=2;
+
+		// The multiplier for a step's direction. A retargeted step starts from a fractional
+		// source, so a delta within (-0.5, 0.5] counts as no move on that axis: the tile the
+		// source rounds to (halves up, as the plugin has always rounded it) is the target.
+		float multiplier(tile_stepst step) const
+			{
+			if(still(step.y_tiles))return horizontal;
+			if(still(step.x_tiles))return vertical;
+			return diagonal;
+			}
+
+		static bool still(float delta_tiles)
+			{
+			return delta_tiles>-0.5f&&delta_tiles<=0.5f;
+			}
+
+		static std::string format(const char *pattern,float value)
+			{
+			char text[96];
+			std::snprintf(text,sizeof text,pattern,double(value));
+			return text;
+			}
+};
 
 // Every movement, one instance each with its settings, the default first.
 struct movement_sett
@@ -265,6 +356,7 @@ inline movement_sett make_movements()
 	movement_sett set;
 	set.all.push_back(std::make_unique<smoothstep_movementst>());
 	set.all.push_back(std::make_unique<linear_movementst>());
+	set.all.push_back(std::make_unique<hop_movementst>());
 	return set;
 }
 
@@ -273,4 +365,31 @@ inline const movementst &default_movement()
 {
 	static const smoothstep_movementst movement;
 	return movement;
+}
+
+// Applies settings to a movement all at once: every value is set on a copy first, so a
+// refused list leaves the movement as it was. Returns the error, or an empty string.
+inline std::string apply_movement_settings(
+	movementst &movement,const std::vector<movement_settingst> &settings)
+{
+	std::unique_ptr<movementst> changed=movement.clone();
+	for(const movement_settingst &setting:settings)
+		{
+		const std::string error=changed->set(setting.name,setting.value);
+		if(!error.empty())return error;
+		}
+	for(const movement_settingst &setting:settings)movement.set(setting.name,setting.value);
+	return {};
+}
+
+// Whether a list of settings would be accepted by the movement of that name, fresh from its
+// defaults: what a recording's frame header is checked against. Returns the error, or an
+// empty string; an unknown movement is an error too.
+inline std::string check_movement_settings(
+	std::string_view name,const std::vector<movement_settingst> &settings)
+{
+	const movement_sett set=make_movements();
+	movementst *movement=set.find(name);
+	if(movement==nullptr)return "unknown movement "+std::string(name);
+	return apply_movement_settings(*movement,settings);
 }
