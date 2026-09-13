@@ -314,32 +314,27 @@ void render_copy_maybe_mirrored(
 }
 
 // Where a sprite gliding from its source tile to its target tile sits on screen this frame:
-// the top left corner in pixels and the tile size. A bobbing sprite is lifted towards the
-// row above its path; the lift is zero at both ends of the step, so it lands on the grid.
+// the top left corner in pixels and the tile size. The movement gives the sprite's offset
+// from the source tile (movement.h); a proxy that fell back takes the default movement's.
 struct sprite_placementst
 {
-	float x;
-	float y;
-	float tile_size;
+	float x_px;
+	float y_px;
+	float tile_size_px;
 };
 
 template<typename Proxy>
 sprite_placementst place_sprite(const df::renderer_2d_base *renderer,const Proxy &proxy)
 {
 	const int32_t zoom=renderer->viewport_zoom_factor;
-	const float target_x=float(tile_pixel(proxy.target_x,renderer->origin_x,zoom));
-	const float target_y=float(tile_pixel(proxy.target_y,renderer->origin_y,zoom));
-	const float tile_size=float(tile_size_px(zoom));
-	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
-	const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
-	const float bob_offset=proxy.bob?
-		-state.bob.lift(proxy.source_x,proxy.source_y,proxy.target_x,proxy.target_y,
-			proxy.progress)*tile_size:
-		0.0f;
-	return {
-		source_x+(target_x-source_x)*proxy.progress,
-		source_y+(target_y-source_y)*proxy.progress+bob_offset,
-		tile_size};
+	const float target_x_px=float(tile_pixel(proxy.target_x,renderer->origin_x,zoom));
+	const float target_y_px=float(tile_pixel(proxy.target_y,renderer->origin_y,zoom));
+	const float tile_px=float(tile_size_px(zoom));
+	const float source_x_px=target_x_px+(proxy.source_x-proxy.target_x)*tile_px;
+	const float source_y_px=target_y_px+(proxy.source_y-proxy.target_y)*tile_px;
+	const float offset_x_tiles=proxy.fell_back?proxy.fallback_x_tiles:proxy.offset_x_tiles;
+	const float offset_y_tiles=proxy.fell_back?proxy.fallback_y_tiles:proxy.offset_y_tiles;
+	return {source_x_px+offset_x_tiles*tile_px,source_y_px+offset_y_tiles*tile_px,tile_px};
 }
 
 void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
@@ -347,10 +342,10 @@ void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
 	const sprite_placementst placement=place_sprite(renderer,proxy);
 	const SDL_FRect destination=
 		{
-		placement.x+float(proxy.mirror_shift)*placement.tile_size,
-		placement.y,
-		placement.tile_size,
-		placement.tile_size
+		placement.x_px+float(proxy.mirror_shift)*placement.tile_size_px,
+		placement.y_px,
+		placement.tile_size_px,
+		placement.tile_size_px
 		};
 	render_copy_maybe_mirrored(
 		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
@@ -363,9 +358,9 @@ void draw_carried_item_proxy(
 	df::renderer_2d_base *renderer,
 	const carried_item_proxyst &proxy)
 {
-	// The icon rides the creature's walk bob so it stays on the sprite that carries it.
+	// The icon rides the creature's movement so it stays on the sprite that carries it.
 	const sprite_placementst placement=place_sprite(renderer,proxy);
-	const auto icon=carried_item_icon_rect(placement.x,placement.y,placement.tile_size);
+	const auto icon=carried_item_icon_rect(placement.x_px,placement.y_px,placement.tile_size_px);
 	const SDL_FRect destination={icon.x,icon.y,icon.width,icon.height};
 	state.sdl.render_copy_f(
 		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
@@ -514,6 +509,9 @@ std::vector<carried_item_proxyst> collect_carried_item_proxies(
 	df::graphic_viewportst *vp)
 {
 	std::vector<carried_item_proxyst> proxies;
+	// An icon keeps to the path on its own; its carrier takes it along the movement (see
+	// mark_carried_item_movements).
+	const bool overshoots=state.render.animation_manager.movement().overshoot().any();
 	for(const df::unit *unit:units_in_view(vp))
 		{
 		const int32_t x=unit->pos.x-*window_x;
@@ -529,7 +527,12 @@ std::vector<carried_item_proxyst> collect_carried_item_proxies(
 		const float source_x=movement.active?movement.source_x:float(x);
 		const float source_y=movement.active?movement.source_y:float(y);
 		carried_item_proxyst proxy={
-			source_x,source_y,x,y,movement.active?movement.progress:1.0f,texture,false,{}};
+			source_x,source_y,x,y,
+			movement.active?movement.offset_x_tiles:0.0f,
+			movement.active?movement.offset_y_tiles:0.0f,
+			movement.active?movement.fallback_x_tiles:0.0f,
+			movement.active?movement.fallback_y_tiles:0.0f,
+			texture,overshoots,{}};
 		for(int32_t coverage_x=int32_t(std::floor(std::min(source_x,float(x))));
 			coverage_x<=int32_t(std::ceil(std::max(source_x,float(x))));++coverage_x)
 			for(int32_t coverage_y=int32_t(std::floor(std::min(source_y,float(y))));
@@ -567,7 +570,7 @@ std::vector<viewport_renderst> collect_viewport_renders(
 			{
 			vp,
 			collect_proxies(
-				vp,state.render.animation_manager,state.flip_enabled,state.bob.enabled,
+				vp,state.render.animation_manager,state.flip_enabled,
 				[renderer](int32_t texpos){return cached_texture(renderer,texpos);}),
 			{}
 			};
@@ -731,10 +734,10 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	std::vector<viewport_renderst> viewport_renders=
 		collect_viewport_renders(renderer,viewports);
 	tile_coveragest coverage=collect_viewport_coverage(viewport_renders);
-	// A hauled icon bobs with the creature under it, found among the main viewport's
-	// proxies; the icons are drawn over that viewport, the last one collected.
+	// A hauled icon follows the movement with the creature under it, found among the main
+	// viewport's proxies; the icons are drawn over that viewport, the last one collected.
 	if(!viewport_renders.empty())
-		mark_carried_item_bobs(carried_items,viewport_renders.back().proxies);
+		mark_carried_item_movements(carried_items,viewport_renders.back().proxies);
 	for(const carried_item_proxyst &proxy:carried_items)
 		coverage.insert(proxy.coverage.begin(),proxy.coverage.end());
 
@@ -917,7 +920,8 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 		"smooth-movement",
 		"Smooth movement status; free camera: camera on|off|reset|<fx> <fy>; "
 		"flip, linear and hauled together: all on|off; "
-		"sprite flipping: flip on|off; linear movement: linear on|off; "
+		"sprite flipping: flip on|off; interpolation: interpolation <name> "
+		"(smoothstep|linear|bob); linear movement: linear on|off; "
 		"one-tile step time: timestep <ms> (20-2000); "
 		"hauled item icons: hauled on|off; "
 		"walk bob: bob on|off|<amount>; bob multipliers: bobmult <horizontal> <diagonal> "
