@@ -172,11 +172,9 @@ struct plugin_statest
 			const std::string error=apply_movement_settings(*fresh,s.movement_settings);
 			if(error.empty())movement=std::move(fresh);
 			render.animation_manager.set_movement(*movement);
-			if(s.linear)render.animation_manager.set_linear(true);
 			return error;
 			}
 		render.animation_manager.set_movement(movements.default_movement());
-		if(s.linear)render.animation_manager.set_linear(true);
 		return "unknown movement "+s.movement;
 		}
 

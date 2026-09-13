@@ -420,7 +420,7 @@ void test_overshoot()
 	{
 	scenest scene;
 	std::unique_ptr<movementst> hop=scene.movements.find("hop")->clone();
-	if(apply_movement_settings(*hop,{{"hops",1.0f},{"amount",0.2f}})!="")
+	if(apply_movement_settings(*hop,{{"hops-per-step",1.0f},{"hop-height",0.2f}})!="")
 		printf("hop lift: settings refused\n"),++failures;
 	scene.manager.set_movement(*hop);
 	scene.manager.begin_frame(1016+visual_animation_managerst::default_step_duration_ms/2);
