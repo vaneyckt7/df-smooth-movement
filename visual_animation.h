@@ -636,7 +636,8 @@ class visual_animation_managerst
 	// sprite on the target itself and the plugin has nothing left to draw for the step.
 	bool movement_finished(const movement_recordst &movement) const
 		{
-		return frame_time_ms-movement.start_time_ms>=movement.duration_ms||
+		return std::string(current_movement->name())=="none"||
+			frame_time_ms-movement.start_time_ms>=movement.duration_ms||
 			movement_travelled_pct(movement)>=1.0f;
 		}
 

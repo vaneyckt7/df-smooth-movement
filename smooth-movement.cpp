@@ -916,7 +916,7 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 {
 	commands.emplace_back(
 		"smooth-movement",
-		"Smooth movement status; free camera: camera on|off|reset|<fx> <fy>; "
+		"Smooth movement: status; free camera: camera on|off|reset|<fx> <fy>; "
 		"flip and hauled together: all on|off; "
 		"sprite flipping: flip on|off; movement: movement <name> [setting [value]]; "
 		"one-tile step time: timestep <ms> (20-2000); "

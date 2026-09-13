@@ -73,7 +73,7 @@ inline const char *on_off(bool on)
 }
 
 // One line per setting, named by the setting's command word. Printed by the setting's bare
-// command and by the bare `smooth-movement`, which lists them all.
+// command and by `smooth-movement status`, which lists them all.
 template<typename Output>
 void print_setting(Output &out,const plugin_statest &state,const std::string &word)
 {
@@ -85,7 +85,7 @@ void print_setting(Output &out,const plugin_statest &state,const std::string &wo
 	if(word=="hauled")out.print("hauled item icons: {}\n",on_off(state.hauled_enabled));
 }
 
-// Prints every setting, for the bare command.
+// Prints every setting, for `status`.
 template<typename Output>
 void print_settings(Output &out,const plugin_statest &state,const command_hostst &host)
 {
@@ -237,12 +237,14 @@ command_outcomest run_command(
 	plugin_statest &state,
 	const command_hostst &host)
 {
-	if(parameters.empty())
+	if(parameters.empty())return command_outcomest::wrong_usage;
+	const std::string &word=parameters[0];
+	if(word=="status")
 		{
+		if(parameters.size()!=1)return command_outcomest::wrong_usage;
 		print_settings(out,state,host);
 		return command_outcomest::ok;
 		}
-	const std::string &word=parameters[0];
 	if(word=="stats")return stats_command(out,parameters,state);
 	if(word=="record")return record_command(out,parameters,state,host);
 	if(word=="all")

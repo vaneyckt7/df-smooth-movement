@@ -796,9 +796,9 @@ int main()
 	assert(ambiguous.movement().overshoot().any());
 	assert(!default_movement().overshoot().any());
 	assert(movements.find("bounce")==nullptr);
-	assert(movements.names()=="smoothstep, linear, hop");
+	assert(movements.names()=="none, smoothstep, linear, hop");
 	assert(&movements.default_movement()==movements.all.front().get());
-	assert(std::string(movements.default_movement().name())=="smoothstep");
+	assert(std::string(movements.default_movement().name())=="none");
 	ambiguous.set_movement(linear);
 	set_layer(input,viewport_visual_layer::center,current.data(),previous.data());
 	run_frame(ambiguous,input,2990);
