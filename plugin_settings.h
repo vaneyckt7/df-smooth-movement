@@ -7,9 +7,12 @@
 
 #pragma once
 
+#include "movement.h"
 #include "visual_animation.h"
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 struct plugin_settingsst
 {
@@ -19,7 +22,12 @@ struct plugin_settingsst
 	// The free camera's rest offset in tiles, positive when the view sits west/north of the
 	// window; only read while the camera is on.
 	double rest_x=0.0,rest_y=0.0;
-	bool linear=false; // linear easing instead of the default curve
+	// How a step is spread over frames: the movement, by name, with its settings (see
+	// movement.h).
+	std::string movement=default_movement().name();
+	std::vector<movement_settingst> movement_settings;
 	uint32_t step_ms=visual_animation_managerst::default_step_duration_ms; // one-tile step
+	// Compat: the old plugin_commands.h reads and writes these. Removed when it is updated.
+	bool linear=false;
 	walk_hop_settingst hop;
 };

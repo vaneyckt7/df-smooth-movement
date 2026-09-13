@@ -4,7 +4,11 @@
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
+#include <memory>
 #include <random>
+#include <string>
+#include <tuple>
+#include <vector>
 
 int main(int argc,char **argv)
 {
@@ -19,11 +23,13 @@ int main(int argc,char **argv)
 			frame_record::frame_headerst f;
 			f.settings.step_ms=250;
 			f.simulation_tick=i==1?-1:int64_t(1234567)+i;
-			f.settings.hop.enabled=i==2;
-			f.settings.hop.amplitude=0.15f;
-			f.settings.hop.horizontal_mult=1.0f;f.settings.hop.diagonal_mult=2.0f;
-			f.settings.hop.vertical_mult=3.0f;
-			f.settings.hop.hops=1;
+			if(i==1)f.settings.movement="linear";
+			if(i==2)
+				{
+				f.settings.movement="hop";
+				f.settings.movement_settings={{"amount",0.15f},{"horizontal",1.0f},
+					{"diagonal",2.0f},{"vertical",3.0f},{"hops",1.0f}};
+				}
 			f.tick_ms=uint32_t(1000+16*i);
 			frame_record::write_frame_header(w,f);
 			w.u8(0);
@@ -81,15 +87,15 @@ int main(int argc,char **argv)
 	for(size_t i=50;i<60;++i)if(out[i]!=-1){puts("overlong run wrote past the array");++failures;break;}
 	}
 	// Headers and unit lists round-trip field for field.
+	const std::vector<movement_settingst> hop_settings={{"amount",0.25f},{"horizontal",1.5f},
+		{"diagonal",2.0f},{"vertical",3.0f},{"hops",1.0f}};
 	{
 	frame_record::writerst w;
 	frame_record::write_file_header(w);
 	frame_record::frame_headerst f;
 	f.settings.flip=true;f.settings.camera=true;f.settings.step_ms=300;
 	f.simulation_tick=int64_t(3)<<33;f.tick_ms=123456;
-	f.settings.hop.enabled=true;f.settings.hop.amplitude=0.25f;f.settings.hop.hops=1;
-	f.settings.hop.horizontal_mult=1.5f;f.settings.hop.diagonal_mult=2.0f;
-	f.settings.hop.vertical_mult=3.0f;
+	f.settings.movement="hop";f.settings.movement_settings=hop_settings;
 	f.window_x=-3;f.window_z=77;f.paused=true;f.follow_unit=9;f.mouse_x=-1;f.mouse_mbut=true;
 	f.zoom=96;f.origin_x=5;f.dimx=200;f.settings.rest_x=-0.25;f.settings.rest_y=1.5;
 	frame_record::write_frame_header(w,f);
@@ -101,79 +107,185 @@ int main(int argc,char **argv)
 	frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
 	frame_record::frame_headerst f2;frame_record::viewport_headerst v2;std::vector<frame_record::unit_recordst> u2;frame_record::frame_resultst res;
 	const bool ok=frame_record::read_file_header(r)&&frame_record::read_frame_header(r,f2)&&frame_record::read_viewport_header(r,v2)&&frame_record::read_units(r,u2)&&frame_record::read_frame_result(r,res)&&r.at_end();
-	if(!ok||r.version!=frame_record::version||f2.settings.flip!=f.settings.flip||f2.settings.hauled!=f.settings.hauled||f2.settings.camera!=f.settings.camera||f2.settings.linear!=f.settings.linear||f2.settings.step_ms!=300||f2.simulation_tick!=f.simulation_tick||f2.tick_ms!=f.tick_ms||f2.window_x!=f.window_x||f2.window_z!=f.window_z||f2.paused!=f.paused||f2.follow_unit!=f.follow_unit||f2.mouse_x!=f.mouse_x||f2.mouse_mbut!=f.mouse_mbut||f2.zoom!=f.zoom||f2.origin_x!=f.origin_x||f2.dimx!=f.dimx||f2.settings.rest_x!=f.settings.rest_x||f2.settings.rest_y!=f.settings.rest_y
+	if(!ok||r.version!=frame_record::version||f2.settings.flip!=f.settings.flip||f2.settings.hauled!=f.settings.hauled||f2.settings.camera!=f.settings.camera||f2.settings.movement!=f.settings.movement||f2.settings.step_ms!=300||f2.simulation_tick!=f.simulation_tick||f2.tick_ms!=f.tick_ms||f2.window_x!=f.window_x||f2.window_z!=f.window_z||f2.paused!=f.paused||f2.follow_unit!=f.follow_unit||f2.mouse_x!=f.mouse_x||f2.mouse_mbut!=f.mouse_mbut||f2.zoom!=f.zoom||f2.origin_x!=f.origin_x||f2.dimx!=f.dimx||f2.settings.rest_x!=f.settings.rest_x||f2.settings.rest_y!=f.settings.rest_y
 		||v2.slot!=v.slot||v2.dim_x!=v.dim_x||v2.dim_y!=v.dim_y||v2.clipx0!=v.clipx0||v2.clipx1!=v.clipx1||v2.clipy0!=v.clipy0||v2.clipy1!=v.clipy1||v2.screen_x!=v.screen_x||v2.screen_y!=v.screen_y
 		||u2.size()!=2||u2[0].x!=-1||u2[0].y!=2||u2[0].z!=3||u2[0].texpos!=6000||!u2[0].cached||u2[1].x!=4||u2[1].texpos!=0||u2[1].cached||res.repaints!=42||!res.painted||res.changed_words!=7)
 		{puts("header round trip failed");++failures;}
-	if(!f2.settings.hop.enabled||f2.settings.hop.amplitude!=0.25f||
-		f2.settings.hop.horizontal_mult!=1.5f||f2.settings.hop.diagonal_mult!=2.0f||
-		f2.settings.hop.vertical_mult!=3.0f||f2.settings.hop.hops!=1)
-		{puts("hop settings round trip failed");++failures;}
+	if(f2.settings.movement_settings!=hop_settings)
+		{puts("movement settings round trip failed");++failures;}
 	}
 	// A version 2 file has no step field in its frame header and reads back at the 150 ms
 	// every such recording was made with, a version 3 file no simulation tick and reads
-	// back as unknown, a version 4 file no walk hop settings and reads back with the hop
-	// off; a version past the current one is rejected, as is a step of zero, a tick below
-	// -1 and walk hop settings the commands would refuse.
+	// back as unknown, a version 4 file no walk hop settings, a version 5 file a linear
+	// switch and a hop switch that name the movement and fixed walk hop fields, a version 6
+	// file the movement's name and the fixed fields; a version past the current one is
+	// rejected, as is a step of zero, a tick below -1 and movement settings the commands
+	// would refuse.
 	{
-	frame_record::writerst w;
-	w.raw("SMRC",4);w.u32(2);
+	// Writes a frame header in an older layout: the switches or the name, then the fixed
+	// walk hop fields of versions 5 and 6, then the rest as the current writer lays it out.
+	struct old_hopst{float amount,horizontal,diagonal,vertical;uint8_t hops;};
+	const auto write_old_header=[](frame_record::writerst &w,uint32_t version,
+		const frame_record::frame_headerst &g,bool linear,bool hop,const old_hopst &fields)
+		{
+		frame_record::writerst current;
+		frame_record::write_frame_header(current,g);
+		// The current header's tail, from the frame clock on: skip 'F', the switches, the
+		// name, the settings list, the step and the simulation tick.
+		size_t tail=4+1+g.settings.movement.size()+1;
+		for(const movement_settingst &setting:g.settings.movement_settings)
+			tail+=1+setting.name.size()+4;
+		tail+=4+8;
+		w.u8('F');w.u8(g.settings.flip);w.u8(g.settings.hauled);w.u8(g.settings.camera);
+		if(version>=6)
+			{
+			w.u8(uint8_t(g.settings.movement.size()));
+			w.raw(g.settings.movement.data(),g.settings.movement.size());
+			}
+		else w.u8(linear);
+		if(version>=3)w.u32(g.settings.step_ms);
+		if(version>=4)w.i64(g.simulation_tick);
+		if(version==5)w.u8(hop);
+		if(version>=5)
+			{
+			w.f32(fields.amount);w.f32(fields.horizontal);w.f32(fields.diagonal);
+			w.f32(fields.vertical);w.u8(fields.hops);
+			}
+		w.raw(current.bytes.data()+tail,current.bytes.size()-tail);
+		};
+	const old_hopst fields{0.3f,1.0f,2.4f,2.7f,1};
+	const std::vector<movement_settingst> fields_as_settings={{"amount",0.3f},{"horizontal",1.0f},
+		{"diagonal",2.4f},{"vertical",2.7f},{"hops",1.0f}};
 	frame_record::frame_headerst f;
-	f.settings.linear=true;f.settings.step_ms=999;f.simulation_tick=77;
-	f.settings.hop.enabled=true;f.settings.hop.amplitude=0.3f;f.settings.hop.hops=1;
+	f.settings.movement="hop";f.settings.movement_settings=fields_as_settings;
+	f.settings.step_ms=999;f.simulation_tick=77;
 	f.tick_ms=5;f.zoom=64;
-	frame_record::write_frame_header(w,f);
-	// Drop the step, tick and hop fields: 4, 8 and 18 bytes after the 'F' and four flags.
-	w.bytes.erase(w.bytes.begin()+8+5,w.bytes.begin()+8+35);
-	frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
+	// Reads one old header back, starting from a header that already names a movement with
+	// settings, as a replay that reuses one header per frame would: every read must reset it.
+	const auto read_old=[&](uint32_t version,bool linear,bool hop,
+		frame_record::frame_headerst &out)
+		{
+		frame_record::writerst w;
+		w.raw("SMRC",4);w.u32(version);
+		write_old_header(w,version,f,linear,hop,fields);
+		frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
+		out=f;
+		return frame_record::read_file_header(r)&&frame_record::read_frame_header(r,out)&&
+			r.at_end()&&r.version==version;
+		};
 	frame_record::frame_headerst f2;
-	const bool ok=frame_record::read_file_header(r)&&frame_record::read_frame_header(r,f2)&&r.at_end();
-	if(!ok||r.version!=2||!f2.settings.linear||f2.settings.step_ms!=150||f2.simulation_tick!=-1||
-		f2.settings.hop.enabled||f2.settings.hop.amplitude!=walk_hop_settingst{}.amplitude||
-		f2.settings.hop.hops!=2||
+	if(!read_old(2,true,false,f2)||f2.settings.movement!="linear"||f2.settings.step_ms!=150||
+		f2.simulation_tick!=-1||!f2.settings.movement_settings.empty()||
 		f2.tick_ms!=5||f2.zoom!=64)
 		{puts("version 2 header read failed");++failures;}
-	frame_record::writerst w1;
-	w1.raw("SMRC",4);w1.u32(3);
-	frame_record::write_frame_header(w1,f);
-	w1.bytes.erase(w1.bytes.begin()+8+9,w1.bytes.begin()+8+35); // drop the tick and hop fields
-	frame_record::readerst r1;r1.data=w1.bytes.data();r1.size=w1.bytes.size();
 	frame_record::frame_headerst f3;
-	const bool ok1=frame_record::read_file_header(r1)&&
-		frame_record::read_frame_header(r1,f3)&&r1.at_end();
-	if(!ok1||r1.version!=3||!f3.settings.linear||f3.settings.step_ms!=999||f3.simulation_tick!=-1||
-		f3.settings.hop.enabled||f3.settings.hop.hops!=2||f3.tick_ms!=5||f3.zoom!=64)
+	if(!read_old(3,true,false,f3)||f3.settings.movement!="linear"||f3.settings.step_ms!=999||
+		f3.simulation_tick!=-1||!f3.settings.movement_settings.empty()||f3.tick_ms!=5||f3.zoom!=64)
 		{puts("version 3 header read failed");++failures;}
-	frame_record::writerst w5;
-	w5.raw("SMRC",4);w5.u32(4);
-	frame_record::write_frame_header(w5,f);
-	w5.bytes.erase(w5.bytes.begin()+8+17,w5.bytes.begin()+8+35); // drop the hop fields
-	frame_record::readerst r5;r5.data=w5.bytes.data();r5.size=w5.bytes.size();
-	// Read into a header that already holds the hop on, as a replay that reuses one header
-	// per frame would: a version 4 read must still reset it.
-	frame_record::frame_headerst f5=f;
-	const bool ok5=frame_record::read_file_header(r5)&&
-		frame_record::read_frame_header(r5,f5)&&r5.at_end();
-	if(!ok5||r5.version!=4||!f5.settings.linear||f5.settings.step_ms!=999||f5.simulation_tick!=77||
-		f5.settings.hop.enabled||f5.settings.hop.amplitude!=walk_hop_settingst{}.amplitude||
-		f5.settings.hop.hops!=2||
-		f5.tick_ms!=5||f5.zoom!=64)
+	frame_record::frame_headerst f4;
+	if(!read_old(4,false,false,f4)||f4.settings.movement!="smoothstep"||f4.settings.step_ms!=999||
+		f4.simulation_tick!=77||!f4.settings.movement_settings.empty()||f4.tick_ms!=5||f4.zoom!=64)
 		{puts("version 4 header read failed");++failures;}
-	// The current version reads the hop settings back as written.
-	frame_record::writerst w6;frame_record::write_file_header(w6);
-	frame_record::write_frame_header(w6,f);
-	frame_record::readerst r6;r6.data=w6.bytes.data();r6.size=w6.bytes.size();
-	frame_record::frame_headerst f6;
-	if(!frame_record::read_file_header(r6)||!frame_record::read_frame_header(r6,f6)||
-		!r6.at_end()||!f6.settings.hop.enabled||f6.settings.hop.amplitude!=0.3f||
-		f6.settings.hop.hops!=1||
-		f6.settings.hop.vertical_mult!=walk_hop_settingst{}.vertical_mult)
-		{puts("version 5 hop settings read failed");++failures;}
-	// Settings the commands would refuse: a zero amount, three hops, an amount whose
-	// product with a multiplier passes the cap, and a NaN multiplier.
-	const auto rejects=[&](const walk_hop_settingst &hop,const char *what)
+	// A version 5 header's two switches name the movement, and its fixed walk hop fields
+	// read back as the hop's settings when the hop is named, nothing otherwise; both
+	// switches on names none and is rejected. A version 6 header names the movement and
+	// carries the same fixed fields.
+	for(const uint32_t version:{5u,6u})
+		for(const auto &[linear,hop,name]:{
+			std::tuple<bool,bool,const char *>{false,false,"smoothstep"},{true,false,"linear"},
+			{false,true,"hop"}})
+			{
+			frame_record::frame_headerst g=f;g.settings.movement=name;
+			frame_record::writerst w;w.raw("SMRC",4);w.u32(version);
+			write_old_header(w,version,g,linear,hop,fields);
+			frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
+			frame_record::frame_headerst out=f;
+			const std::vector<movement_settingst> expected=
+				std::string(name)=="hop"?fields_as_settings:std::vector<movement_settingst>{};
+			if(!frame_record::read_file_header(r)||!frame_record::read_frame_header(r,out)||
+				!r.at_end()||r.version!=version||out.settings.movement!=name||
+				out.settings.movement_settings!=expected||out.settings.step_ms!=999||
+				out.simulation_tick!=77||out.tick_ms!=5)
+				{printf("version %u header read as %s failed\n",version,name);++failures;}
+			}
+	{
+	frame_record::frame_headerst fb;
+	if(read_old(5,true,true,fb))
+		{puts("a version 5 header with linear and hop was accepted");++failures;}
+	}
+	// A version 5 or 6 header whose fixed fields the hop would refuse is rejected when the
+	// hop is named, and read when it is not, since the fields then set nothing.
+	for(const uint32_t version:{5u,6u})
 		{
-		frame_record::frame_headerst g=f;g.settings.hop=hop;
+		const old_hopst bad{0.4f,1.0f,2.4f,2.7f,3};
+		for(const auto &[linear,hop,name,accepted]:{
+			std::tuple<bool,bool,const char *,bool>{false,true,"hop",false},
+			{true,false,"linear",true}})
+			{
+			frame_record::frame_headerst g=f;g.settings.movement=name;
+			g.settings.movement_settings.clear();
+			frame_record::writerst w;w.raw("SMRC",4);w.u32(version);
+			write_old_header(w,version,g,linear,hop,bad);
+			frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
+			frame_record::frame_headerst out;
+			const bool read=frame_record::read_file_header(r)&&
+				frame_record::read_frame_header(r,out)&&r.at_end();
+			if(read!=accepted)
+				{printf("version %u header with bad hop fields as %s: %s\n",version,name,
+					read?"accepted":"rejected");++failures;}
+			}
+		}
+	// The current version stores the movement by name with its settings: every movement
+	// round trips with its own defaults, a name the table lacks is rejected and so is a
+	// name cut short by the end of the file, or a setting's name cut short.
+	for(const std::unique_ptr<movementst> &movement:make_movements().all)
+		{
+		frame_record::frame_headerst g=f;
+		g.settings.movement=movement->name();
+		g.settings.movement_settings=movement->settings();
+		frame_record::writerst w7;frame_record::write_file_header(w7);
+		frame_record::write_frame_header(w7,g);
+		frame_record::readerst r7;r7.data=w7.bytes.data();r7.size=w7.bytes.size();
+		frame_record::frame_headerst f7;
+		if(!frame_record::read_file_header(r7)||!frame_record::read_frame_header(r7,f7)||
+			!r7.at_end()||f7.settings.movement!=movement->name()||
+			f7.settings.movement_settings!=movement->settings())
+			{printf("movement %s round trip failed\n",movement->name());++failures;}
+		}
+	{
+	frame_record::writerst w8;frame_record::write_file_header(w8);
+	frame_record::write_frame_header(w8,f);
+	const size_t name_at=8+4;
+	const std::string bounce="bounce";
+	w8.bytes[name_at]=uint8_t(bounce.size());
+	w8.bytes.erase(w8.bytes.begin()+name_at+1,w8.bytes.begin()+name_at+1+3); // "hop"
+	w8.bytes.insert(w8.bytes.begin()+name_at+1,bounce.begin(),bounce.end());
+	frame_record::readerst r8;r8.data=w8.bytes.data();r8.size=w8.bytes.size();
+	frame_record::frame_headerst f8;
+	if(frame_record::read_file_header(r8)&&frame_record::read_frame_header(r8,f8))
+		{puts("an unknown movement name was accepted");++failures;}
+	frame_record::writerst w9;frame_record::write_file_header(w9);
+	frame_record::write_frame_header(w9,f);
+	w9.bytes.resize(name_at+2); // the length byte and "b" of "hop"
+	frame_record::readerst r9;r9.data=w9.bytes.data();r9.size=w9.bytes.size();
+	frame_record::frame_headerst f9;
+	if(frame_record::read_file_header(r9)&&frame_record::read_frame_header(r9,f9))
+		{puts("a truncated movement name was accepted");++failures;}
+	frame_record::writerst wa;frame_record::write_file_header(wa);
+	frame_record::write_frame_header(wa,f);
+	wa.bytes.resize(name_at+1+3+1+1+3); // the count, then "amo" of "amount"
+	frame_record::readerst ra;ra.data=wa.bytes.data();ra.size=wa.bytes.size();
+	frame_record::frame_headerst fa;
+	if(frame_record::read_file_header(ra)&&frame_record::read_frame_header(ra,fa))
+		{puts("a truncated setting name was accepted");++failures;}
+	}
+	// Settings the commands would refuse: a zero amount, three hops, an amount past a tile,
+	// a NaN multiplier, a multiplier past 5 on each field, a setting the movement does not
+	// have, and a setting on a movement that has none.
+	const auto rejects=[&](const char *name,const std::vector<movement_settingst> &settings,
+		const char *what)
+		{
+		frame_record::frame_headerst g=f;g.settings.movement=name;g.settings.movement_settings=settings;
 		frame_record::writerst wb;frame_record::write_file_header(wb);
 		frame_record::write_frame_header(wb,g);
 		frame_record::readerst rb;rb.data=wb.bytes.data();rb.size=wb.bytes.size();
@@ -181,17 +293,15 @@ int main(int argc,char **argv)
 		if(!frame_record::read_file_header(rb)||frame_record::read_frame_header(rb,gb)||rb.ok())
 			{printf("%s accepted\n",what);++failures;}
 		};
-	walk_hop_settingst bad;bad.amplitude=0.0f;rejects(bad,"zero hop amount");
-	bad=walk_hop_settingst{};bad.hops=3;rejects(bad,"three hops");
-	bad=walk_hop_settingst{};bad.amplitude=0.4f;rejects(bad,"hop lift past the cap");
-	bad=walk_hop_settingst{};bad.diagonal_mult=std::nanf("");rejects(bad,"NaN hop multiplier");
-	// A multiplier past 5 on each field, with an amount small enough that the lift still fits.
-	bad=walk_hop_settingst{};bad.amplitude=0.1f;bad.horizontal_mult=6.0f;
-	rejects(bad,"horizontal multiplier past 5");
-	bad=walk_hop_settingst{};bad.amplitude=0.1f;bad.diagonal_mult=6.0f;
-	rejects(bad,"diagonal multiplier past 5");
-	bad=walk_hop_settingst{};bad.amplitude=0.1f;bad.vertical_mult=6.0f;
-	rejects(bad,"vertical multiplier past 5");
+	rejects("hop",{{"amount",0.0f}},"zero hop amount");
+	rejects("hop",{{"hops",3.0f}},"three hops");
+	rejects("hop",{{"amount",1.5f}},"hop amount past a tile");
+	rejects("hop",{{"diagonal",std::nanf("")}},"NaN hop multiplier");
+	rejects("hop",{{"amount",0.1f},{"horizontal",6.0f}},"horizontal multiplier past 5");
+	rejects("hop",{{"amount",0.1f},{"diagonal",6.0f}},"diagonal multiplier past 5");
+	rejects("hop",{{"amount",0.1f},{"vertical",6.0f}},"vertical multiplier past 5");
+	rejects("hop",{{"stride",1.0f}},"a setting the hop lacks");
+	rejects("linear",{{"amount",0.1f}},"a setting on the linear movement");
 	frame_record::writerst w4;frame_record::write_file_header(w4);f.simulation_tick=-2;
 	frame_record::write_frame_header(w4,f);
 	frame_record::readerst r4;r4.data=w4.bytes.data();r4.size=w4.bytes.size();
