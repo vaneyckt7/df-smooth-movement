@@ -10,8 +10,8 @@
 //         i64 simulation_tick (the simulation's frame counter when the game last filled the
 //         per-tile arrays, -1 when no fill was seen since the previous frame; absent before
 //         version 4, which reads as -1 on every frame),
-//         u8 bob, f32 bob amount, f32 horizontal diagonal vertical multipliers, u8 hops (the
-//         walk bob settings; absent before version 5, which reads as the bob off),
+//         u8 hop, f32 hop amount, f32 horizontal diagonal vertical multipliers, u8 hops (the
+//         walk hop settings; absent before version 5, which reads as the hop off),
 //         u32 tick_ms, i32 window x y z, u8 paused, i32 follow_unit, i32 mouse x y, u8 mbut,
 //         i32 zoom origin_x origin_y dimx dimy, f64 free-camera rest offset x y (tiles)
 //     u8 viewports; per viewport: u8 slot (0..7 lower, 8 main), i32 dim_x dim_y clipx0 clipx1
@@ -42,7 +42,7 @@ namespace frame_record {
 
 constexpr uint32_t version=5;
 // The oldest version the reader accepts; a version 2 frame header has no step field, a
-// version 3 header no simulation tick and a version 4 header no walk bob settings.
+// version 3 header no simulation tick and a version 4 header no walk hop settings.
 constexpr uint32_t oldest_version=2;
 constexpr int main_slot=8;
 constexpr int slot_count=9;
@@ -210,7 +210,7 @@ struct unit_recordst
 struct frame_headerst
 {
 	// The plugin's settings for the frame. A version 2 recording reads back with the step at
-	// 150 ms, what it was made with, and one before version 5 with the bob off.
+	// 150 ms, what it was made with, and one before version 5 with the hop off.
 	plugin_settingsst settings;
 	int64_t simulation_tick=-1; // a recording before version 4 reads back as -1, unknown
 	uint32_t tick_ms=0;
@@ -250,10 +250,10 @@ inline void write_frame_header(writerst &w,const frame_headerst &f)
 	w.u8(s.flip);w.u8(s.hauled);w.u8(s.camera);w.u8(s.linear);
 	w.u32(s.step_ms);
 	w.i64(f.simulation_tick);
-	w.u8(s.bob.enabled);
-	w.f32(s.bob.amplitude);
-	w.f32(s.bob.horizontal_mult);w.f32(s.bob.diagonal_mult);w.f32(s.bob.vertical_mult);
-	w.u8(uint8_t(s.bob.hops));
+	w.u8(s.hop.enabled);
+	w.f32(s.hop.amplitude);
+	w.f32(s.hop.horizontal_mult);w.f32(s.hop.diagonal_mult);w.f32(s.hop.vertical_mult);
+	w.u8(uint8_t(s.hop.hops));
 	w.u32(f.tick_ms);
 	w.i32(f.window_x);w.i32(f.window_y);w.i32(f.window_z);
 	w.u8(f.paused);
@@ -306,21 +306,21 @@ inline bool read_frame_header(readerst &r,frame_headerst &f)
 	if(s.step_ms==0)r.fail("bad step time");
 	f.simulation_tick=r.version>=4?r.i64():-1;
 	if(f.simulation_tick<-1)r.fail("bad simulation tick");
-	s.bob=walk_bob_settingst{};
+	s.hop=walk_hop_settingst{};
 	if(r.version>=5)
 		{
-		s.bob.enabled=r.u8()!=0;
-		s.bob.amplitude=r.f32();
-		s.bob.horizontal_mult=r.f32();s.bob.diagonal_mult=r.f32();s.bob.vertical_mult=r.f32();
-		s.bob.hops=r.u8();
+		s.hop.enabled=r.u8()!=0;
+		s.hop.amplitude=r.f32();
+		s.hop.horizontal_mult=r.f32();s.hop.diagonal_mult=r.f32();s.hop.vertical_mult=r.f32();
+		s.hop.hops=r.u8();
 		// The bounds the commands enforce, written so that NaN fails too.
-		if(!(s.bob.amplitude>0.0f&&s.bob.amplitude<=max_walk_bob_lift)||
-			!(s.bob.horizontal_mult>=0.0f&&s.bob.horizontal_mult<=5.0f)||
-			!(s.bob.diagonal_mult>=0.0f&&s.bob.diagonal_mult<=5.0f)||
-			!(s.bob.vertical_mult>=0.0f&&s.bob.vertical_mult<=5.0f)||
-			!walk_bob_lift_fits(s.bob.amplitude,s.bob.horizontal_mult,s.bob.diagonal_mult,
-				s.bob.vertical_mult)||
-			(s.bob.hops!=1&&s.bob.hops!=2))r.fail("bad walk bob settings");
+		if(!(s.hop.amplitude>0.0f&&s.hop.amplitude<=max_walk_hop_lift)||
+			!(s.hop.horizontal_mult>=0.0f&&s.hop.horizontal_mult<=5.0f)||
+			!(s.hop.diagonal_mult>=0.0f&&s.hop.diagonal_mult<=5.0f)||
+			!(s.hop.vertical_mult>=0.0f&&s.hop.vertical_mult<=5.0f)||
+			!walk_hop_lift_fits(s.hop.amplitude,s.hop.horizontal_mult,s.hop.diagonal_mult,
+				s.hop.vertical_mult)||
+			(s.hop.hops!=1&&s.hop.hops!=2))r.fail("bad walk hop settings");
 		}
 	f.tick_ms=r.u32();
 	f.window_x=r.i32();f.window_y=r.i32();f.window_z=r.i32();

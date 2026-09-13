@@ -24,7 +24,7 @@ run_test() {
 run_test frame-record
 # recinfo.py must read a recording in the current format: the fixtures are older.
 "$here/out/test-frame-record" "$here/out/test-current.rec"
-fields='.* step=\([0-9]*\) sim=\(-*[0-9]*\) bob=\([a-z]*\) amount=\([0-9.]*\)'
+fields='.* step=\([0-9]*\) sim=\(-*[0-9]*\) hop=\([a-z]*\) amount=\([0-9.]*\)'
 fields="$fields"' mult=\([0-9.,]*\) hops=\([0-9]\) .*'
 sample=$("$here/recinfo.py" "$here/out/test-current.rec" |
 	sed -n "s/$fields/\1,\2,\3,\4,\5,\6/p;s/^frames //p" | tr '\n' ' ')
