@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Names in the movement path say their unit: `_ms` for milliseconds, `_tiles` for tiles, `_px` for pixels, `_pct` for a fraction from 0 to 1. Nothing the plugin draws or records changes.
 - Fix the free camera sitting a whole tile off after two camera commands within one frame of each other in a running game (`camera <x> <y>` followed at once by `camera reset` or by another `camera <x> <y>`): a command now asks for its offset against the window as written, so a window write of the camera's own that has not landed yet is taken off the offset and comes back when it lands.
 - Fix the free camera sitting one tile off after `camera <x> <y>` in a paused game, or when a recording started, the followed unit changed, the z-level or zoom changed, or the window was resized within a frame or two of the command. The camera folds whole tiles of the offset into the game's window and used to wait for that scroll to land before moving the offset the other way; a restart of the camera's tracking (every paused frame, a recording's first frame, a change of followed unit) forgot the wait, and the offset never moved. The restart now folds the write into the offset at once.
 - The timestep changelog entry said the step resets "like `linear`"; `linear` is the one setting the plugin keeps across disable and enable, and the entry now says so.

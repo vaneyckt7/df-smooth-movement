@@ -47,12 +47,12 @@ bool has_fire(const Viewport *vp,int32_t x,int32_t y)
 struct render_proxyst
 {
 	viewport_visual_layer layer;
-	float source_x;
-	float source_y;
+	float source_x_tiles;
+	float source_y_tiles;
 	int32_t target_x;
 	int32_t target_y;
 	int32_t texpos;
-	float progress;
+	float progress_pct;
 	SDL_Texture *texture;
 	bool mirrored=false;
 	int32_t mirror_shift=0;
@@ -66,11 +66,11 @@ struct render_proxyst
 // The icon of an item a creature hauls, drawn on top of the last viewport.
 struct carried_item_proxyst
 {
-	float source_x;
-	float source_y;
+	float source_x_tiles;
+	float source_y_tiles;
 	int32_t target_x;
 	int32_t target_y;
-	float progress;
+	float progress_pct;
 	SDL_Texture *texture;
 	// Set when the creature carrying it bobs: the icon then rides the same lift.
 	bool bob=false;
@@ -114,9 +114,9 @@ std::vector<render_proxyst> collect_proxies(
 				vp,static_cast<viewport_visual_layer>(layer),x,y);
 			if(!movement.active)continue;
 			const int32_t inherited_source_x=inherited_visual_source_tile(
-				x,movement.source_x,x);
+				x,movement.source_x_tiles,x);
 			const int32_t inherited_source_y=inherited_visual_source_tile(
-				y,movement.source_y,y);
+				y,movement.source_y_tiles,y);
 			const bool inherited_source_in_bounds=
 				inherited_source_x>=0&&inherited_source_x<vp->dim_x&&
 				inherited_source_y>=0&&inherited_source_y<vp->dim_y;
@@ -139,9 +139,9 @@ std::vector<render_proxyst> collect_proxies(
 				{
 				const render_proxyst &anchor=proxies[i];
 				if(anchor.layer!=viewport_visual_layer::center||
-					anchor.source_x-anchor.target_x!=movement.source_x-x||
-					anchor.source_y-anchor.target_y!=movement.source_y-y||
-					anchor.progress!=movement.progress)continue;
+					anchor.source_x_tiles-anchor.target_x!=movement.source_x_tiles-x||
+					anchor.source_y_tiles-anchor.target_y!=movement.source_y_tiles-y||
+					anchor.progress_pct!=movement.progress_pct)continue;
 				if(std::abs(anchor.target_x-x)<=1&&std::abs(anchor.target_y-y)<=1)
 					anchored=true;
 				if(bob_rider&&anchor.target_x==x+owner.center_x&&
@@ -185,9 +185,9 @@ std::vector<render_proxyst> collect_proxies(
 					if(anchor.layer==viewport_visual_layer::center&&
 						anchor.target_x==x+descriptor.center_x&&
 						anchor.target_y==y+descriptor.center_y&&
-						anchor.source_x-anchor.target_x==movement.source_x-x&&
-						anchor.source_y-anchor.target_y==movement.source_y-y&&
-						anchor.progress==movement.progress)
+						anchor.source_x_tiles-anchor.target_x==movement.source_x_tiles-x&&
+						anchor.source_y_tiles-anchor.target_y==movement.source_y_tiles-y&&
+						anchor.progress_pct==movement.progress_pct)
 						{
 						owns_fragment=true;
 						anchor_index=int32_t(i);
@@ -220,12 +220,12 @@ std::vector<render_proxyst> collect_proxies(
 			render_proxyst proxy=
 				{
 				static_cast<viewport_visual_layer>(layer),
-				movement.source_x,
-				movement.source_y,
+				movement.source_x_tiles,
+				movement.source_y_tiles,
 				x,
 				y,
 				texpos,
-				movement.progress,
+				movement.progress_pct,
 				nullptr,
 				mirrored,
 				mirror_shift,
@@ -245,11 +245,11 @@ std::vector<render_proxyst> collect_proxies(
 			if(proxy.bob)
 				{
 				const int32_t bob_row=int32_t(std::floor(
-					std::min(proxy.source_y,float(y))))-1;
+					std::min(proxy.source_y_tiles,float(y))))-1;
 				for(int32_t bob_x=int32_t(std::floor(
-						std::min(proxy.source_x,float(x))));
+						std::min(proxy.source_x_tiles,float(x))));
 					bob_x<=int32_t(std::ceil(
-						std::max(proxy.source_x,float(x))))&&proxy.bob;++bob_x)
+						std::max(proxy.source_x_tiles,float(x))))&&proxy.bob;++bob_x)
 					for(const int32_t shifted_x:{bob_x,bob_x+proxy.mirror_shift})
 						if(!inside_clip(vp,shifted_x,bob_row)||
 							has_fire(vp,shifted_x,bob_row))
@@ -260,14 +260,14 @@ std::vector<render_proxyst> collect_proxies(
 				}
 			bool blocked=false;
 			for(int32_t coverage_x=int32_t(std::floor(
-					std::min(proxy.source_x,float(x))));
+					std::min(proxy.source_x_tiles,float(x))));
 				coverage_x<=int32_t(std::ceil(
-					std::max(proxy.source_x,float(x))));++coverage_x)
+					std::max(proxy.source_x_tiles,float(x))));++coverage_x)
 				{
 				for(int32_t coverage_y=int32_t(std::floor(
-						std::min(proxy.source_y,float(y))));
+						std::min(proxy.source_y_tiles,float(y))));
 					coverage_y<=int32_t(std::ceil(
-						std::max(proxy.source_y,float(y))));++coverage_y)
+						std::max(proxy.source_y_tiles,float(y))));++coverage_y)
 					{
 					if(!inside_clip(vp,coverage_x,coverage_y))
 						{
@@ -337,11 +337,11 @@ std::vector<render_proxyst> collect_proxies(
 			proxy.bob=bobs[i];
 			if(!proxy.bob)continue;
 			const int32_t bob_row=int32_t(std::floor(
-				std::min(proxy.source_y,float(proxy.target_y))))-1;
+				std::min(proxy.source_y_tiles,float(proxy.target_y))))-1;
 			for(int32_t bob_x=int32_t(std::floor(
-					std::min(proxy.source_x,float(proxy.target_x))));
+					std::min(proxy.source_x_tiles,float(proxy.target_x))));
 				bob_x<=int32_t(std::ceil(
-					std::max(proxy.source_x,float(proxy.target_x))));++bob_x)
+					std::max(proxy.source_x_tiles,float(proxy.target_x))));++bob_x)
 				{
 				proxy.coverage.emplace(bob_x,bob_row);
 				proxy.coverage.emplace(bob_x+proxy.mirror_shift,bob_row);
@@ -443,8 +443,9 @@ inline void mark_carried_item_bobs(
 		for(const render_proxyst &proxy:proxies)
 			if(proxy.bob&&proxy.layer==viewport_visual_layer::center&&
 				proxy.target_x==item.target_x&&proxy.target_y==item.target_y&&
-				proxy.source_x==item.source_x&&proxy.source_y==item.source_y&&
-				proxy.progress==item.progress)
+				proxy.source_x_tiles==item.source_x_tiles&&
+				proxy.source_y_tiles==item.source_y_tiles&&
+				proxy.progress_pct==item.progress_pct)
 				{
 				item.bob=true;
 				break;

@@ -261,8 +261,8 @@ class free_camerast
 				const auto follow=animation_manager.get_follow(follow_viewport,follow_id);
 				if(follow.active)
 					{
-					follow_x=follow.offset_x*tile;
-					follow_y=follow.offset_y*tile;
+					follow_x=follow.offset_x_tiles*tile;
+					follow_y=follow.offset_y_tiles*tile;
 					}
 				else
 					{
