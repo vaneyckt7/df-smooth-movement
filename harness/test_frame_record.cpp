@@ -27,8 +27,8 @@ int main(int argc,char **argv)
 			if(i==2)
 				{
 				f.settings.movement="hop";
-				f.settings.movement_settings={{"amount",0.15f},{"horizontal",1.0f},
-					{"diagonal",2.0f},{"vertical",3.0f},{"hops",1.0f}};
+				f.settings.movement_settings={{"hop-height",0.15f},{"horizontal-mult",1.0f},
+					{"diagonal-mult",2.0f},{"vertical-mult",3.0f},{"hops-per-step",1.0f}};
 				}
 			f.tick_ms=uint32_t(1000+16*i);
 			frame_record::write_frame_header(w,f);
@@ -87,8 +87,8 @@ int main(int argc,char **argv)
 	for(size_t i=50;i<60;++i)if(out[i]!=-1){puts("overlong run wrote past the array");++failures;break;}
 	}
 	// Headers and unit lists round-trip field for field.
-	const std::vector<movement_settingst> hop_settings={{"amount",0.25f},{"horizontal",1.5f},
-		{"diagonal",2.0f},{"vertical",3.0f},{"hops",1.0f}};
+	const std::vector<movement_settingst> hop_settings={{"hop-height",0.25f},{"horizontal-mult",1.5f},
+		{"diagonal-mult",2.0f},{"vertical-mult",3.0f},{"hops-per-step",1.0f}};
 	{
 	frame_record::writerst w;
 	frame_record::write_file_header(w);
@@ -116,8 +116,8 @@ int main(int argc,char **argv)
 	}
 	frame_record::frame_headerst f;
 	f.settings.movement="hop";
-	f.settings.movement_settings={{"amount",0.3f},{"horizontal",1.0f},{"diagonal",2.4f},
-		{"vertical",2.7f},{"hops",1.0f}};
+	f.settings.movement_settings={{"hop-height",0.3f},{"horizontal-mult",1.0f},{"diagonal-mult",2.4f},
+		{"vertical-mult",2.7f},{"hops-per-step",1.0f}};
 	f.settings.step_ms=999;f.simulation_tick=77;f.tick_ms=5;f.zoom=64;
 	frame_record::frame_headerst f2,f3;
 	#if 0 // Pre-v7 recording compatibility cases, intentionally unsupported.
@@ -282,7 +282,7 @@ int main(int argc,char **argv)
 		{puts("a truncated movement name was accepted");++failures;}
 	frame_record::writerst wa;frame_record::write_file_header(wa);
 	frame_record::write_frame_header(wa,f);
-	wa.bytes.resize(name_at+1+3+1+1+3); // the count, then "amo" of "amount"
+	wa.bytes.resize(name_at+1+3+1+1+3); // the count, then part of a setting name
 	frame_record::readerst ra;ra.data=wa.bytes.data();ra.size=wa.bytes.size();
 	frame_record::frame_headerst fa;
 	if(frame_record::read_file_header(ra)&&frame_record::read_frame_header(ra,fa))
@@ -302,15 +302,15 @@ int main(int argc,char **argv)
 		if(!frame_record::read_file_header(rb)||frame_record::read_frame_header(rb,gb)||rb.ok())
 			{printf("%s accepted\n",what);++failures;}
 		};
-	rejects("hop",{{"amount",0.0f}},"zero hop amount");
-	rejects("hop",{{"hops",3.0f}},"three hops");
-	rejects("hop",{{"amount",1.5f}},"hop amount past a tile");
-	rejects("hop",{{"diagonal",std::nanf("")}},"NaN hop multiplier");
-	rejects("hop",{{"amount",0.1f},{"horizontal",6.0f}},"horizontal multiplier past 5");
-	rejects("hop",{{"amount",0.1f},{"diagonal",6.0f}},"diagonal multiplier past 5");
-	rejects("hop",{{"amount",0.1f},{"vertical",6.0f}},"vertical multiplier past 5");
+	rejects("hop",{{"hop-height",0.0f}},"zero hop height");
+	rejects("hop",{{"hops-per-step",3.0f}},"three hops");
+	rejects("hop",{{"hop-height",1.5f}},"hop height past a tile");
+	rejects("hop",{{"diagonal-mult",std::nanf("")}},"NaN hop multiplier");
+	rejects("hop",{{"hop-height",0.1f},{"horizontal-mult",6.0f}},"horizontal multiplier past 5");
+	rejects("hop",{{"hop-height",0.1f},{"diagonal-mult",6.0f}},"diagonal multiplier past 5");
+	rejects("hop",{{"hop-height",0.1f},{"vertical-mult",6.0f}},"vertical multiplier past 5");
 	rejects("hop",{{"stride",1.0f}},"a setting the hop lacks");
-	rejects("linear",{{"amount",0.1f}},"a setting on the linear movement");
+	rejects("linear",{{"hop-height",0.1f}},"a setting on the linear movement");
 	frame_record::writerst w4;frame_record::write_file_header(w4);f.simulation_tick=-2;
 	frame_record::write_frame_header(w4,f);
 	frame_record::readerst r4;r4.data=w4.bytes.data();r4.size=w4.bytes.size();

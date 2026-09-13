@@ -1422,11 +1422,11 @@ int main()
 	// A plain hop: every multiplier 1, so the hop is the bare hop shape, `high_tiles` tall.
 	const float high_tiles=0.5f;
 	std::unique_ptr<movementst> unit=movements.find("hop")->clone();
-	assert(apply_movement_settings(*unit,{{"amount",high_tiles},{"horizontal",1.0f},
-		{"diagonal",1.0f},{"vertical",1.0f}})=="");
+	assert(apply_movement_settings(*unit,{{"hop-height",high_tiles},{"horizontal-mult",1.0f},
+		{"diagonal-mult",1.0f},{"vertical-mult",1.0f}})=="");
 	for(int hops:{1,2})
 		{
-		assert(unit->set("hops",float(hops))=="");
+		assert(unit->set("hops-per-step",float(hops))=="");
 		assert(near(hop_tiles(*unit,0.0f,east),0.0f)&&unit->position(0.0f,east).x_tiles==0.0f);
 		assert(near(hop_tiles(*unit,1.0f,east),0.0f)&&unit->position(1.0f,east).x_tiles==1.0f);
 		float highest_tiles=0.0f;
@@ -1446,9 +1446,9 @@ int main()
 	// The hop peaks halfway along the line (the elapsed time 0.5 is halfway through
 	// smoothstep too); with two hops the foot lands there and the peaks are at a quarter
 	// and three quarters of the line, which the soft start reaches later than in time.
-	assert(unit->set("hops",1.0f)=="");
+	assert(unit->set("hops-per-step",1.0f)=="");
 	assert(near(hop_tiles(*unit,0.5f,east),high_tiles));
-	assert(unit->set("hops",2.0f)=="");
+	assert(unit->set("hops-per-step",2.0f)=="");
 	assert(near(hop_tiles(*unit,0.5f,east),0.0f));
 	float peak_travelled_pct=0.0f,peak_hop=0.0f;
 	for(int i=0;i<=1000;++i)
@@ -1464,48 +1464,48 @@ int main()
 	// was.
 	{
 	std::unique_ptr<movementst> hop=movements.find("hop")->clone();
-	assert(apply_movement_settings(*hop,{{"amount",0.30f},{"horizontal",1.0f},
-		{"diagonal",3.0f},{"vertical",3.5f}})=="");
+	assert(apply_movement_settings(*hop,{{"hop-height",0.30f},{"horizontal-mult",1.0f},
+		{"diagonal-mult",3.0f},{"vertical-mult",3.5f}})=="");
 	const movement_overshootst os=hop->overshoot();
 	assert(near(os.above_tiles,1.05f)&&os.below_tiles==0.0f&&os.left_tiles==0.0f&&os.right_tiles==0.0f);
-	assert(apply_movement_settings(*hop,{{"amount",1.0f},{"horizontal",5.0f}})=="");
+	assert(apply_movement_settings(*hop,{{"hop-height",1.0f},{"horizontal-mult",5.0f}})=="");
 	assert(near(hop->overshoot().above_tiles,5.0f));
 	}
 	{
 	std::unique_ptr<movementst> kept=movements.find("hop")->clone();
-	assert(apply_movement_settings(*kept,{{"amount",0.3f},{"vertical",5.5f}})!="");
+	assert(apply_movement_settings(*kept,{{"hop-height",0.3f},{"vertical-mult",5.5f}})!="");
 	assert(kept->settings()==movements.find("hop")->settings());
 	}
 	// Each setting checks its own range, NaN included; an unknown name is refused, and the
 	// movements without settings refuse every name.
 	{
 	std::unique_ptr<movementst> hop=movements.find("hop")->clone();
-	assert(hop->set("amount",0.0f)=="hop amount must be within (0, 1] tiles");
-	assert(hop->set("amount",1.01f)!=""&&hop->set("amount",std::nanf(""))!="");
-	assert(hop->set("amount",1.0f)==""&&hop->set("amount",0.2f)=="");
-	assert(hop->set("horizontal",5.1f)=="hop multipliers must be within 0..5");
-	assert(hop->set("diagonal",-0.1f)!=""&&hop->set("vertical",std::nanf(""))!="");
-	assert(hop->set("vertical",0.0f)==""&&hop->set("vertical",5.0f)=="");
-	assert(hop->set("hops",3.0f)=="hops per step must be 1 or 2");
-	assert(hop->set("hops",1.5f)!=""&&hop->set("hops",std::nanf(""))!="");
+	assert(hop->set("hop-height",0.0f)=="hop height must be within (0, 1] tiles");
+	assert(hop->set("hop-height",1.01f)!=""&&hop->set("hop-height",std::nanf(""))!="");
+	assert(hop->set("hop-height",1.0f)==""&&hop->set("hop-height",0.2f)=="");
+	assert(hop->set("horizontal-mult",5.1f)=="hop multipliers must be within 0..5");
+	assert(hop->set("diagonal-mult",-0.1f)!=""&&hop->set("vertical-mult",std::nanf(""))!="");
+	assert(hop->set("vertical-mult",0.0f)==""&&hop->set("vertical-mult",5.0f)=="");
+	assert(hop->set("hops-per-step",3.0f)=="hops per step must be 1 or 2");
+	assert(hop->set("hops-per-step",1.5f)!=""&&hop->set("hops-per-step",std::nanf(""))!="");
 	assert(hop->set("stride",1.0f)=="hop has no setting named stride");
 	assert(linear.settings().empty()&&default_movement().settings().empty());
-	assert(std::unique_ptr<movementst>(linear.clone())->set("amount",0.1f)==
-		"linear has no setting named amount");
+	assert(std::unique_ptr<movementst>(linear.clone())->set("hop-height",0.1f)==
+		"linear has no setting named hop-height");
 	assert(check_movement_settings("bounce",{})=="unknown movement bounce");
-	assert(check_movement_settings("hop",{{"amount",1.5f}})!="");
-	assert(check_movement_settings("hop",{{"amount",0.3f},{"hops",1.0f}})=="");
+	assert(check_movement_settings("hop",{{"hop-height",1.5f}})!="");
+	assert(check_movement_settings("hop",{{"hop-height",0.3f},{"hops-per-step",1.0f}})=="");
 	assert(check_movement_settings("linear",{})=="");
 	}
 	// The default settings fit, and scale the hop by the step's direction: a one-hop step
 	// peaks at the amount times the multiplier.
 	{
 	std::unique_ptr<movementst> defaults=movements.find("hop")->clone();
-	const std::vector<movement_settingst> expected={{"amount",0.10f},{"horizontal",1.0f},
-		{"diagonal",2.4f},{"vertical",2.7f},{"hops",2.0f}};
+	const std::vector<movement_settingst> expected={{"hop-height",0.10f},{"horizontal-mult",1.0f},
+		{"diagonal-mult",2.4f},{"vertical-mult",2.7f},{"hops-per-step",2.0f}};
 	assert(defaults->settings()==expected);
 	assert(near(defaults->overshoot().above_tiles,0.27f)&&defaults->overshoot().below_tiles==0.0f);
-	assert(defaults->set("hops",1.0f)=="");
+	assert(defaults->set("hops-per-step",1.0f)=="");
 	assert(near(hop_tiles(*defaults,0.5f,east),0.10f));
 	assert(near(hop_tiles(*defaults,0.5f,north_east),0.24f));
 	assert(near(hop_tiles(*defaults,0.5f,north),0.27f));
@@ -1530,7 +1530,7 @@ int main()
 	{
 	visual_animation_managerst lifted;
 	std::unique_ptr<movementst> hop=movements.find("hop")->clone();
-	assert(apply_movement_settings(*hop,{{"hops",1.0f},{"amount",0.2f}})=="");
+	assert(apply_movement_settings(*hop,{{"hops-per-step",1.0f},{"hop-height",0.2f}})=="");
 	lifted.set_movement(*hop);
 	int32_t lift_empty[9]={},lift_before[9]={},lift_after[9]={};
 	lift_before[0]=7;lift_after[3]=7; // x 0 -> 1 on row 0: a horizontal step
@@ -1555,7 +1555,7 @@ int main()
 	{
 	visual_animation_managerst lifted;
 	std::unique_ptr<movementst> hop=movements.find("hop")->clone();
-	assert(apply_movement_settings(*hop,{{"hops",1.0f},{"amount",0.2f}})=="");
+	assert(apply_movement_settings(*hop,{{"hops-per-step",1.0f},{"hop-height",0.2f}})=="");
 	lifted.set_movement(*hop);
 	int32_t lift_empty[9]={},lift_before[9]={},lift_after[9]={};
 	lift_before[0]=7;lift_after[target_x*3+target_y]=7;

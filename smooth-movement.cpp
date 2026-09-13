@@ -917,13 +917,10 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 	commands.emplace_back(
 		"smooth-movement",
 		"Smooth movement status; free camera: camera on|off|reset|<fx> <fy>; "
-		"flip, linear and hauled together: all on|off; "
-		"sprite flipping: flip on|off; interpolation: interpolation <name> "
-		"(smoothstep|linear|hop); linear movement: linear on|off; "
+		"flip and hauled together: all on|off; "
+		"sprite flipping: flip on|off; movement: movement <name> [setting [value]]; "
 		"one-tile step time: timestep <ms> (20-2000); "
 		"hauled item icons: hauled on|off; "
-		"walk hop: hop on|off|<amount>; hop multipliers: hopmult <horizontal> <diagonal> "
-		"<vertical>; hops per step: hops 1|2; "
 		"frame timing: stats [on|off|reset]; "
 		"frame recording: record <file> [frames] | record stop | record status.",
 		status_command);

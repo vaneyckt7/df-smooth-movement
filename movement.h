@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Movements: how one tile step, which the game makes as a jump, is spread over frames. The
-// console calls the current movement the interpolation (`interpolation <name>`).
+// console selects it with `movement <name>`.
 //
 // A step's elapsed time runs from 0 at its start to 1 at its end, a fraction. A movement
 // answers two questions about a step, and its position is the two put together:
@@ -42,7 +42,7 @@
 // own pace whatever the movement (the rules are in visual_animation.h).
 //
 // Names say their unit: `_ms` for milliseconds, `_tiles` for tiles, `_px` for pixels, `_pct`
-// for a fraction from 0 to 1. A setting's console and recording name (`amount`) has no suffix.
+// for a fraction from 0 to 1. Console and recording setting names use hyphens.
 //
 // To add a movement: derive from `movementst`, and add it to `make_movements()`.
 
@@ -221,14 +221,14 @@ class linear_movementst:public movementst
 // The walk hop: the smoothstep pace, and a path that hops above the straight line once per
 // step, or twice, like footfalls. The hop follows the fraction travelled rather than the
 // time, so its peaks sit between the tiles and the sprite is on the line exactly when it is
-// on a tile: |sin(pi*hops*travelled)| rises and falls once per hop and is zero at both ends.
-// Its height is the amount times a multiplier for the direction of the step: a step with a
+// on a tile: |sin(pi*hops_per_step*travelled)| rises and falls once per hop and is zero at
+// both ends. Its height is hop-height times a multiplier for the direction of the step: a step with a
 // vertical part glides the sprite a whole tile up or down, which drowns a small hop, so
 // diagonal steps get more; on a straight up or down step the hop is parallel to the travel
 // and shows only as a stall, so it needs more still.
 //
-// Settings: `amount`, the height of a hop in tiles; `horizontal`, `diagonal` and `vertical`,
-// the multipliers; `hops`, 1 or 2 per step.
+// Settings: `hop-height`, the height of a hop in tiles; `horizontal-mult`,
+// `diagonal-mult` and `vertical-mult`, the multipliers; `hops-per-step`, 1 or 2.
 class hop_movementst:public movementst
 {
 	public:
@@ -245,7 +245,7 @@ class hop_movementst:public movementst
 		sprite_offsetst path(float travelled_pct,tile_stepst step) const override
 			{
 			const sprite_offsetst line=straight_path(travelled_pct,step);
-			const float hop_tiles=std::fabs(std::sin(travelled_pct*3.14159265f*float(hops)))*
+			const float hop_tiles=std::fabs(std::sin(travelled_pct*3.14159265f*float(hops_per_step)))*
 				hop_height_tiles*multiplier(step);
 			return {line.x_tiles,line.y_tiles-hop_tiles};
 			}
@@ -258,29 +258,31 @@ class hop_movementst:public movementst
 		std::vector<movement_settingst> settings() const override
 			{
 			return {
-				{"amount",hop_height_tiles},{"horizontal",horizontal_mult},{"diagonal",diagonal_mult},
-				{"vertical",vertical_mult},{"hops",float(hops)}};
+				{"hop-height",hop_height_tiles},{"horizontal-mult",horizontal_mult},
+				{"diagonal-mult",diagonal_mult},{"vertical-mult",vertical_mult},
+				{"hops-per-step",float(hops_per_step)}};
 			}
 
 		std::string set(std::string_view name,float value) override
 			{
 			// Written so that NaN fails too.
-			if(name=="amount")
+			if(name=="hop-height")
 				{
-				if(!(value>0.0f&&value<=1.0f))return "hop amount must be within (0, 1] tiles";
+				if(!(value>0.0f&&value<=1.0f))return "hop height must be within (0, 1] tiles";
 				hop_height_tiles=value;
 				return {};
 				}
-			if(name=="horizontal"||name=="diagonal"||name=="vertical")
+			if(name=="horizontal-mult"||name=="diagonal-mult"||name=="vertical-mult")
 				{
 				if(!(value>=0.0f&&value<=5.0f))return "hop multipliers must be within 0..5";
-				(name=="horizontal"?horizontal_mult:name=="diagonal"?diagonal_mult:vertical_mult)=value;
+				(name=="horizontal-mult"?horizontal_mult:
+					name=="diagonal-mult"?diagonal_mult:vertical_mult)=value;
 				return {};
 				}
-			if(name=="hops")
+			if(name=="hops-per-step")
 				{
 				if(value!=1.0f&&value!=2.0f)return "hops per step must be 1 or 2";
-				hops=int(value);
+				hops_per_step=int(value);
 				return {};
 				}
 			return movementst::set(name,value);
@@ -296,7 +298,7 @@ class hop_movementst:public movementst
 		float horizontal_mult=1.0f;
 		float diagonal_mult=2.4f;
 		float vertical_mult=2.7f;
-		int hops=2;
+		int hops_per_step=2;
 
 		// The multiplier for a step's direction. A retargeted step starts from a fractional
 		// source, so a delta within (-0.5, 0.5] counts as no move on that axis: the tile the
