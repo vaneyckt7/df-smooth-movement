@@ -157,8 +157,8 @@ void test_settings_printout()
 		"linear movement: off\n"
 		"time step: 150 ms\n"
 		"hauled item icons: off\n"
-		"walk bob: off, amount 0.1\n"
-		"bob multipliers: horizontal 1, diagonal 2.4, vertical 2.7\n"
+		"walk hop: off, amount 0.1\n"
+		"hop multipliers: horizontal 1, diagonal 2.4, vertical 2.7\n"
 		"hops per step: 2\n"
 		"frame stats: off\n");
 	const runst disabled=run(state,{},disabled_host);
@@ -340,87 +340,87 @@ void test_timestep()
 		state.render.animation_manager.step_duration_ms()==300);
 }
 
-void test_bob()
+void test_hop()
 {
 	plugin_statest state;
-	expect_ok("bob",run(state,{"bob"}),"walk bob: off, amount 0.1\n");
-	expect_ok("bob on",run(state,{"bob","on"}),"smooth-movement: walk bob on\n",1);
-	expect_true("bob on sets",state.bob.enabled);
-	expect_ok("bob printout",run(state,{"bob"}),"walk bob: on, amount 0.1\n");
-	expect_ok("bob off",run(state,{"bob","off"}),"smooth-movement: walk bob off\n",1);
-	expect_true("bob off clears",!state.bob.enabled);
-	expect_ok("bob amount",run(state,{"bob","0.25"}),"smooth-movement: bob amount 0.25\n",1);
-	expect_near("bob amount sets",state.bob.amplitude,0.25);
-	expect_true("bob amount leaves it off",!state.bob.enabled);
-	expect_ok("bob amount without a leading digit",run(state,{"bob",".2"}),
-		"smooth-movement: bob amount 0.2\n",1);
-	expect_near("bob amount without a leading digit sets",state.bob.amplitude,0.2f);
+	expect_ok("hop",run(state,{"hop"}),"walk hop: off, amount 0.1\n");
+	expect_ok("hop on",run(state,{"hop","on"}),"smooth-movement: walk hop on\n",1);
+	expect_true("hop on sets",state.hop.enabled);
+	expect_ok("hop printout",run(state,{"hop"}),"walk hop: on, amount 0.1\n");
+	expect_ok("hop off",run(state,{"hop","off"}),"smooth-movement: walk hop off\n",1);
+	expect_true("hop off clears",!state.hop.enabled);
+	expect_ok("hop amount",run(state,{"hop","0.25"}),"smooth-movement: hop amount 0.25\n",1);
+	expect_near("hop amount sets",state.hop.amplitude,0.25);
+	expect_true("hop amount leaves it off",!state.hop.enabled);
+	expect_ok("hop amount without a leading digit",run(state,{"hop",".2"}),
+		"smooth-movement: hop amount 0.2\n",1);
+	expect_near("hop amount without a leading digit sets",state.hop.amplitude,0.2f);
 	// 0.9 tile is the most the amount times the largest multiplier may lift: the default
 	// vertical multiplier of 2.7 caps the amount at a third of a tile.
-	expect_failed("bob amount lifting too far",run(state,{"bob","0.34"}),
-		"bob 0.34 times the current multipliers lifts more than 0.9 tile; "
+	expect_failed("hop amount lifting too far",run(state,{"hop","0.34"}),
+		"hop 0.34 times the current multipliers lifts more than 0.9 tile; "
 		"lower the multipliers first\n");
-	expect_failed("bob amount zero",run(state,{"bob","0"}),
-		"bob amount must be within 0..0.9 tile\n");
-	expect_failed("bob amount over a tile",run(state,{"bob","0.91"}),
-		"bob amount must be within 0..0.9 tile\n");
-	expect_usage("bob amount two points",run(state,{"bob","0.1.2"}));
-	expect_usage("bob amount only a point",run(state,{"bob","."}));
-	expect_usage("bob amount negative",run(state,{"bob","-0.1"}));
-	expect_usage("bob amount text",run(state,{"bob","high"}));
-	expect_usage("bob amount too long",run(state,{"bob","0.1000000"}));
-	expect_usage("bob extra",run(state,{"bob","on","now"}));
-	expect_near("refused amounts leave it",state.bob.amplitude,0.2f);
+	expect_failed("hop amount zero",run(state,{"hop","0"}),
+		"hop amount must be within 0..0.9 tile\n");
+	expect_failed("hop amount over a tile",run(state,{"hop","0.91"}),
+		"hop amount must be within 0..0.9 tile\n");
+	expect_usage("hop amount two points",run(state,{"hop","0.1.2"}));
+	expect_usage("hop amount only a point",run(state,{"hop","."}));
+	expect_usage("hop amount negative",run(state,{"hop","-0.1"}));
+	expect_usage("hop amount text",run(state,{"hop","high"}));
+	expect_usage("hop amount too long",run(state,{"hop","0.1000000"}));
+	expect_usage("hop extra",run(state,{"hop","on","now"}));
+	expect_near("refused amounts leave it",state.hop.amplitude,0.2f);
 
-	expect_ok("bobmult",run(state,{"bobmult"}),
-		"bob multipliers: horizontal 1, diagonal 2.4, vertical 2.7\n");
-	expect_ok("bobmult set",run(state,{"bobmult","0.5","1.5","2"}),
-		"smooth-movement: bob multipliers horizontal 0.5, diagonal 1.5, vertical 2\n");
-	expect_near("bobmult horizontal",state.bob.horizontal_mult,0.5);
-	expect_near("bobmult diagonal",state.bob.diagonal_mult,1.5);
-	expect_near("bobmult vertical",state.bob.vertical_mult,2.0);
+	expect_ok("hopmult",run(state,{"hopmult"}),
+		"hop multipliers: horizontal 1, diagonal 2.4, vertical 2.7\n");
+	expect_ok("hopmult set",run(state,{"hopmult","0.5","1.5","2"}),
+		"smooth-movement: hop multipliers horizontal 0.5, diagonal 1.5, vertical 2\n");
+	expect_near("hopmult horizontal",state.hop.horizontal_mult,0.5);
+	expect_near("hopmult diagonal",state.hop.diagonal_mult,1.5);
+	expect_near("hopmult vertical",state.hop.vertical_mult,2.0);
 	// The amount is 0.2, so a multiplier of 5 would lift a tile; 0.15 lets the cap fit.
-	expect_ok("bob amount for the cap",run(state,{"bob","0.15"}),
-		"smooth-movement: bob amount 0.15\n",1);
-	expect_ok("bobmult at the cap",run(state,{"bobmult","5","4.5","4"}),
-		"smooth-movement: bob multipliers horizontal 5, diagonal 4.5, vertical 4\n");
-	expect_ok("bob amount at the cap",run(state,{"bob","0.18"}),
-		"smooth-movement: bob amount 0.18\n",1);
-	expect_failed("bob amount past the cap",run(state,{"bob","0.19"}),
-		"bob 0.19 times the current multipliers lifts more than 0.9 tile; "
+	expect_ok("hop amount for the cap",run(state,{"hop","0.15"}),
+		"smooth-movement: hop amount 0.15\n",1);
+	expect_ok("hopmult at the cap",run(state,{"hopmult","5","4.5","4"}),
+		"smooth-movement: hop multipliers horizontal 5, diagonal 4.5, vertical 4\n");
+	expect_ok("hop amount at the cap",run(state,{"hop","0.18"}),
+		"smooth-movement: hop amount 0.18\n",1);
+	expect_failed("hop amount past the cap",run(state,{"hop","0.19"}),
+		"hop 0.19 times the current multipliers lifts more than 0.9 tile; "
 		"lower the multipliers first\n");
-	expect_failed("bobmult horizontal over the cap",run(state,{"bobmult","5.1","1","1"}),
-		"bob multipliers must be within 0..5\n");
-	expect_failed("bobmult diagonal over the cap",run(state,{"bobmult","1","6","1"}),
-		"bob multipliers must be within 0..5\n");
-	expect_failed("bobmult vertical over the cap",run(state,{"bobmult","1","1","5.5"}),
-		"bob multipliers must be within 0..5\n");
+	expect_failed("hopmult horizontal over the cap",run(state,{"hopmult","5.1","1","1"}),
+		"hop multipliers must be within 0..5\n");
+	expect_failed("hopmult diagonal over the cap",run(state,{"hopmult","1","6","1"}),
+		"hop multipliers must be within 0..5\n");
+	expect_failed("hopmult vertical over the cap",run(state,{"hopmult","1","1","5.5"}),
+		"hop multipliers must be within 0..5\n");
 	// At an amount of 0.2 a multiplier of 4.6 lifts 0.92 tile.
-	expect_ok("bobmult one",run(state,{"bobmult","1","1","1"}),
-		"smooth-movement: bob multipliers horizontal 1, diagonal 1, vertical 1\n");
-	expect_ok("bob amount for the lift",run(state,{"bob","0.2"}),
-		"smooth-movement: bob amount 0.2\n",1);
-	expect_failed("bobmult lifting too far",run(state,{"bobmult","1","4.6","1"}),
-		"bob 0.2 times that multiplier lifts more than 0.9 tile; lower one of them\n");
-	expect_near("refused multipliers leave horizontal",state.bob.horizontal_mult,1.0);
-	expect_near("refused multipliers leave diagonal",state.bob.diagonal_mult,1.0);
-	expect_near("refused multipliers leave vertical",state.bob.vertical_mult,1.0);
-	expect_usage("bobmult two values",run(state,{"bobmult","1","2"}));
-	expect_usage("bobmult four values",run(state,{"bobmult","1","2","3","4"}));
-	expect_usage("bobmult text",run(state,{"bobmult","1","two","3"}));
-	expect_usage("bobmult negative",run(state,{"bobmult","-1","2","3"}));
+	expect_ok("hopmult one",run(state,{"hopmult","1","1","1"}),
+		"smooth-movement: hop multipliers horizontal 1, diagonal 1, vertical 1\n");
+	expect_ok("hop amount for the lift",run(state,{"hop","0.2"}),
+		"smooth-movement: hop amount 0.2\n",1);
+	expect_failed("hopmult lifting too far",run(state,{"hopmult","1","4.6","1"}),
+		"hop 0.2 times that multiplier lifts more than 0.9 tile; lower one of them\n");
+	expect_near("refused multipliers leave horizontal",state.hop.horizontal_mult,1.0);
+	expect_near("refused multipliers leave diagonal",state.hop.diagonal_mult,1.0);
+	expect_near("refused multipliers leave vertical",state.hop.vertical_mult,1.0);
+	expect_usage("hopmult two values",run(state,{"hopmult","1","2"}));
+	expect_usage("hopmult four values",run(state,{"hopmult","1","2","3","4"}));
+	expect_usage("hopmult text",run(state,{"hopmult","1","two","3"}));
+	expect_usage("hopmult negative",run(state,{"hopmult","-1","2","3"}));
 
 	expect_ok("hops",run(state,{"hops"}),"hops per step: 2\n");
 	expect_ok("hops 1",run(state,{"hops","1"}),"smooth-movement: hops per step 1\n");
-	expect_true("hops 1 sets",state.bob.hops==1);
+	expect_true("hops 1 sets",state.hop.hops==1);
 	expect_ok("hops printout",run(state,{"hops"}),"hops per step: 1\n");
 	expect_ok("hops 2",run(state,{"hops","2"}),"smooth-movement: hops per step 2\n");
-	expect_true("hops 2 sets",state.bob.hops==2);
+	expect_true("hops 2 sets",state.hop.hops==2);
 	expect_usage("hops 3",run(state,{"hops","3"}));
 	expect_usage("hops 0",run(state,{"hops","0"}));
 	expect_usage("hops text",run(state,{"hops","two"}));
 	expect_usage("hops extra",run(state,{"hops","1","2"}));
-	expect_true("refused hops leave it",state.bob.hops==2);
+	expect_true("refused hops leave it",state.hop.hops==2);
 }
 
 // The settings go out as one value and come back the same, with each landing where its
@@ -432,8 +432,8 @@ void test_settings_round_trip()
 	plugin_statest state;
 	plugin_settingsst s;
 	s.flip=true;s.hauled=false;s.camera=true;s.rest_x=-0.25;s.rest_y=0.5;s.linear=false;
-	s.step_ms=400;s.bob.enabled=true;s.bob.amplitude=0.2f;s.bob.horizontal_mult=1.1f;
-	s.bob.diagonal_mult=1.2f;s.bob.vertical_mult=1.3f;s.bob.hops=1;
+	s.step_ms=400;s.hop.enabled=true;s.hop.amplitude=0.2f;s.hop.horizontal_mult=1.1f;
+	s.hop.diagonal_mult=1.2f;s.hop.vertical_mult=1.3f;s.hop.hops=1;
 	state.apply_settings(s);
 	expect_true("apply sets flip",state.flip_enabled);
 	expect_true("apply leaves hauled",!state.hauled_enabled);
@@ -442,18 +442,18 @@ void test_settings_round_trip()
 	expect_near("apply sets the rest y",state.render.camera.rest_offset_y(),0.5);
 	expect_true("apply leaves linear",!state.render.animation_manager.is_linear());
 	expect_true("apply sets the step",state.render.animation_manager.step_duration_ms()==400);
-	expect_true("apply sets the bob",state.bob.enabled&&state.bob.hops==1);
-	expect_near("apply sets the bob amount",state.bob.amplitude,0.2f);
-	expect_near("apply sets the bob multipliers",state.bob.vertical_mult,1.3f);
+	expect_true("apply sets the hop",state.hop.enabled&&state.hop.hops==1);
+	expect_near("apply sets the hop amount",state.hop.amplitude,0.2f);
+	expect_near("apply sets the hop multipliers",state.hop.vertical_mult,1.3f);
 	const plugin_settingsst back=state.settings();
 	expect_true("settings read back the switches",
 		back.flip&&!back.hauled&&back.camera&&!back.linear&&back.step_ms==400);
 	expect_near("settings read back the rest x",back.rest_x,-0.25);
 	expect_near("settings read back the rest y",back.rest_y,0.5);
-	expect_true("settings read back the bob",
-		back.bob.enabled&&back.bob.hops==1&&back.bob.amplitude==0.2f&&
-		back.bob.horizontal_mult==1.1f&&back.bob.diagonal_mult==1.2f&&
-		back.bob.vertical_mult==1.3f);
+	expect_true("settings read back the hop",
+		back.hop.enabled&&back.hop.hops==1&&back.hop.amplitude==0.2f&&
+		back.hop.horizontal_mult==1.1f&&back.hop.diagonal_mult==1.2f&&
+		back.hop.vertical_mult==1.3f);
 	plugin_settingsst other;
 	other.flip=false;other.hauled=true;other.camera=false;other.linear=true;
 	state.apply_settings(other);
@@ -481,7 +481,7 @@ void test_settings_round_trip()
 	expect_true("defaults restore the step",
 		state.render.animation_manager.step_duration_ms()==150);
 	expect_near("defaults zero the rest x",state.render.camera.rest_offset_x(),0.0);
-	expect_true("defaults restore the bob",!state.bob.enabled&&state.bob.hops==2);
+	expect_true("defaults restore the hop",!state.hop.enabled&&state.hop.hops==2);
 }
 
 void test_reset()
@@ -490,9 +490,9 @@ void test_reset()
 	run(state,{"all","on"});
 	run(state,{"camera","0.25","0"});
 	run(state,{"timestep","400"});
-	run(state,{"bob","0.2"});
-	run(state,{"bob","on"});
-	run(state,{"bobmult","1","1","1"});
+	run(state,{"hop","0.2"});
+	run(state,{"hop","on"});
+	run(state,{"hopmult","1","1","1"});
 	run(state,{"hops","1"});
 	run(state,{"stats","on"});
 	state.reset();
@@ -505,10 +505,10 @@ void test_reset()
 		state.render.animation_manager.step_duration_ms()==150);
 	expect_true("reset turns the camera off",!state.render.camera.is_enabled());
 	expect_near("reset zeroes the camera offset",state.render.camera.rest_offset_x(),0.0);
-	expect_true("reset clears the bob",!state.bob.enabled);
-	expect_near("reset restores the bob amount",state.bob.amplitude,0.1f);
-	expect_near("reset restores the bob multipliers",state.bob.diagonal_mult,2.4f);
-	expect_true("reset restores the hops",state.bob.hops==2);
+	expect_true("reset clears the hop",!state.hop.enabled);
+	expect_near("reset restores the hop amount",state.hop.amplitude,0.1f);
+	expect_near("reset restores the hop multipliers",state.hop.diagonal_mult,2.4f);
+	expect_true("reset restores the hops",state.hop.hops==2);
 	expect_true("reset turns the stats off",!state.stats.enabled);
 }
 
@@ -523,7 +523,7 @@ int main()
 	test_camera();
 	test_flip_linear_hauled();
 	test_timestep();
-	test_bob();
+	test_hop();
 	test_settings_round_trip();
 	test_reset();
 	if(failures!=0)

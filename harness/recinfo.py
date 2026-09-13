@@ -12,8 +12,8 @@ Usage: recinfo.py <recording> [first frame] [last frame]
 Per line: frame number; t, the frame clock in ms; the plugin's four settings; step, the
 one-tile step time in ms (a version 2 recording has no field and was made at 150); sim, the
 simulation's frame counter when the game last filled the per-tile arrays, or -1 when no fill
-was seen since the previous frame or the recording is older than version 4; bob, amount,
-mult and hops, the walk bob settings (off, 0.1, 1,2.4,2.7 and 2 for a recording older
+was seen since the previous frame or the recording is older than version 4; hop, amount,
+mult and hops, the walk hop settings (off, 0.1, 1,2.4,2.7 and 2 for a recording older
 than version 5, which has no fields for them); w, the window position x,y,z; P when the
 game was paused, - otherwise; follow, the followed unit id or -1;
 mouse, the mouse position with M when the middle button was down; zoom; o, the drawing origin
@@ -114,11 +114,11 @@ def main():
         step = r.u32() if version >= 3 else 150
         sim = r.i64() if version >= 4 else -1
         if version >= 5:
-            bob, amount = r.u8(), r.f32()
+            hop, amount = r.u8(), r.f32()
             mults = [r.f32() for _ in range(3)]
             hops = r.u8()
         else:
-            bob, amount, mults, hops = 0, 0.1, [1, 2.4, 2.7], 2
+            hop, amount, mults, hops = 0, 0.1, [1, 2.4, 2.7], 2
         tick = r.u32()
         wx, wy, wz = r.i32(), r.i32(), r.i32()
         paused = r.u8()
@@ -145,7 +145,7 @@ def main():
         changed = r.u32()
         if first <= n <= last:
             print(f'{n:5d} t={tick} {settings} step={step} sim={sim} '
-                  f'bob={"on" if bob else "off"} amount={amount:g} '
+                  f'hop={"on" if hop else "off"} amount={amount:g} '
                   f'mult={",".join(f"{m:g}" for m in mults)} hops={hops} w={wx},{wy},{wz} '
                   f'{"P" if paused else "-"} '
                   f'follow={follow} mouse={mx},{my}{"M" if mbut else ""} zoom={zoom} o={ox},{oy} '

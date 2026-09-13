@@ -393,7 +393,7 @@ void test_follow()
 	scene.manager.scroll.follow_candidate=7;
 	scene.step();
 	expect_glide("follow",scene.camera,8,-16);
-	scene.manager.follow.offset_x=0.125f;
+	scene.manager.follow.offset_x_tiles=0.125f;
 	scene.step();
 	expect_glide("follow progressed",scene.camera,4,-16);
 	scene.manager.follow.active=false;
