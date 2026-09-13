@@ -2,19 +2,11 @@
 """Prints one line per frame of a `smooth-movement record` file, without the per-tile arrays.
 Usage: recinfo.py <recording> [first frame] [last frame]
 
-    $ harness/recinfo.py harness/recordings/fortress-600.rec 0 9
-    version 2
-        0 t=706920620 flip=1 hauled=0 camera=0 linear=0 step=150 w=76,83,158 P follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
-        2 t=706921277 flip=1 hauled=0 camera=0 linear=0 step=150 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 skipped repaints=0 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
-        9 t=706921460 flip=1 hauled=0 camera=0 linear=0 step=150 w=76,83,158 - follow=-1 mouse=-1,-1 zoom=192 o=0,4 grid=150x66 rest=0,0 units=10 painted repaints=38 changed=0 vps=0:25x17[0-24,0-16]b50 ... 8:25x17[0-24,0-16]b50
-    frames 600
-
-Per line: frame number; t, the frame clock in ms; the plugin's four settings; step, the
-one-tile step time in ms (a version 2 recording has no field and was made at 150); sim, the
-simulation's frame counter when the game last filled the per-tile arrays, or -1 when no fill
-was seen since the previous frame or the recording is older than version 4; hop, amount,
-mult and hops, the walk hop settings (off, 0.1, 1,2.4,2.7 and 2 for a recording older
-than version 5, which has no fields for them); w, the window position x,y,z; P when the
+Per line: frame number; t, the frame clock in ms; the plugin's three switches; the
+interpolation, the movement by name; settings, the movement's settings as name=value pairs,
+or - for none; step, the one-tile step time in ms; sim, the simulation's frame counter when
+the game last filled the per-tile arrays, or -1 when no fill was seen since the previous frame; w, the window position x,y,z;
+P when the
 game was paused, - otherwise; follow, the followed unit id or -1;
 mouse, the mouse position with M when the middle button was down; zoom; o, the drawing origin
 in tiles; grid, the screen size in tiles; rest, the free camera's offset in tiles; units, how
@@ -36,7 +28,7 @@ anything changed under the hook."""
 import struct, sys
 
 TILE_ARRAYS = 50  # per-tile arrays per viewport, current then old, in for_each_tile_array order
-SETTINGS = ['flip', 'hauled', 'camera', 'linear']  # the frame header's settings, in file order
+SETTINGS = ['flip', 'hauled', 'camera']  # the frame header's switches, in file order
 WORD = [4, 8, 4, 4, 4, 4, 8, 4] + [4] * 17  # element size per current array, repeated for old
 WORD = WORD + WORD
 
@@ -104,21 +96,24 @@ def main():
     assert data[:4] == b'SMRC', 'not a recording'
     r.p = 4
     version = r.u32()
-    assert version in (2, 3, 4, 5), f'recording version {version}, this script reads 2 to 5'
+    assert version == 7, f'recording version {version}, this script reads version 7 only'
     print('version', version)
     n = 0
     while r.p < len(data):
         assert r.u8() == ord('F')
-        flags = [r.u8() for _ in range(4)]
+        flags = [r.u8() for _ in range(3)]
         settings = ' '.join(f'{name}={value}' for name, value in zip(SETTINGS, flags))
-        step = r.u32() if version >= 3 else 150
-        sim = r.i64() if version >= 4 else -1
-        if version >= 5:
-            hop, amount = r.u8(), r.f32()
-            mults = [r.f32() for _ in range(3)]
-            hops = r.u8()
-        else:
-            hop, amount, mults, hops = 0, 0.1, [1, 2.4, 2.7], 2
+        def name():
+            length = r.u8()
+            text = data[r.p:r.p + length].decode()
+            r.p += length
+            return text
+        interpolation = name()
+        movement_settings = [(name(), r.f32()) for _ in range(r.u8())]
+        step = r.u32()
+        sim = r.i64()
+        settings += f' interpolation={interpolation}'
+        settings += ' settings=' + (','.join(f'{n}={v:g}' for n, v in movement_settings) or '-')
         tick = r.u32()
         wx, wy, wz = r.i32(), r.i32(), r.i32()
         paused = r.u8()
@@ -144,9 +139,7 @@ def main():
         painted = r.u8()
         changed = r.u32()
         if first <= n <= last:
-            print(f'{n:5d} t={tick} {settings} step={step} sim={sim} '
-                  f'hop={"on" if hop else "off"} amount={amount:g} '
-                  f'mult={",".join(f"{m:g}" for m in mults)} hops={hops} w={wx},{wy},{wz} '
+            print(f'{n:5d} t={tick} {settings} step={step} sim={sim} w={wx},{wy},{wz} '
                   f'{"P" if paused else "-"} '
                   f'follow={follow} mouse={mx},{my}{"M" if mbut else ""} zoom={zoom} o={ox},{oy} '
                   f'grid={dimx}x{dimy} rest={rx:g},{ry:g} units={units} {"painted" if painted else "skipped"} '

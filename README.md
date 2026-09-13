@@ -28,19 +28,19 @@ enable smooth-movement
 ## Useful commands
 
 ```text
-smooth-movement             # show plugin status
+smooth-movement status      # show the plugin's settings; bare `smooth-movement` prints the usage
 disable smooth-movement     # disable the plugin
-smooth-movement all on      # enable flip, linear and hauled (not the WIP free camera or stats)
-smooth-movement all off     # disable flip, linear and hauled
+smooth-movement all on      # enable flip and hauled icons (not the free camera or stats)
+smooth-movement all off     # disable flip and hauled icons
 smooth-movement flip on     # enable sprites flip
 smooth-movement camera on   # enable the free camera
-smooth-movement linear on   # use linear easing with adaptive <timestep>–500 ms movement tweens
+smooth-movement movement linear # use linear movement
 smooth-movement timestep 200 # a one-tile glide takes 200 ms (default 150, range 20-2000)
 smooth-movement hauled on   # show icons for carried boulders, bars, and wood
-smooth-movement hop on      # enable the walk hop
-smooth-movement hop 0.15    # hop height in tiles (default 0.10); does not turn the hop on
-smooth-movement hopmult 1 2.4 2.7  # hop multipliers for horizontal, diagonal, vertical steps
-smooth-movement hops 1      # one hop per step instead of two
+smooth-movement movement hop # use the walk hop
+smooth-movement movement hop hop-height 0.15 # hop height in tiles (default 0.10)
+smooth-movement movement hop horizontal-mult 1 # horizontal-step multiplier
+smooth-movement movement hop hops-per-step 1 # one hop per step instead of two
 smooth-movement stats on    # time the render hook; `smooth-movement stats` prints the numbers
 smooth-movement record f.rec # write what the render hook sees for the next 900 frames to f.rec
 ```
@@ -48,10 +48,10 @@ smooth-movement record f.rec # write what the render hook sees for the next 900 
 ### Walk hop
 
 The hop is off by default and does not change how creatures glide; it only lifts the sprite
-along the way. The height is `hop <amount>` times a per-direction multiplier: a step with a
+along the way. The height is `movement hop hop-height <tiles>` times a per-direction multiplier: a step with a
 vertical component already moves the sprite a whole tile up or down, which drowns a small hop,
 so diagonal and straight vertical steps get larger multipliers by default. Every combination of
-amount and multipliers is capped so the lift stays under one tile, because the plugin repaints
+hop height and multipliers are capped so the lift stays under one tile, because the plugin repaints
 exactly one row above a hopping sprite. On a row that is off the top of the screen, or on fire,
 the whole creature glides without the hop. Carried item icons hop with their creature; vehicles
 never hop. `all on|off` leaves the hop alone. Like `flip` and `hauled`, the hop settings return
