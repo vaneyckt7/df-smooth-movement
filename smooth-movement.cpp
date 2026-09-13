@@ -314,7 +314,7 @@ void render_copy_maybe_mirrored(
 }
 
 // Where a sprite gliding from its source tile to its target tile sits on screen this frame:
-// the top left corner in pixels and the tile size. A bobbing sprite is lifted towards the
+// the top left corner in pixels and the tile size. A hopping sprite is lifted towards the
 // row above its path; the lift is zero at both ends of the step, so it lands on the grid.
 struct sprite_placementst
 {
@@ -332,13 +332,13 @@ sprite_placementst place_sprite(const df::renderer_2d_base *renderer,const Proxy
 	const float tile_px=float(tile_size_px(zoom));
 	const float source_x_px=target_x_px+(proxy.source_x_tiles-proxy.target_x)*tile_px;
 	const float source_y_px=target_y_px+(proxy.source_y_tiles-proxy.target_y)*tile_px;
-	const float bob_offset_px=proxy.bob?
-		-state.bob.lift(proxy.source_x_tiles,proxy.source_y_tiles,proxy.target_x,proxy.target_y,
+	const float hop_offset_px=proxy.hop?
+		-state.hop.lift(proxy.source_x_tiles,proxy.source_y_tiles,proxy.target_x,proxy.target_y,
 			proxy.progress_pct)*tile_px:
 		0.0f;
 	return {
 		source_x_px+(target_x_px-source_x_px)*proxy.progress_pct,
-		source_y_px+(target_y_px-source_y_px)*proxy.progress_pct+bob_offset_px,
+		source_y_px+(target_y_px-source_y_px)*proxy.progress_pct+hop_offset_px,
 		tile_px};
 }
 
@@ -363,7 +363,7 @@ void draw_carried_item_proxy(
 	df::renderer_2d_base *renderer,
 	const carried_item_proxyst &proxy)
 {
-	// The icon rides the creature's walk bob so it stays on the sprite that carries it.
+	// The icon rides the creature's walk hop so it stays on the sprite that carries it.
 	const sprite_placementst placement=place_sprite(renderer,proxy);
 	const auto icon=carried_item_icon_rect(placement.x_px,placement.y_px,placement.tile_size_px);
 	const SDL_FRect destination={icon.x_px,icon.y_px,icon.width_px,icon.height_px};
@@ -568,7 +568,7 @@ std::vector<viewport_renderst> collect_viewport_renders(
 			{
 			vp,
 			collect_proxies(
-				vp,state.render.animation_manager,state.flip_enabled,state.bob.enabled,
+				vp,state.render.animation_manager,state.flip_enabled,state.hop.enabled,
 				[renderer](int32_t texpos){return cached_texture(renderer,texpos);}),
 			{}
 			};
@@ -732,10 +732,10 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	std::vector<viewport_renderst> viewport_renders=
 		collect_viewport_renders(renderer,viewports);
 	tile_coveragest coverage=collect_viewport_coverage(viewport_renders);
-	// A hauled icon bobs with the creature under it, found among the main viewport's
+	// A hauled icon hops with the creature under it, found among the main viewport's
 	// proxies; the icons are drawn over that viewport, the last one collected.
 	if(!viewport_renders.empty())
-		mark_carried_item_bobs(carried_items,viewport_renders.back().proxies);
+		mark_carried_item_hops(carried_items,viewport_renders.back().proxies);
 	for(const carried_item_proxyst &proxy:carried_items)
 		coverage.insert(proxy.coverage.begin(),proxy.coverage.end());
 
@@ -921,7 +921,7 @@ plugin_init(color_ostream &,std::vector<PluginCommand> &commands)
 		"sprite flipping: flip on|off; linear movement: linear on|off; "
 		"one-tile step time: timestep <ms> (20-2000); "
 		"hauled item icons: hauled on|off; "
-		"walk bob: bob on|off|<amount>; bob multipliers: bobmult <horizontal> <diagonal> "
+		"walk hop: hop on|off|<amount>; hop multipliers: hopmult <horizontal> <diagonal> "
 		"<vertical>; hops per step: hops 1|2; "
 		"frame timing: stats [on|off|reset]; "
 		"frame recording: record <file> [frames] | record stop | record status.",

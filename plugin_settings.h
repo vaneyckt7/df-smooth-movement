@@ -21,5 +21,5 @@ struct plugin_settingsst
 	double rest_x=0.0,rest_y=0.0;
 	bool linear=false; // linear easing instead of the default curve
 	uint32_t step_ms=visual_animation_managerst::default_step_duration_ms; // one-tile step
-	walk_bob_settingst bob;
+	walk_hop_settingst hop;
 };

@@ -106,7 +106,7 @@ struct plugin_statest
 	frame_recorderst recorder;
 	bool flip_enabled=false;
 	bool hauled_enabled=false;
-	walk_bob_settingst bob;
+	walk_hop_settingst hop;
 	render_statest render;
 
 	// The animation and camera state a freshly enabled plugin starts from, keeping the
@@ -137,7 +137,7 @@ struct plugin_statest
 		s.rest_y=render.camera.rest_offset_y();
 		s.linear=render.animation_manager.is_linear();
 		s.step_ms=render.animation_manager.step_duration_ms();
-		s.bob=bob;
+		s.hop=hop;
 		return s;
 		}
 
@@ -152,7 +152,7 @@ struct plugin_statest
 		render.camera.set_rest(s.rest_x,s.rest_y);
 		render.animation_manager.set_linear(s.linear);
 		render.animation_manager.set_step_duration_ms(s.step_ms);
-		bob=s.bob;
+		hop=s.hop;
 		}
 
 	// Everything back to how a freshly enabled plugin starts: the visual state, the settings
