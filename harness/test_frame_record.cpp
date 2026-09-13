@@ -120,7 +120,7 @@ int main(int argc,char **argv)
 		{"vertical",2.7f},{"hops",1.0f}};
 	f.settings.step_ms=999;f.simulation_tick=77;f.tick_ms=5;f.zoom=64;
 	frame_record::frame_headerst f2,f3;
-	#if 0 // Pre-v7 recording compatibility cases, intentionally unsupported.
+	#if 0
 	// A version 2 file has no step field in its frame header and reads back at the 150 ms
 	// every such recording was made with, a version 3 file no simulation tick and reads
 	// back as unknown, a version 4 file no walk hop settings, a version 5 file a linear

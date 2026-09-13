@@ -24,7 +24,7 @@ struct plugin_settingsst
 	double rest_x=0.0,rest_y=0.0;
 	// How a step is spread over frames: the movement, by name, with its settings (see
 	// movement.h).
-	std::string movement=default_movement().name();
+	std::string movement="none";
 	std::vector<movement_settingst> movement_settings;
 	uint32_t step_ms=visual_animation_managerst::default_step_duration_ms; // one-tile step
 };

@@ -27,7 +27,7 @@ run_test frame-record
 fields='.* interpolation=\([a-z-]*\) settings=\([a-z=0-9.,-]*\) step=\([0-9]*\) sim=\(-*[0-9]*\) .*'
 sample=$("$here/recinfo.py" "$here/out/test-current.rec" |
 	sed -n "s/$fields/\1,\2,\3,\4/p;s/^frames //p" | tr '\n' ' ')
-expected="smoothstep,-,250,1234567 linear,-,250,-1 hop,amount=0.15,horizontal=1,diagonal=2,vertical=3,hops=1,250,1234569 3 "
+expected="none,-,250,1234567 linear,-,250,-1 hop,amount=0.15,horizontal=1,diagonal=2,vertical=3,hops=1,250,1234569 3 "
 if [ "$sample" != "$expected" ]; then
 	echo "recinfo.py misreads the current format: $sample"; exit 1
 fi

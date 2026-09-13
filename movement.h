@@ -158,7 +158,22 @@ class movementst
 		virtual std::unique_ptr<movementst> clone() const=0;
 };
 
-// The default: the smoothstep pace on the straight path.
+// No interpolation: the game draws the creature at its native position. This is the plugin's
+// default selection; it is intentionally a movement so settings, recordings and the console
+// can name it like every other choice.
+class none_movementst:public movementst
+{
+	public:
+		const char *name() const override {return "none";}
+		float travelled_pct(float elapsed_pct) const override {return elapsed_pct==0.0f?0.0f:1.0f;}
+		sprite_offsetst path(float travelled_pct,tile_stepst step) const override
+			{return straight_path(travelled_pct,step);}
+		movement_overshootst overshoot() const override {return {};}
+		std::unique_ptr<movementst> clone() const override
+			{return std::make_unique<none_movementst>(*this);}
+};
+
+// The smoothstep pace on the straight path.
 class smoothstep_movementst:public movementst
 {
 	public:
@@ -354,6 +369,7 @@ struct movement_sett
 inline movement_sett make_movements()
 {
 	movement_sett set;
+	set.all.push_back(std::make_unique<none_movementst>());
 	set.all.push_back(std::make_unique<smoothstep_movementst>());
 	set.all.push_back(std::make_unique<linear_movementst>());
 	set.all.push_back(std::make_unique<hop_movementst>());
