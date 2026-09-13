@@ -115,7 +115,7 @@ struct plugin_statest
 
 	plugin_statest()
 		{
-		render.animation_manager.set_movement(movements.default_movement());
+		render.animation_manager.set_movement(movements.initial_movement());
 		}
 
 	// The animation and camera state a freshly enabled plugin starts from, keeping the
@@ -174,7 +174,7 @@ struct plugin_statest
 			render.animation_manager.set_movement(*movement);
 			return error;
 			}
-		render.animation_manager.set_movement(movements.default_movement());
+		render.animation_manager.set_movement(movements.initial_movement());
 		return "unknown movement "+s.movement;
 		}
 

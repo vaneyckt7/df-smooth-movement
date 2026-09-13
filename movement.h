@@ -50,7 +50,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -328,21 +327,14 @@ class hop_movementst:public movementst
 			{
 			return delta_tiles>-0.5f&&delta_tiles<=0.5f;
 			}
-
-		static std::string format(const char *pattern,float value)
-			{
-			char text[96];
-			std::snprintf(text,sizeof text,pattern,double(value));
-			return text;
-			}
 };
 
-// Every movement, one instance each with its settings, the default first.
+// Every movement, one instance each with its settings, the plugin's initial movement first.
 struct movement_sett
 {
 	std::vector<std::unique_ptr<movementst>> all;
 
-	movementst &default_movement() const
+	movementst &initial_movement() const
 		{
 		return *all.front();
 		}

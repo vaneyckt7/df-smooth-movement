@@ -301,7 +301,8 @@ command_outcomest run_command(
 					out.print("movement {} {}: {}\n",movement->name(),setting.name,setting.value);
 					return command_outcomest::ok;
 					}
-			return command_outcomest::wrong_usage;
+			out.printerr("{} has no setting named {}\n",movement->name(),parameters[2]);
+			return command_outcomest::failed;
 			}
 		if(parameters.size()!=4)return command_outcomest::wrong_usage;
 		const float value=parse_hop_value(parameters[3]);

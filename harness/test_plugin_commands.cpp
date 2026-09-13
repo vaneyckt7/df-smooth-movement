@@ -348,7 +348,10 @@ void test_movement()
 	expect_failed("multiplier over the limit",run(state,{"movement","hop","vertical-mult","5.5"}),
 		"hop multipliers must be within 0..5\n");
 	expect_usage("unknown movement",run(state,{"movement","bounce"}));
-	expect_usage("unknown setting",run(state,{"movement","hop","bounce"}));
+	expect_failed("unknown setting query",run(state,{"movement","hop","bounce"}),
+		"hop has no setting named bounce\n");
+	expect_failed("unknown setting value",run(state,{"movement","hop","bounce","5"}),
+		"hop has no setting named bounce\n");
 	expect_usage("setting without value",run(state,{"movement","hop","hop-height","0","extra"}));
 	expect_usage("negative setting",run(state,{"movement","hop","hop-height","-0.1"}));
 }

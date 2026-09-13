@@ -324,23 +324,23 @@ std::vector<render_proxyst> collect_proxies(
 			if(proxy.mirror_shift!=0)
 				{
 				std::set<std::pair<int32_t,int32_t>> mirrored_coverage;
-				for(const auto &tile:proxy.coverage)
+				for(const auto &coverage_tile:proxy.coverage)
 					mirrored_coverage.emplace(
-						tile.first+proxy.mirror_shift,tile.second);
-				for(const auto &tile:mirrored_coverage)
+						coverage_tile.first+proxy.mirror_shift,coverage_tile.second);
+				for(const auto &mirrored_tile:mirrored_coverage)
 					{
-					if(!inside_clip(vp,tile.first,tile.second))
+					if(!inside_clip(vp,mirrored_tile.first,mirrored_tile.second))
 						{
 						blocked=true;
 						break;
 						}
 					if(visual_render_group(proxy.layer)==visual_render_groupst::main&&
-						has_fire(vp,tile.first,tile.second))
+						has_fire(vp,mirrored_tile.first,mirrored_tile.second))
 						{
 						blocked=true;
 						break;
 						}
-					proxy.coverage.insert(tile);
+					proxy.coverage.insert(mirrored_tile);
 					}
 				if(blocked)continue;
 				}

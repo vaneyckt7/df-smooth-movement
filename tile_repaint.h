@@ -361,7 +361,8 @@ void repaint_above(
 		with_upper_hidden(vp,index,without_visuals);
 }
 
-// Every array the interface-only pass zeroes has to exist before it can be zeroed.
+// Every array the interface-only pass zeroes has to exist before it can be zeroed. The top
+// shadow is deliberately absent: this pass leaves it in place with the interface shading.
 template<typename Viewport>
 bool interface_pass_readable(const Viewport *vp)
 {
@@ -384,6 +385,7 @@ bool interface_pass_readable(const Viewport *vp)
 }
 
 // Paints the shading alone, after the sprites, so it covers them instead of lying beneath.
+// The top shadow is intentionally not zeroed; the interface-only test locks that behavior down.
 template<typename Viewport,typename Repaint>
 void repaint_interface_only(Viewport *vp,int32_t x,int32_t y,const Repaint &repaint)
 {
