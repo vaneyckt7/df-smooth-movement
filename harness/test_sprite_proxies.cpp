@@ -183,10 +183,10 @@ void test_moving()
 		{{from_x,row-1},{to_x,row-1}},up_texpos);
 	for(const render_proxyst &proxy:proxies)
 		{
-		if(proxy.source_x!=float(proxy.target_x-1)||proxy.source_y!=float(proxy.target_y))
-			printf("flip off: source (%g,%g)\n",proxy.source_x,proxy.source_y),++failures;
-		if(proxy.progress<0.0f||proxy.progress>=1.0f||proxy.progress!=proxies[0].progress)
-			printf("flip off: progress %g\n",proxy.progress),++failures;
+		if(proxy.source_x_tiles!=float(proxy.target_x-1)||proxy.source_y_tiles!=float(proxy.target_y))
+			printf("flip off: source (%g,%g)\n",proxy.source_x_tiles,proxy.source_y_tiles),++failures;
+		if(proxy.progress_pct<0.0f||proxy.progress_pct>=1.0f||proxy.progress_pct!=proxies[0].progress_pct)
+			printf("flip off: progress %g\n",proxy.progress_pct),++failures;
 		}
 	}
 	{
@@ -254,7 +254,7 @@ void test_blocked()
 	expect_proxy("clip at the source, flip on, right",proxies,L::right,to_x+1,row,true,-2,
 		{{to_x-1,row},{to_x,row},{to_x+1,row}},right_texpos);
 	const render_proxyst *right=find(proxies,L::right);
-	if(right!=nullptr&&right->progress!=1.0f)
+	if(right!=nullptr&&right->progress_pct!=1.0f)
 		printf("clip at the source, flip on: right fragment still moving\n"),++failures;
 	}
 	{
@@ -268,7 +268,7 @@ void test_blocked()
 	expect_proxy("fire on the mirrored path, right",proxies,L::right,to_x+1,row,true,-2,
 		{{to_x-1,row},{to_x,row},{to_x+1,row}},right_texpos);
 	const render_proxyst *right=find(proxies,L::right);
-	if(right!=nullptr&&right->progress!=1.0f)
+	if(right!=nullptr&&right->progress_pct!=1.0f)
 		printf("fire on the mirrored path: right fragment still moving\n"),++failures;
 	}
 	{
@@ -303,8 +303,8 @@ void test_resting()
 		{{to_x-1,row},{to_x,row},{to_x+1,row}},right_texpos);
 	expect_proxy("resting, up",proxies,L::up,to_x,row-1,true,0,{{to_x,row-1}},up_texpos);
 	for(const render_proxyst &proxy:proxies)
-		if(proxy.progress!=1.0f||proxy.source_x!=float(proxy.target_x)||
-			proxy.source_y!=float(proxy.target_y))
+		if(proxy.progress_pct!=1.0f||proxy.source_x_tiles!=float(proxy.target_x)||
+			proxy.source_y_tiles!=float(proxy.target_y))
 			printf("resting: proxy not in place\n"),++failures;
 	// Fire under a resting main-group sprite blocks it as it does a moving one.
 	scene.v.spatter_flags[to_x*dim_y+row]=0x20000000U;
@@ -528,26 +528,26 @@ void test_carried_item_bob()
 	const auto proxies=scene.collect(false);
 	const render_proxyst *centre=find(proxies,L::center);
 	if(centre==nullptr){printf("carried item: no centre proxy\n");++failures;return;}
-	auto item=[&](int32_t target_x,int32_t target_y,float source_x,float source_y,
-		float progress)
+	auto item=[&](int32_t target_x,int32_t target_y,float source_x_tiles,float source_y_tiles,
+		float progress_pct)
 		{
-		return carried_item_proxyst{source_x,source_y,target_x,target_y,progress,
+		return carried_item_proxyst{source_x_tiles,source_y_tiles,target_x,target_y,progress_pct,
 			centre->texture,false,{}};
 		};
 	std::vector<carried_item_proxyst> items={
-		item(centre->target_x,centre->target_y,centre->source_x,centre->source_y,
-			centre->progress),
-		item(centre->target_x,centre->target_y,centre->source_x,centre->source_y,
-			centre->progress+0.25f),
-		item(centre->target_x,centre->target_y,centre->source_x-1.0f,centre->source_y,
-			centre->progress),
-		item(centre->target_x,centre->target_y,centre->source_x,centre->source_y-1.0f,
-			centre->progress),
-		item(centre->target_x+1,centre->target_y,centre->source_x,centre->source_y,
-			centre->progress),
-		item(centre->target_x,centre->target_y+1,centre->source_x,centre->source_y,
-			centre->progress),
-		item(to_x+1,row,float(from_x+1),float(row),centre->progress)};
+		item(centre->target_x,centre->target_y,centre->source_x_tiles,centre->source_y_tiles,
+			centre->progress_pct),
+		item(centre->target_x,centre->target_y,centre->source_x_tiles,centre->source_y_tiles,
+			centre->progress_pct+0.25f),
+		item(centre->target_x,centre->target_y,centre->source_x_tiles-1.0f,centre->source_y_tiles,
+			centre->progress_pct),
+		item(centre->target_x,centre->target_y,centre->source_x_tiles,centre->source_y_tiles-1.0f,
+			centre->progress_pct),
+		item(centre->target_x+1,centre->target_y,centre->source_x_tiles,centre->source_y_tiles,
+			centre->progress_pct),
+		item(centre->target_x,centre->target_y+1,centre->source_x_tiles,centre->source_y_tiles,
+			centre->progress_pct),
+		item(to_x+1,row,float(from_x+1),float(row),centre->progress_pct)};
 	mark_carried_item_bobs(items,proxies);
 	if(!items[0].bob)printf("carried item on its bobbing carrier: still\n"),++failures;
 	if(items[1].bob)printf("carried item a different progress: bobs\n"),++failures;

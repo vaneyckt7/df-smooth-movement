@@ -88,7 +88,7 @@ int32_t tile_size_px(int32_t zoom)
 	return zoom==128?32:std::max(1,zoom*32/128);
 }
 
-double tile_px(const df::renderer_2d_base *renderer)
+double renderer_tile_px(const df::renderer_2d_base *renderer)
 {
 	return double(tile_size_px(renderer->viewport_zoom_factor));
 }
@@ -318,28 +318,28 @@ void render_copy_maybe_mirrored(
 // row above its path; the lift is zero at both ends of the step, so it lands on the grid.
 struct sprite_placementst
 {
-	float x;
-	float y;
-	float tile_size;
+	float x_px;
+	float y_px;
+	float tile_size_px;
 };
 
 template<typename Proxy>
 sprite_placementst place_sprite(const df::renderer_2d_base *renderer,const Proxy &proxy)
 {
 	const int32_t zoom=renderer->viewport_zoom_factor;
-	const float target_x=float(tile_pixel(proxy.target_x,renderer->origin_x,zoom));
-	const float target_y=float(tile_pixel(proxy.target_y,renderer->origin_y,zoom));
-	const float tile_size=float(tile_size_px(zoom));
-	const float source_x=target_x+(proxy.source_x-proxy.target_x)*tile_size;
-	const float source_y=target_y+(proxy.source_y-proxy.target_y)*tile_size;
-	const float bob_offset=proxy.bob?
-		-state.bob.lift(proxy.source_x,proxy.source_y,proxy.target_x,proxy.target_y,
-			proxy.progress)*tile_size:
+	const float target_x_px=float(tile_pixel(proxy.target_x,renderer->origin_x,zoom));
+	const float target_y_px=float(tile_pixel(proxy.target_y,renderer->origin_y,zoom));
+	const float tile_px=float(tile_size_px(zoom));
+	const float source_x_px=target_x_px+(proxy.source_x_tiles-proxy.target_x)*tile_px;
+	const float source_y_px=target_y_px+(proxy.source_y_tiles-proxy.target_y)*tile_px;
+	const float bob_offset_px=proxy.bob?
+		-state.bob.lift(proxy.source_x_tiles,proxy.source_y_tiles,proxy.target_x,proxy.target_y,
+			proxy.progress_pct)*tile_px:
 		0.0f;
 	return {
-		source_x+(target_x-source_x)*proxy.progress,
-		source_y+(target_y-source_y)*proxy.progress+bob_offset,
-		tile_size};
+		source_x_px+(target_x_px-source_x_px)*proxy.progress_pct,
+		source_y_px+(target_y_px-source_y_px)*proxy.progress_pct+bob_offset_px,
+		tile_px};
 }
 
 void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
@@ -347,10 +347,10 @@ void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
 	const sprite_placementst placement=place_sprite(renderer,proxy);
 	const SDL_FRect destination=
 		{
-		placement.x+float(proxy.mirror_shift)*placement.tile_size,
-		placement.y,
-		placement.tile_size,
-		placement.tile_size
+		placement.x_px+float(proxy.mirror_shift)*placement.tile_size_px,
+		placement.y_px,
+		placement.tile_size_px,
+		placement.tile_size_px
 		};
 	render_copy_maybe_mirrored(
 		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
@@ -365,8 +365,8 @@ void draw_carried_item_proxy(
 {
 	// The icon rides the creature's walk bob so it stays on the sprite that carries it.
 	const sprite_placementst placement=place_sprite(renderer,proxy);
-	const auto icon=carried_item_icon_rect(placement.x,placement.y,placement.tile_size);
-	const SDL_FRect destination={icon.x,icon.y,icon.width,icon.height};
+	const auto icon=carried_item_icon_rect(placement.x_px,placement.y_px,placement.tile_size_px);
+	const SDL_FRect destination={icon.x_px,icon.y_px,icon.width_px,icon.height_px};
 	state.sdl.render_copy_f(
 		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
 		proxy.texture,nullptr,&destination);
@@ -526,14 +526,15 @@ std::vector<carried_item_proxyst> collect_carried_item_proxies(
 		if(texture==nullptr)continue;
 		const auto movement=state.render.animation_manager.get_movement(
 			vp,viewport_visual_layer::center,x,y);
-		const float source_x=movement.active?movement.source_x:float(x);
-		const float source_y=movement.active?movement.source_y:float(y);
+		const float source_x_tiles=movement.active?movement.source_x_tiles:float(x);
+		const float source_y_tiles=movement.active?movement.source_y_tiles:float(y);
 		carried_item_proxyst proxy={
-			source_x,source_y,x,y,movement.active?movement.progress:1.0f,texture,false,{}};
-		for(int32_t coverage_x=int32_t(std::floor(std::min(source_x,float(x))));
-			coverage_x<=int32_t(std::ceil(std::max(source_x,float(x))));++coverage_x)
-			for(int32_t coverage_y=int32_t(std::floor(std::min(source_y,float(y))));
-				coverage_y<=int32_t(std::ceil(std::max(source_y,float(y))));++coverage_y)
+			source_x_tiles,source_y_tiles,x,y,movement.active?movement.progress_pct:1.0f,
+			texture,false,{}};
+		for(int32_t coverage_x=int32_t(std::floor(std::min(source_x_tiles,float(x))));
+			coverage_x<=int32_t(std::ceil(std::max(source_x_tiles,float(x))));++coverage_x)
+			for(int32_t coverage_y=int32_t(std::floor(std::min(source_y_tiles,float(y))));
+				coverage_y<=int32_t(std::ceil(std::max(source_y_tiles,float(y))));++coverage_y)
 				if(inside_clip(vp,coverage_x,coverage_y))
 					proxy.coverage.emplace(coverage_x,coverage_y);
 		proxies.push_back(std::move(proxy));
@@ -700,7 +701,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	const bool paused=pause_state&&*pause_state;
 	if(paused)state.render.camera.restart();
 	const bool native_follow_active=follow_id>=0;
-	const double cam_tile=tile_px(renderer);
+	const double cam_tile=renderer_tile_px(renderer);
 	if(!paused)
 		state.render.camera.update(
 			camera_frame(vp,cam_tile,state.render.animation_manager.get_frame_delta_ms(),
@@ -740,7 +741,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 
 	SDL_Renderer *sdl_renderer=static_cast<SDL_Renderer *>(renderer->sdl_renderer);
 	const int32_t zoom=renderer->viewport_zoom_factor;
-	const int32_t tile_size=tile_size_px(zoom);
+	const int32_t tile_px=tile_size_px(zoom);
 
 	if(glide)
 		{
@@ -794,8 +795,8 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 			{
 			tile_pixel(x,renderer->origin_x,zoom),
 			tile_pixel(y,renderer->origin_y,zoom),
-			tile_size,
-			tile_size
+			tile_px,
+			tile_px
 			});
 		}
 	fill_black(sdl_renderer,tile_rects);

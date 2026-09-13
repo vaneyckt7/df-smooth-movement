@@ -157,9 +157,9 @@ struct viewport_visual_animation_inputst
 struct visual_movement_renderst
 {
 	bool active=false;
-	float source_x=0.0f;
-	float source_y=0.0f;
-	float progress=1.0f;
+	float source_x_tiles=0.0f;
+	float source_y_tiles=0.0f;
+	float progress_pct=1.0f;
 	bool inherited=false;
 	uint64_t movement_id=0;
 };
@@ -183,28 +183,28 @@ struct visual_follow_renderst
 {
 	bool active=false;
 	visual_movement_idst movement_id=no_visual_movement;
-	float offset_x=0.0f;
-	float offset_y=0.0f;
+	float offset_x_tiles=0.0f;
+	float offset_y_tiles=0.0f;
 };
 
 struct visual_icon_rectst
 {
-	float x;
-	float y;
-	float width;
-	float height;
+	float x_px;
+	float y_px;
+	float width_px;
+	float height_px;
 };
 
 constexpr visual_icon_rectst carried_item_icon_rect(
-	float tile_x,
-	float tile_y,
-	float tile_size)
+	float tile_x_px,
+	float tile_y_px,
+	float tile_size_px)
 {
 	return {
-		tile_x+tile_size*0.05f,
-		tile_y+tile_size*0.2f,
-		tile_size*0.7f,
-		tile_size*0.7f
+		tile_x_px+tile_size_px*0.05f,
+		tile_y_px+tile_size_px*0.2f,
+		tile_size_px*0.7f,
+		tile_size_px*0.7f
 		};
 }
 
@@ -218,23 +218,23 @@ constexpr bool native_follow_changed(int32_t previous_id,int32_t current_id)
 	return previous_id!=current_id;
 }
 
-inline float animation_progress(
+inline float animation_progress_pct(
 	uint32_t now_ms,
 	uint32_t start_time_ms,
 	uint32_t duration_ms,
 	bool linear=false)
 {
-	const float progress=std::min(
+	const float progress_pct=std::min(
 		1.0f,float(now_ms-start_time_ms)/duration_ms);
-	return linear?progress:progress*progress*(3.0f-2.0f*progress);
+	return linear?progress_pct:progress_pct*progress_pct*(3.0f-2.0f*progress_pct);
 }
 
 // Walk bob: how far, in tiles, a moving sprite is lifted at 'progress' through a step.
 // |sin(pi*hops*progress)| rises and falls once per hop and is zero at both ends, so the
 // sprite always lands on the grid. 'multiplier' is the per-direction factor.
-inline float walk_bob_lift(float progress,int hops,float amplitude,float multiplier)
+inline float walk_bob_lift(float progress_pct,int hops,float amplitude,float multiplier)
 {
-	return std::fabs(std::sin(progress*3.14159265f*float(hops)))*amplitude*multiplier;
+	return std::fabs(std::sin(progress_pct*3.14159265f*float(hops)))*amplitude*multiplier;
 }
 
 // Which multiplier a step takes. The source can be fractional when a step retargets from an
@@ -243,10 +243,10 @@ inline float walk_bob_lift(float progress,int hops,float amplitude,float multipl
 enum class walk_bob_directionst{horizontal,diagonal,vertical};
 
 inline walk_bob_directionst walk_bob_direction(
-	float source_x,float source_y,int32_t target_x,int32_t target_y)
+	float source_x_tiles,float source_y_tiles,int32_t target_x,int32_t target_y)
 {
-	const bool same_x=std::lround(source_x)==target_x;
-	const bool same_y=std::lround(source_y)==target_y;
+	const bool same_x=std::lround(source_x_tiles)==target_x;
+	const bool same_y=std::lround(source_y_tiles)==target_y;
 	if(same_y)return walk_bob_directionst::horizontal;
 	if(same_x)return walk_bob_directionst::vertical;
 	return walk_bob_directionst::diagonal;
@@ -303,11 +303,11 @@ struct walk_bob_settingst
 	}
 
 	// The lift, in tiles, of a sprite 'progress' through a step from its source to its target.
-	float lift(float source_x,float source_y,int32_t target_x,int32_t target_y,
-		float progress) const
+	float lift(float source_x_tiles,float source_y_tiles,int32_t target_x,int32_t target_y,
+		float progress_pct) const
 	{
-		return walk_bob_lift(progress,hops,amplitude,
-			multiplier(walk_bob_direction(source_x,source_y,target_x,target_y)));
+		return walk_bob_lift(progress_pct,hops,amplitude,
+			multiplier(walk_bob_direction(source_x_tiles,source_y_tiles,target_x,target_y)));
 	}
 };
 
@@ -324,10 +324,10 @@ inline bool visual_moved_between_tiles(
 
 inline int32_t inherited_visual_source_tile(
 	int32_t overlay_target,
-	float center_source,
-	float center_target)
+	float center_source_tiles,
+	float center_target_tiles)
 {
-	return overlay_target+int32_t(std::lround(center_source-center_target));
+	return overlay_target+int32_t(std::lround(center_source_tiles-center_target_tiles));
 }
 
 enum class visual_facingst : int8_t
@@ -362,8 +362,8 @@ class visual_animation_managerst
 		visual_movement_idst id=no_visual_movement;
 		viewport_visual_layer layer;
 		int32_t texpos;
-		float source_x;
-		float source_y;
+		float source_x_tiles;
+		float source_y_tiles;
 		int32_t target_x;
 		int32_t target_y;
 		uint32_t start_time_ms;
@@ -655,9 +655,9 @@ class visual_animation_managerst
 		return viewports.back();
 		}
 
-	float movement_progress(const movementst &movement) const
+	float movement_progress_pct(const movementst &movement) const
 		{
-		return animation_progress(
+		return animation_progress_pct(
 			frame_time_ms,movement.start_time_ms,movement.duration_ms,linear);
 		}
 
@@ -906,8 +906,8 @@ class visual_animation_managerst
 							state.movements.end(),
 							[&](movementst &movement)
 								{
-								movement.source_x-=dwx;
-								movement.source_y-=dwy;
+								movement.source_x_tiles-=dwx;
+								movement.source_y_tiles-=dwy;
 								movement.target_x-=dwx;
 								movement.target_y-=dwy;
 								return movement.target_x<0||movement.target_x>=input.dim_x||
@@ -1088,16 +1088,16 @@ class visual_animation_managerst
 							if(candidate_count!=1)continue;
 
 							claimed_sources[source]=1;
-							float visual_source_x=float(source/input.dim_y);
-							float visual_source_y=float(source%input.dim_y);
+							float visual_source_x_tiles=float(source/input.dim_y);
+							float visual_source_y_tiles=float(source%input.dim_y);
 							const movementst *predecessor=nullptr;
 							for(size_t i=0;i<existing_movement_count;++i)
 								{
 								const movementst &movement=state.movements[i];
 								if(movement.layer!=
 									static_cast<viewport_visual_layer>(layer)||
-									movement.target_x!=visual_source_x||
-									movement.target_y!=visual_source_y||
+									movement.target_x!=visual_source_x_tiles||
+									movement.target_y!=visual_source_y_tiles||
 									(linear&&frame_time_ms-movement.start_time_ms>
 										linear_limit_ms(movement)))continue;
 								if(predecessor==nullptr||
@@ -1110,11 +1110,13 @@ class visual_animation_managerst
 								{
 								if(movement_active(*predecessor))
 									{
-									const float progress=movement_progress(*predecessor);
-									visual_source_x=predecessor->source_x+
-										(predecessor->target_x-predecessor->source_x)*progress;
-									visual_source_y=predecessor->source_y+
-										(predecessor->target_y-predecessor->source_y)*progress;
+									const float progress_pct=movement_progress_pct(*predecessor);
+									visual_source_x_tiles=predecessor->source_x_tiles+
+										(predecessor->target_x-predecessor->source_x_tiles)*
+										progress_pct;
+									visual_source_y_tiles=predecessor->source_y_tiles+
+										(predecessor->target_y-predecessor->source_y_tiles)*
+										progress_pct;
 									}
 								if(linear)duration_ms=std::clamp(
 									frame_time_ms-predecessor->start_time_ms,
@@ -1126,8 +1128,8 @@ class visual_animation_managerst
 								movement_id,
 								static_cast<viewport_visual_layer>(layer),
 								texpos,
-								visual_source_x,
-								visual_source_y,
+								visual_source_x_tiles,
+								visual_source_y_tiles,
 								x,
 								y,
 								frame_time_ms,
@@ -1277,10 +1279,10 @@ class visual_animation_managerst
 				for(const movementst &movement:state.movements)
 					if(movement.id==movement_id&&movement_active(movement))
 						{
-						const float remaining=1.0f-movement_progress(movement);
+						const float remaining_pct=1.0f-movement_progress_pct(movement);
 						return {true,movement.id,
-							(movement.target_x-movement.source_x)*remaining,
-							(movement.target_y-movement.source_y)*remaining};
+							(movement.target_x-movement.source_x_tiles)*remaining_pct,
+							(movement.target_y-movement.source_y_tiles)*remaining_pct};
 						}
 				break;
 				}
@@ -1395,9 +1397,9 @@ class visual_animation_managerst
 						{
 						return {
 							true,
-							movement.source_x,
-							movement.source_y,
-							movement_progress(movement),
+							movement.source_x_tiles,
+							movement.source_y_tiles,
+							movement_progress_pct(movement),
 							false,
 							movement.id
 							};
@@ -1408,10 +1410,10 @@ class visual_animation_managerst
 						std::abs(movement.target_x-target_x)>1||
 						std::abs(movement.target_y-target_y)>1)continue;
 					if(companion!=nullptr&&
-						(companion->source_x-companion->target_x!=
-							movement.source_x-movement.target_x||
-						companion->source_y-companion->target_y!=
-							movement.source_y-movement.target_y||
+						(companion->source_x_tiles-companion->target_x!=
+							movement.source_x_tiles-movement.target_x||
+						companion->source_y_tiles-companion->target_y!=
+							movement.source_y_tiles-movement.target_y||
 						companion->start_time_ms!=movement.start_time_ms||
 						companion->duration_ms!=movement.duration_ms))
 						ambiguous=true;
@@ -1422,9 +1424,9 @@ class visual_animation_managerst
 				if(companion!=nullptr)
 					return {
 						true,
-						target_x+companion->source_x-companion->target_x,
-						target_y+companion->source_y-companion->target_y,
-						movement_progress(*companion),
+						target_x+companion->source_x_tiles-companion->target_x,
+						target_y+companion->source_y_tiles-companion->target_y,
+						movement_progress_pct(*companion),
 						true,
 						companion->id
 						};
