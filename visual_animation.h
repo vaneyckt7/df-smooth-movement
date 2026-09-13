@@ -704,26 +704,6 @@ class visual_animation_managerst
 			return *current_movement;
 			}
 
-		// Compatibility: plugin_state.h and plugin_commands.h still use these until they
-		// switch to the movement API.
-		void set_linear(bool enabled)
-			{
-			if(enabled)
-				{
-				static const linear_movementst linear;
-				set_movement(linear);
-				}
-			else
-				{
-				set_movement(default_movement());
-				}
-			}
-
-		bool is_linear() const
-			{
-			return std::string(current_movement->name())=="linear";
-			}
-
 		void begin_frame(uint32_t now_ms)
 			{
 			frame_delta_ms=has_frame?now_ms-frame_time_ms:0;
@@ -1430,57 +1410,6 @@ class visual_animation_managerst
 				}
 			return {};
 			}
-};
-
-// Compatibility: old types and helpers still used by frame_record.h, plugin_settings.h,
-// plugin_state.h and plugin_commands.h until those files switch to the movement API.
-
-constexpr float max_walk_hop_lift=0.9f;
-
-inline bool walk_hop_lift_fits(
-	float amplitude,float horizontal,float diagonal,float vertical)
-{
-	return amplitude*std::max({horizontal,diagonal,vertical})<=max_walk_hop_lift+1e-4f;
-}
-
-enum class walk_hop_directionst{horizontal,diagonal,vertical};
-
-inline walk_hop_directionst walk_hop_direction(
-	float source_x_tiles,float source_y_tiles,int32_t target_x,int32_t target_y)
-{
-	const bool same_x=target_x>-0.5f+source_x_tiles&&target_x<=0.5f+source_x_tiles;
-	const bool same_y=target_y>-0.5f+source_y_tiles&&target_y<=0.5f+source_y_tiles;
-	if(same_y)return walk_hop_directionst::horizontal;
-	if(same_x)return walk_hop_directionst::vertical;
-	return walk_hop_directionst::diagonal;
-}
-
-inline float walk_hop_lift(float progress_pct,int hops,float amplitude,float multiplier)
-{
-	return std::fabs(std::sin(progress_pct*3.14159265f*float(hops)))*amplitude*multiplier;
-}
-
-struct walk_hop_settingst
-{
-	bool enabled=false;
-	float amplitude=0.10f;
-	float horizontal_mult=1.0f;
-	float diagonal_mult=2.4f;
-	float vertical_mult=2.7f;
-	int hops=2;
-
-	float multiplier(walk_hop_directionst direction) const
-	{
-		return direction==walk_hop_directionst::horizontal?horizontal_mult:
-			direction==walk_hop_directionst::vertical?vertical_mult:diagonal_mult;
-	}
-
-	float lift(float source_x_tiles,float source_y_tiles,int32_t target_x,int32_t target_y,
-		float progress_pct) const
-	{
-		return walk_hop_lift(progress_pct,hops,amplitude,
-			multiplier(walk_hop_direction(source_x_tiles,source_y_tiles,target_x,target_y)));
-	}
 };
 
 #endif

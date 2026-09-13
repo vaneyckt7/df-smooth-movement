@@ -27,7 +27,4 @@ struct plugin_settingsst
 	std::string movement=default_movement().name();
 	std::vector<movement_settingst> movement_settings;
 	uint32_t step_ms=visual_animation_managerst::default_step_duration_ms; // one-tile step
-	// Compat: the old plugin_commands.h reads and writes these. Removed when it is updated.
-	bool linear=false;
-	walk_hop_settingst hop;
 };
