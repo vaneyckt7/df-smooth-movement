@@ -52,13 +52,17 @@ struct render_proxyst
 	int32_t target_x;
 	int32_t target_y;
 	int32_t texpos;
-	float progress_pct;
+	// The final draw offset in tiles from the source tile, and the fraction travelled used
+	// to replace it with the straight path when that is required (see collect_proxies).
+	float offset_x_tiles;
+	float offset_y_tiles;
+	float travelled_pct;
 	SDL_Texture *texture;
 	bool mirrored=false;
 	int32_t mirror_shift=0;
-	// The walk hop is decided per creature: fragments, status icons and carried items point
-	// at their centre proxy (an index into the proxy list, -1 for none) and follow its hop.
-	bool hop=false;
+	// The straight-path decision is made per creature: fragments, status icons and carried
+	// items point at their centre proxy (an index into the proxy list, -1 for none).
+	bool use_straight_path=false;
 	int32_t anchor=-1;
 	std::set<std::pair<int32_t,int32_t>> coverage;
 };
@@ -70,10 +74,13 @@ struct carried_item_proxyst
 	float source_y_tiles;
 	int32_t target_x;
 	int32_t target_y;
-	float progress_pct;
+	float offset_x_tiles;
+	float offset_y_tiles;
+	float travelled_pct;
 	SDL_Texture *texture;
-	// Set when the creature carrying it hops: the icon then rides the same lift.
-	bool hop=false;
+	// Set until a centre proxy proves that the item rides its movement; otherwise its offset
+	// is replaced with the straight path.
+	bool use_straight_path=false;
 	std::set<std::pair<int32_t,int32_t>> coverage;
 };
 
@@ -81,17 +88,31 @@ struct carried_item_proxyst
 // the animation manager tracks whose path stays inside the clip and off burning tiles, and,
 // with flipping on, every resting sprite that faces the mirrored way. `cached_texture(texpos)`
 // returns the renderer's texture for a tile, or null when it has none, in which case the
-// sprite is left to the game. With `hop_enabled`, every moving creature proxy and whatever
-// rides on it is marked to hop, and the row above its path joins its coverage.
+// sprite is left to the game.
+//
+// The movement the manager follows (movement.h) can take a sprite beyond the straight path
+// between its tiles, by its overshoot: tiles around the path that must be erasable and
+// repaintable too. A creature's walk takes the movement: a centre proxy and whatever rides
+// on it (fragments, status icons, carried items); anything else, a vehicle or an item moving
+// on its own, keeps to the path. When a tile of the overshoot zone is outside the clip or
+// burning, or the sprite is not a creature's, the proxy takes the straight path instead; the
+// decision is made per creature (see resolve_creature_straight_path). The overshoot tiles of
+// a proxy that follows the movement join its
+// coverage.
 template<typename Viewport,typename TextureLookup>
 std::vector<render_proxyst> collect_proxies(
 	Viewport *vp,
 	visual_animation_managerst &animation_manager,
 	bool flip_enabled,
-	bool hop_enabled,
 	const TextureLookup &cached_texture)
 {
 	std::vector<render_proxyst> proxies;
+	const movement_overshootst overshoot=animation_manager.movement().overshoot();
+	const int32_t rows_above=int32_t(std::ceil(overshoot.above_tiles));
+	const int32_t rows_below=int32_t(std::ceil(overshoot.below_tiles));
+	const int32_t cols_left=int32_t(std::ceil(overshoot.left_tiles));
+	const int32_t cols_right=int32_t(std::ceil(overshoot.right_tiles));
+	const bool overshoots=rows_above>0||rows_below>0||cols_left>0||cols_right>0;
 	// Only a tile the movement tracker lists can have a movement, so the walk over every
 	// layer visits those instead of every tile of the viewport; a viewport with none is
 	// skipped before the resting-mirrored sweep, which does not depend on movements.
@@ -120,31 +141,33 @@ std::vector<render_proxyst> collect_proxies(
 			const bool inherited_source_in_bounds=
 				inherited_source_x>=0&&inherited_source_x<vp->dim_x&&
 				inherited_source_y>=0&&inherited_source_y<vp->dim_y;
-			// A fragment, icon or item rides on a centre proxy moving the same way. Two
-			// looks at the centres collected so far: `anchored`, whether any within a tile
-			// moves this way, which is what lets a fragment through at all; and
-			// `anchor_index`, the centre at this layer's own offset, the one the tile hops
-			// with. The hop takes only the owner, since centres come in tile order and a
-			// neighbour stepping in lockstep (a squad column, a dwarf beside the barrow it
-			// pushes) can come first: riding on it would leave a fragment on the glide
-			// line while its own creature hops, or hop one whose creature cannot. A centre
-			// is its own root and a vehicle takes no part in the hop.
+			// A fragment, icon or item rides on a centre proxy moving the same way: the
+			// same step, at the same point of it. Two looks at the centres collected so far:
+			// `anchored`, whether any within a tile moves this way, which is what lets a
+			// fragment through at all; and `anchor_index`, the centre at this layer's own
+			// offset, the one the tile follows the movement with. That takes only the
+			// owner, since centres come in tile order and a neighbour stepping in lockstep
+			// (a squad column, a dwarf beside the barrow it pushes) can come first: riding
+			// on it would leave a fragment on the path while its own creature leaves it, or
+			// take one off the path whose creature cannot. A centre is its own root and a
+			// vehicle takes no part.
 			int32_t anchor_index=-1;
 			bool anchored=false;
 			const auto &owner=visual_layer_descriptor(visual_layer);
-			const bool hop_rider=visual_layer!=viewport_visual_layer::center&&
+			const bool rider=visual_layer!=viewport_visual_layer::center&&
 				visual_layer!=viewport_visual_layer::vehicle;
 			for(size_t i=0;i<proxies.size()&&
-				(hop_rider||!visual_layer_moves_independently(visual_layer));++i)
+				(rider||!visual_layer_moves_independently(visual_layer));++i)
 				{
 				const render_proxyst &anchor=proxies[i];
 				if(anchor.layer!=viewport_visual_layer::center||
 					anchor.source_x_tiles-anchor.target_x!=movement.source_x_tiles-x||
 					anchor.source_y_tiles-anchor.target_y!=movement.source_y_tiles-y||
-					anchor.progress_pct!=movement.progress_pct)continue;
+					anchor.offset_x_tiles!=movement.offset_x_tiles||
+					anchor.offset_y_tiles!=movement.offset_y_tiles)continue;
 				if(std::abs(anchor.target_x-x)<=1&&std::abs(anchor.target_y-y)<=1)
 					anchored=true;
-				if(hop_rider&&anchor.target_x==x+owner.center_x&&
+				if(rider&&anchor.target_x==x+owner.center_x&&
 					anchor.target_y==y+owner.center_y)
 					{
 					anchor_index=int32_t(i);
@@ -187,7 +210,8 @@ std::vector<render_proxyst> collect_proxies(
 						anchor.target_y==y+descriptor.center_y&&
 						anchor.source_x_tiles-anchor.target_x==movement.source_x_tiles-x&&
 						anchor.source_y_tiles-anchor.target_y==movement.source_y_tiles-y&&
-						anchor.progress_pct==movement.progress_pct)
+						anchor.offset_x_tiles==movement.offset_x_tiles&&
+						anchor.offset_y_tiles==movement.offset_y_tiles)
 						{
 						owns_fragment=true;
 						anchor_index=int32_t(i);
@@ -225,38 +249,50 @@ std::vector<render_proxyst> collect_proxies(
 				x,
 				y,
 				texpos,
-				movement.progress_pct,
+				movement.offset_x_tiles,
+				movement.offset_y_tiles,
+				movement.travelled_pct,
 				nullptr,
 				mirrored,
 				mirror_shift,
-				// Creatures hop; whatever rides on a creature (fragments, status icons,
-				// carried items) hops with it. Vehicles never do.
-				hop_enabled&&
-					(visual_layer==viewport_visual_layer::center||anchor_index>=0),
-				hop_rider?anchor_index:-1,
+				// A creature's walk takes the movement: a centre and whatever rides on it
+				// (fragments, status icons, carried items). Anything else, a vehicle, an
+				// item on its own, keeps to the straight path when the movement overshoots.
+				overshoots&&visual_layer!=viewport_visual_layer::center&&anchor_index<0,
+				rider?anchor_index:-1,
 				{}
 				};
-			// The hop lifts the sprite into the row above its path, so that row (and its
-			// mirrored image) must be erasable and repaintable too. If it is outside the
-			// clip or burning, this tile cannot hop; the whole creature then glides
-			// without the hop (resolved below), because the hop is optional and the glide
-			// is not. Only the candidate is decided here; the coverage is added after the
-			// creature-level decision.
-			if(proxy.hop)
+			// The tiles the movement overshoots into beyond the path (and their mirrored
+			// image) must be erasable and repaintable too. If any tile of them is outside
+			// the clip or burning, this tile cannot follow the movement there; the whole
+			// creature then takes the straight path (resolved below), because the overshoot
+			// is optional and the glide is not. Only the candidate is decided
+			// here; the coverage is added after the creature-level decision.
+			if(overshoots&&!proxy.use_straight_path)
 				{
-				const int32_t hop_row=int32_t(std::floor(
-					std::min(proxy.source_y_tiles,float(y))))-1;
-				for(int32_t hop_x=int32_t(std::floor(
-						std::min(proxy.source_x_tiles,float(x))));
-					hop_x<=int32_t(std::ceil(
-						std::max(proxy.source_x_tiles,float(x))))&&proxy.hop;++hop_x)
-					for(const int32_t shifted_x:{hop_x,hop_x+proxy.mirror_shift})
-						if(!inside_clip(vp,shifted_x,hop_row)||
-							has_fire(vp,shifted_x,hop_row))
-							{
-							proxy.hop=false;
-							break;
-							}
+				const int32_t first_row=int32_t(std::floor(
+					std::min(proxy.source_y_tiles,float(y))));
+				const int32_t last_row=int32_t(std::ceil(
+					std::max(proxy.source_y_tiles,float(y))));
+				const int32_t first_col=int32_t(std::floor(
+					std::min(proxy.source_x_tiles,float(x))));
+				const int32_t last_col=int32_t(std::ceil(
+					std::max(proxy.source_x_tiles,float(x))));
+				for(int32_t extra_x=first_col-cols_left;
+					extra_x<=last_col+cols_right&&!proxy.use_straight_path;++extra_x)
+					for(int32_t extra_y=first_row-rows_above;
+						extra_y<=last_row+rows_below&&!proxy.use_straight_path;++extra_y)
+						{
+						if(extra_x>=first_col&&extra_x<=last_col&&
+							extra_y>=first_row&&extra_y<=last_row)continue;
+						for(const int32_t shifted_x:{extra_x,extra_x+proxy.mirror_shift})
+							if(!inside_clip(vp,shifted_x,extra_y)||
+								has_fire(vp,shifted_x,extra_y))
+								{
+								proxy.use_straight_path=true;
+								break;
+								}
+						}
 				}
 			bool blocked=false;
 			for(int32_t coverage_x=int32_t(std::floor(
@@ -315,37 +351,53 @@ std::vector<render_proxyst> collect_proxies(
 			}
 		}
 
-	// One hop per creature: if any tile riding on a centre cannot hop, none of them do, so a
-	// multi-tile creature never tears and an icon never detaches from its creature. Then the
-	// row above every hopping tile joins its coverage; the candidate check above already
-	// established that row is inside the clip and not burning.
-	if(hop_enabled)
+	// One movement per creature: if any tile riding on a centre must fall back, all of them
+	// do, so a multi-tile creature never tears and an icon never detaches from its creature.
+	// Then the overshoot tiles of every proxy that follows the movement join its coverage; the
+	// candidate check above already established they are inside the clip and not burning.
+	if(overshoots)
 		{
 		std::vector<int32_t> anchors;
-		std::vector<bool> hops;
+		std::vector<bool> use_straight_path;
 		anchors.reserve(proxies.size());
-		hops.reserve(proxies.size());
+		use_straight_path.reserve(proxies.size());
 		for(const render_proxyst &proxy:proxies)
 			{
 			anchors.push_back(proxy.anchor);
-			hops.push_back(proxy.hop);
+			use_straight_path.push_back(proxy.use_straight_path);
 			}
-		resolve_creature_hop(anchors,hops);
+		resolve_creature_straight_path(anchors,use_straight_path);
 		for(size_t i=0;i<proxies.size();++i)
 			{
 			render_proxyst &proxy=proxies[i];
-			proxy.hop=hops[i];
-			if(!proxy.hop)continue;
-			const int32_t hop_row=int32_t(std::floor(
-				std::min(proxy.source_y_tiles,float(proxy.target_y))))-1;
-			for(int32_t hop_x=int32_t(std::floor(
-					std::min(proxy.source_x_tiles,float(proxy.target_x))));
-				hop_x<=int32_t(std::ceil(
-					std::max(proxy.source_x_tiles,float(proxy.target_x))));++hop_x)
+			proxy.use_straight_path=use_straight_path[i];
+			if(proxy.use_straight_path)
 				{
-				proxy.coverage.emplace(hop_x,hop_row);
-				proxy.coverage.emplace(hop_x+proxy.mirror_shift,hop_row);
+				const sprite_offsetst path=straight_path(proxy.travelled_pct,
+					{float(proxy.target_x)-proxy.source_x_tiles,
+						float(proxy.target_y)-proxy.source_y_tiles});
+				proxy.offset_x_tiles=path.x_tiles;
+				proxy.offset_y_tiles=path.y_tiles;
+				continue;
 				}
+			const int32_t first_row=int32_t(std::floor(
+				std::min(proxy.source_y_tiles,float(proxy.target_y))));
+			const int32_t last_row=int32_t(std::ceil(
+				std::max(proxy.source_y_tiles,float(proxy.target_y))));
+			const int32_t first_col=int32_t(std::floor(
+				std::min(proxy.source_x_tiles,float(proxy.target_x))));
+			const int32_t last_col=int32_t(std::ceil(
+				std::max(proxy.source_x_tiles,float(proxy.target_x))));
+			for(int32_t extra_x=first_col-cols_left;
+				extra_x<=last_col+cols_right;++extra_x)
+				for(int32_t extra_y=first_row-rows_above;
+					extra_y<=last_row+rows_below;++extra_y)
+					{
+					if(extra_x>=first_col&&extra_x<=last_col&&
+						extra_y>=first_row&&extra_y<=last_row)continue;
+					proxy.coverage.emplace(extra_x,extra_y);
+					proxy.coverage.emplace(extra_x+proxy.mirror_shift,extra_y);
+					}
 			}
 		}
 
@@ -385,7 +437,7 @@ std::vector<render_proxyst> collect_proxies(
 						already_drawn=true;
 				if(already_drawn)continue;
 
-				// source == target at progress 1.0 draws in place, moved only by mirror_shift.
+				// source == target with no offset draws in place, moved only by mirror_shift.
 				render_proxyst proxy=
 					{
 					visual_layer,
@@ -394,7 +446,9 @@ std::vector<render_proxyst> collect_proxies(
 					x,
 					y,
 					texpos,
-					1.0f,
+					0.0f,
+					0.0f,
+					0.0f,
 					nullptr,
 					true,
 					mirrored_tile_x(x,anchor_x)-x,
@@ -430,25 +484,38 @@ std::vector<render_proxyst> collect_proxies(
 	return proxies;
 }
 
-// Marks each carried item whose carrier hops. The item rides on the centre proxy of the
-// viewport it is drawn over, the one on its own tile at the same point of the same step,
-// matched the way a fragment finds its anchor above: same target, same source, same
-// progress. The proxy's coverage already holds the row the lift reaches into, so the item
-// adds nothing to it. With the hop off no proxy hops, so no item does.
-inline void mark_carried_item_hops(
+// Marks each carried item whose carrier follows the movement. The item rides on the centre
+// proxy of the viewport it is drawn over, the one on its own tile at the same point of the
+// same step, matched the way a fragment finds its anchor above: same target, same source,
+// same offset. The proxy's coverage already holds the tiles the movement overshoots into, so
+// the item adds nothing to it. An item comes in fallen back whenever the movement overshoots
+// beyond the path (it keeps to the path on its own, like a vehicle); a carrier that follows
+// the movement takes it along.
+inline void mark_carried_item_movements(
 	std::vector<carried_item_proxyst> &items,
 	const std::vector<render_proxyst> &proxies)
 {
 	for(carried_item_proxyst &item:items)
+		{
+		if(!item.use_straight_path)continue;
 		for(const render_proxyst &proxy:proxies)
-			if(proxy.hop&&proxy.layer==viewport_visual_layer::center&&
+			if(!proxy.use_straight_path&&proxy.layer==viewport_visual_layer::center&&
 				proxy.target_x==item.target_x&&proxy.target_y==item.target_y&&
 				proxy.source_x_tiles==item.source_x_tiles&&
 				proxy.source_y_tiles==item.source_y_tiles&&
-				proxy.progress_pct==item.progress_pct)
+				proxy.offset_x_tiles==item.offset_x_tiles&&
+				proxy.offset_y_tiles==item.offset_y_tiles)
 				{
-				item.hop=true;
+				item.use_straight_path=false;
 				break;
 				}
+		if(item.use_straight_path)
+			{
+			const sprite_offsetst path=straight_path(item.travelled_pct,
+				{float(item.target_x)-item.source_x_tiles,float(item.target_y)-item.source_y_tiles});
+			item.offset_x_tiles=path.x_tiles;
+			item.offset_y_tiles=path.y_tiles;
+			}
+		}
 }
 #endif

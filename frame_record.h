@@ -5,13 +5,13 @@
 // File layout (little-endian, byte packed):
 //   "SMRC" u32 version
 //   per frame:
-//     'F' u8 flip, u8 hauled, u8 camera, u8 linear (the plugin's settings for this frame),
-//         u32 step_ms (the one-tile step time; absent in version 2, where it was 150),
+//     'F' u8 flip, u8 hauled, u8 camera (the plugin's settings for this frame),
+//         u8 length and that many bytes: the name of the movement (movement.h),
+//         u8 count, then that many settings of the movement, each u8 length and that many
+//         bytes, the setting's name, and f32 its value,
+//         u32 step_ms (the one-tile step time),
 //         i64 simulation_tick (the simulation's frame counter when the game last filled the
-//         per-tile arrays, -1 when no fill was seen since the previous frame; absent before
-//         version 4, which reads as -1 on every frame),
-//         u8 hop, f32 hop amount, f32 horizontal diagonal vertical multipliers, u8 hops (the
-//         walk hop settings; absent before version 5, which reads as the hop off),
+//         per-tile arrays, -1 when no fill was seen since the previous frame),
 //         u32 tick_ms, i32 window x y z, u8 paused, i32 follow_unit, i32 mouse x y, u8 mbut,
 //         i32 zoom origin_x origin_y dimx dimy, f64 free-camera rest offset x y (tiles)
 //     u8 viewports; per viewport: u8 slot (0..7 lower, 8 main), i32 dim_x dim_y clipx0 clipx1
@@ -40,10 +40,8 @@
 
 namespace frame_record {
 
-constexpr uint32_t version=5;
-// The oldest version the reader accepts; a version 2 frame header has no step field, a
-// version 3 header no simulation tick and a version 4 header no walk hop settings.
-constexpr uint32_t oldest_version=2;
+constexpr uint32_t version=7;
+constexpr uint32_t oldest_version=version;
 constexpr int main_slot=8;
 constexpr int slot_count=9;
 
@@ -209,10 +207,9 @@ struct unit_recordst
 
 struct frame_headerst
 {
-	// The plugin's settings for the frame. A version 2 recording reads back with the step at
-	// 150 ms, what it was made with, and one before version 5 with the hop off.
+	// The plugin's settings for the frame.
 	plugin_settingsst settings;
-	int64_t simulation_tick=-1; // a recording before version 4 reads back as -1, unknown
+	int64_t simulation_tick=-1; // -1 when no simulation fill was observed
 	uint32_t tick_ms=0;
 	int32_t window_x=0,window_y=0,window_z=0;
 	bool paused=false;
@@ -247,13 +244,16 @@ inline void write_frame_header(writerst &w,const frame_headerst &f)
 {
 	w.u8('F');
 	const plugin_settingsst &s=f.settings;
-	w.u8(s.flip);w.u8(s.hauled);w.u8(s.camera);w.u8(s.linear);
+	w.u8(s.flip);w.u8(s.hauled);w.u8(s.camera);
+	w.u8(uint8_t(s.movement.size()));w.raw(s.movement.data(),s.movement.size());
+	w.u8(uint8_t(s.movement_settings.size()));
+	for(const movement_settingst &setting:s.movement_settings)
+		{
+		w.u8(uint8_t(setting.name.size()));w.raw(setting.name.data(),setting.name.size());
+		w.f32(setting.value);
+		}
 	w.u32(s.step_ms);
 	w.i64(f.simulation_tick);
-	w.u8(s.hop.enabled);
-	w.f32(s.hop.amplitude);
-	w.f32(s.hop.horizontal_mult);w.f32(s.hop.diagonal_mult);w.f32(s.hop.vertical_mult);
-	w.u8(uint8_t(s.hop.hops));
 	w.u32(f.tick_ms);
 	w.i32(f.window_x);w.i32(f.window_y);w.i32(f.window_z);
 	w.u8(f.paused);
@@ -301,27 +301,33 @@ inline bool read_frame_header(readerst &r,frame_headerst &f)
 {
 	if(r.u8()!='F'){r.fail("expected frame");return false;}
 	plugin_settingsst &s=f.settings;
-	s.flip=r.u8()!=0;s.hauled=r.u8()!=0;s.camera=r.u8()!=0;s.linear=r.u8()!=0;
-	s.step_ms=r.version>=3?r.u32():150;
-	if(s.step_ms==0)r.fail("bad step time");
-	f.simulation_tick=r.version>=4?r.i64():-1;
-	if(f.simulation_tick<-1)r.fail("bad simulation tick");
-	s.hop=walk_hop_settingst{};
-	if(r.version>=5)
+	s.flip=r.u8()!=0;s.hauled=r.u8()!=0;s.camera=r.u8()!=0;
+	auto read_name=[&](std::string &name,const char *what)
 		{
-		s.hop.enabled=r.u8()!=0;
-		s.hop.amplitude=r.f32();
-		s.hop.horizontal_mult=r.f32();s.hop.diagonal_mult=r.f32();s.hop.vertical_mult=r.f32();
-		s.hop.hops=r.u8();
-		// The bounds the commands enforce, written so that NaN fails too.
-		if(!(s.hop.amplitude>0.0f&&s.hop.amplitude<=max_walk_hop_lift)||
-			!(s.hop.horizontal_mult>=0.0f&&s.hop.horizontal_mult<=5.0f)||
-			!(s.hop.diagonal_mult>=0.0f&&s.hop.diagonal_mult<=5.0f)||
-			!(s.hop.vertical_mult>=0.0f&&s.hop.vertical_mult<=5.0f)||
-			!walk_hop_lift_fits(s.hop.amplitude,s.hop.horizontal_mult,s.hop.diagonal_mult,
-				s.hop.vertical_mult)||
-			(s.hop.hops!=1&&s.hop.hops!=2))r.fail("bad walk hop settings");
+		const size_t length=r.u8();
+		if(r.pos+length>r.size){r.fail(what);return false;}
+		name.assign(reinterpret_cast<const char *>(r.data+r.pos),length);
+		r.pos+=length;
+		return true;
+		};
+	if(!read_name(s.movement,"truncated movement name"))return false;
+	const size_t count=r.u8();
+	for(size_t i=0;i<count;++i)
+		{
+		movement_settingst setting;
+		if(!read_name(setting.name,"truncated movement setting name"))return false;
+		setting.value=r.f32();
+		s.movement_settings.push_back(setting);
 		}
+	s.step_ms=r.u32();
+	if(s.step_ms==0)r.fail("bad step time");
+	f.simulation_tick=r.i64();
+	if(f.simulation_tick<-1)r.fail("bad simulation tick");
+	// What the console would refuse, the reader refuses: an unknown movement, a setting it
+	// does not have, a value out of its range (NaN included) or settings reaching beyond what
+	// the plugin repaints.
+	if(!check_movement_settings(s.movement,s.movement_settings).empty())
+		{r.fail("bad movement settings");return false;}
 	f.tick_ms=r.u32();
 	f.window_x=r.i32();f.window_y=r.i32();f.window_z=r.i32();
 	f.paused=r.u8()!=0;
