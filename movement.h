@@ -207,6 +207,98 @@ class linear_movementst:public movementst
 //
 // Settings: `amount`, the height of a hop in tiles; `horizontal`, `diagonal` and `vertical`,
 // the multipliers; `hops`, 1 or 2 per step.
+class bob_movementst:public movementst
+{
+	public:
+		const char *name() const override
+			{
+			return "bob";
+			}
+
+		float travelled_pct(float progress_pct) const override
+			{
+			return path.travelled_pct(progress_pct);
+			}
+
+		sprite_offsetst position(float progress_pct,tile_stepst step) const override
+			{
+			const float along_pct=travelled_pct(progress_pct);
+			const float hop_tiles=std::fabs(std::sin(along_pct*3.14159265f*float(hops)))*
+				amount_tiles*multiplier(step);
+			return {step.x_tiles*along_pct,step.y_tiles*along_pct-hop_tiles};
+			}
+
+		movement_overshootst overshoot() const override
+			{
+			return {amount_tiles*std::max({horizontal,diagonal,vertical}),0.0f};
+			}
+
+		std::vector<movement_settingst> settings() const override
+			{
+			return {
+				{"amount",amount_tiles},{"horizontal",horizontal},{"diagonal",diagonal},
+				{"vertical",vertical},{"hops",float(hops)}};
+			}
+
+		std::string set(std::string_view name,float value) override
+			{
+			// Written so that NaN fails too.
+			if(name=="amount")
+				{
+				if(!(value>0.0f&&value<=1.0f))return "bob amount must be within 0..1 tile";
+				amount_tiles=value;
+				return {};
+				}
+			if(name=="horizontal"||name=="diagonal"||name=="vertical")
+				{
+				if(!(value>=0.0f&&value<=5.0f))return "bob multipliers must be within 0..5";
+				(name=="horizontal"?horizontal:name=="diagonal"?diagonal:vertical)=value;
+				return {};
+				}
+			if(name=="hops")
+				{
+				if(value!=1.0f&&value!=2.0f)return "hops per step must be 1 or 2";
+				hops=int(value);
+				return {};
+				}
+			return movementst::set(name,value);
+			}
+
+		std::unique_ptr<movementst> clone() const override
+			{
+			return std::make_unique<bob_movementst>(*this);
+			}
+
+	private:
+		smoothstep_movementst path;
+		float amount_tiles=0.10f;
+		float horizontal=1.0f;
+		float diagonal=2.4f;
+		float vertical=2.7f;
+		int hops=2;
+
+		// The multiplier for a step's direction. A retargeted step starts from a fractional
+		// source, so a delta within (-0.5, 0.5] counts as no move on that axis: the tile the
+		// source rounds to (halves up, as the plugin has always rounded it) is the target.
+		float multiplier(tile_stepst step) const
+			{
+			if(still(step.y_tiles))return horizontal;
+			if(still(step.x_tiles))return vertical;
+			return diagonal;
+			}
+
+		static bool still(float delta_tiles)
+			{
+			return delta_tiles>-0.5f&&delta_tiles<=0.5f;
+			}
+
+		static std::string format(const char *pattern,float value)
+			{
+			char text[96];
+			std::snprintf(text,sizeof text,pattern,double(value));
+			return text;
+			}
+};
 
 // Every movement, one instance each with its settings, the default first.
 struct movement_sett
@@ -243,6 +335,7 @@ inline movement_sett make_movements()
 	movement_sett set;
 	set.all.push_back(std::make_unique<smoothstep_movementst>());
 	set.all.push_back(std::make_unique<linear_movementst>());
+	set.all.push_back(std::make_unique<bob_movementst>());
 	return set;
 }
 
@@ -251,4 +344,31 @@ inline const movementst &default_movement()
 {
 	static const smoothstep_movementst movement;
 	return movement;
+}
+
+// Applies settings to a movement all at once: every value is set on a copy first, so a
+// refused list leaves the movement as it was. Returns the error, or an empty string.
+inline std::string apply_movement_settings(
+	movementst &movement,const std::vector<movement_settingst> &settings)
+{
+	std::unique_ptr<movementst> changed=movement.clone();
+	for(const movement_settingst &setting:settings)
+		{
+		const std::string error=changed->set(setting.name,setting.value);
+		if(!error.empty())return error;
+		}
+	for(const movement_settingst &setting:settings)movement.set(setting.name,setting.value);
+	return {};
+}
+
+// Whether a list of settings would be accepted by the movement of that name, fresh from its
+// defaults: what a recording's frame header is checked against. Returns the error, or an
+// empty string; an unknown movement is an error too.
+inline std::string check_movement_settings(
+	std::string_view name,const std::vector<movement_settingst> &settings)
+{
+	const movement_sett set=make_movements();
+	movementst *movement=set.find(name);
+	if(movement==nullptr)return "unknown movement "+std::string(name);
+	return apply_movement_settings(*movement,settings);
 }
