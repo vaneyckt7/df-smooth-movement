@@ -163,22 +163,23 @@ float hop_setting(const plugin_statest &state,const char *name)
 void test_settings_printout()
 {
 	plugin_statest state;
-	const runst r=run(state,{});
-	expect_ok("bare command",r,
+	const runst r=run(state,{"status"});
+	expect_ok("status",r,
 		"smooth-movement 9.9.9: enabled\n"
 		"free camera: off, offset -0 -0 (tiles east/south of the grid)\n"
 		"sprite flipping: off\n"
 		"interpolation: smoothstep\n"
-		"linear movement: off\n"
 		"time step: 150 ms\n"
 		"hauled item icons: off\n"
-		"walk hop: off, amount 0.1\n"
+		"walk hop: amount 0.1\n"
 		"hop multipliers: horizontal 1, diagonal 2.4, vertical 2.7\n"
 		"hops per step: 2\n"
 		"frame stats: off\n");
-	const runst disabled=run(state,{},disabled_host);
-	expect_true("bare command, plugin disabled",
+	const runst disabled=run(state,{"status"},disabled_host);
+	expect_true("status, plugin disabled",
 		disabled.text.rfind("smooth-movement 9.9.9: disabled\n",0)==0);
+	expect_usage("bare command",run(state,{}));
+	expect_usage("status extra",run(state,{"status","now"}));
 	expect_usage("unknown word",run(state,{"bogus"}));
 	expect_usage("unknown word with argument",run(state,{"bogus","on"}));
 }
@@ -248,25 +249,18 @@ void test_record()
 void test_all()
 {
 	plugin_statest state;
-	expect_ok("all on",run(state,{"all","on"}),"smooth-movement: flip, linear and hauled on\n",1);
+	expect_ok("all on",run(state,{"all","on"}),"smooth-movement: flip and hauled on\n",1);
 	expect_true("all on sets flip",state.flip_enabled);
-	expect_true("all on sets linear",follows(state,"linear"));
 	expect_true("all on sets hauled",state.hauled_enabled);
-	expect_ok("all off",run(state,{"all","off"}),
-		"smooth-movement: flip, linear and hauled off\n",1);
+	expect_true("all on leaves the interpolation",follows(state,"smoothstep"));
+	expect_ok("all off",run(state,{"all","off"}),"smooth-movement: flip and hauled off\n",1);
 	expect_true("all off clears flip",!state.flip_enabled);
-	expect_true("all off clears linear",!(follows(state,"linear")));
 	expect_true("all off clears hauled",!state.hauled_enabled);
-	// `all on` picks linear whatever was current; `all off` goes back to the default from
-	// linear and leaves another interpolation alone.
-	run(state,{"hop","on"});
-	expect_ok("all on from hop",run(state,{"all","on"}),
-		"smooth-movement: flip, linear and hauled on\n",1);
-	expect_true("all on from hop gives linear",follows(state,"linear"));
-	run(state,{"hop","on"});
-	expect_ok("all off from hop",run(state,{"all","off"}),
-		"smooth-movement: flip, linear and hauled off\n",1);
-	expect_true("all off leaves hop",follows(state,"hop"));
+	run(state,{"interpolation","hop"});
+	run(state,{"all","on"});
+	expect_true("all on from hop leaves hop",follows(state,"hop"));
+	run(state,{"all","off"});
+	expect_true("all off from hop leaves hop",follows(state,"hop"));
 	expect_usage("all alone",run(state,{"all"}));
 	expect_usage("all bogus",run(state,{"all","maybe"}));
 	expect_usage("all on extra",run(state,{"all","on","now"}));
@@ -322,14 +316,9 @@ void test_flip_linear_hauled()
 	expect_usage("flip bogus",run(state,{"flip","maybe"}));
 	expect_usage("flip on extra",run(state,{"flip","on","now"}));
 
-	expect_ok("linear",run(state,{"linear"}),"linear movement: off\n");
-	expect_ok("linear on",run(state,{"linear","on"}),"smooth-movement: linear movement on\n");
-	expect_true("linear on sets",follows(state,"linear"));
-	expect_ok("linear printout",run(state,{"linear"}),"linear movement: on\n");
-	expect_ok("linear off",run(state,{"linear","off"}),"smooth-movement: linear movement off\n");
-	expect_true("linear off clears",!(follows(state,"linear")));
-	expect_usage("linear bogus",run(state,{"linear","maybe"}));
-	expect_usage("linear on extra",run(state,{"linear","on","now"}));
+	expect_usage("linear is not a word",run(state,{"linear"}));
+	expect_usage("linear on is not a command",run(state,{"linear","on"}));
+	expect_true("linear on sets nothing",follows(state,"smoothstep"));
 
 	expect_ok("hauled",run(state,{"hauled"}),"hauled item icons: off\n");
 	expect_ok("hauled on",run(state,{"hauled","on"}),"smooth-movement: hauled item icons on\n",1);
@@ -351,24 +340,16 @@ void test_interpolation()
 	expect_ok("interpolation hop",run(state,{"interpolation","hop"}),
 		"smooth-movement: interpolation hop\n",1);
 	expect_true("hop is set",std::string(current())=="hop");
-	expect_ok("linear printout follows",run(state,{"linear"}),"linear movement: off\n");
-	expect_ok("hop printout follows",run(state,{"hop"}),"walk hop: on, amount 0.1\n");
-	// Each switch picks its interpolation with on; off goes back to the default from that
-	// one and leaves any other alone.
-	expect_ok("hop off",run(state,{"hop","off"}),"smooth-movement: walk hop off\n",1);
-	expect_true("hop off gives smoothstep",std::string(current())=="smoothstep");
-	expect_ok("hop on from smoothstep",run(state,{"hop","on"}),"smooth-movement: walk hop on\n",1);
-	expect_true("hop on gives hop",std::string(current())=="hop");
-	expect_ok("linear on from hop",run(state,{"linear","on"}),
-		"smooth-movement: linear movement on\n");
-	expect_true("linear on gives linear",std::string(current())=="linear");
-	expect_ok("hop off from linear",run(state,{"hop","off"}),"smooth-movement: walk hop off\n",1);
-	expect_true("hop off leaves linear",std::string(current())=="linear");
-	expect_ok("hop on from linear",run(state,{"hop","on"}),"smooth-movement: walk hop on\n",1);
-	expect_true("hop on gives hop again",std::string(current())=="hop");
-	expect_ok("linear off from hop",run(state,{"linear","off"}),
-		"smooth-movement: linear movement off\n");
-	expect_true("linear off leaves hop",std::string(current())=="hop");
+	expect_ok("hop printout follows",run(state,{"hop"}),"walk hop: amount 0.1\n");
+	expect_ok("interpolation linear",run(state,{"interpolation","linear"}),
+		"smooth-movement: interpolation linear\n",1);
+	expect_true("linear is set",std::string(current())=="linear");
+	expect_ok("interpolation hop from linear",run(state,{"interpolation","hop"}),
+		"smooth-movement: interpolation hop\n",1);
+	expect_true("hop is set again",std::string(current())=="hop");
+	expect_usage("hop on is not a command",run(state,{"hop","on"}));
+	expect_usage("hop off is not a command",run(state,{"hop","off"}));
+	expect_true("hop on and off set nothing",std::string(current())=="hop");
 	expect_ok("interpolation smoothstep",run(state,{"interpolation","smoothstep"}),
 		"smooth-movement: interpolation smoothstep\n",1);
 	expect_true("smoothstep is the default",follows(state,"smoothstep"));
@@ -405,15 +386,11 @@ void test_timestep()
 void test_hop()
 {
 	plugin_statest state;
-	expect_ok("hop",run(state,{"hop"}),"walk hop: off, amount 0.1\n");
-	expect_ok("hop on",run(state,{"hop","on"}),"smooth-movement: walk hop on\n",1);
-	expect_true("hop on sets",follows(state,"hop"));
-	expect_ok("hop printout",run(state,{"hop"}),"walk hop: on, amount 0.1\n");
-	expect_ok("hop off",run(state,{"hop","off"}),"smooth-movement: walk hop off\n",1);
-	expect_true("hop off clears",!(follows(state,"hop")));
+	expect_ok("hop",run(state,{"hop"}),"walk hop: amount 0.1\n");
 	expect_ok("hop amount",run(state,{"hop","0.25"}),"smooth-movement: hop amount 0.25\n",1);
 	expect_near("hop amount sets",hop_setting(state,"amount"),0.25);
-	expect_true("hop amount leaves it off",!(follows(state,"hop")));
+	expect_true("hop amount does not pick the hop",follows(state,"smoothstep"));
+	expect_ok("hop printout",run(state,{"hop"}),"walk hop: amount 0.25\n");
 	expect_ok("hop amount without a leading digit",run(state,{"hop",".2"}),
 		"smooth-movement: hop amount 0.2\n",1);
 	expect_near("hop amount without a leading digit sets",hop_setting(state,"amount"),0.2f);
@@ -565,6 +542,7 @@ void test_reset()
 {
 	plugin_statest state;
 	run(state,{"all","on"});
+	run(state,{"interpolation","linear"});
 	run(state,{"camera","0.25","0"});
 	run(state,{"timestep","400"});
 	run(state,{"hop","0.2"});
