@@ -163,18 +163,20 @@ float hop_setting(const plugin_statest &state,const char *name)
 void test_settings_printout()
 {
 	plugin_statest state;
-	const runst r=run(state,{});
-	expect_ok("bare command",r,
+	const runst r=run(state,{"status"});
+	expect_ok("status",r,
 		"smooth-movement 9.9.9: enabled\n"
 		"free camera: off, offset -0 -0 (tiles east/south of the grid)\n"
 		"sprite flipping: off\n"
-		"movement: smoothstep\n"
+		"movement: none\n"
 		"time step: 150 ms\n"
 		"hauled item icons: off\n"
 		"frame stats: off\n");
-	const runst disabled=run(state,{},disabled_host);
-	expect_true("bare command, plugin disabled",
+	const runst disabled=run(state,{"status"},disabled_host);
+	expect_true("status, plugin disabled",
 		disabled.text.rfind("smooth-movement 9.9.9: disabled\n",0)==0);
+	expect_usage("bare command",run(state,{}));
+	expect_usage("status extra",run(state,{"status","now"}));
 	expect_usage("unknown word",run(state,{"bogus"}));
 	expect_usage("unknown word with argument",run(state,{"bogus","on"}));
 }
@@ -322,7 +324,7 @@ void test_movement()
 	plugin_statest state;
 	const auto current=[&]{return state.render.animation_manager.movement().name();};
 	expect_ok("movement",run(state,{"movement"}),
-		"movement: smoothstep\nmovements: smoothstep, linear, hop\n");
+		"movement: none\nmovements: none, smoothstep, linear, hop\n");
 	expect_ok("movement hop",run(state,{"movement","hop"}),
 		"smooth-movement: movement hop\n",1);
 	expect_true("hop is set",std::string(current())=="hop");
@@ -437,7 +439,7 @@ void test_settings_round_trip()
 	plugin_settingsst unknown=s;unknown.movement="bounce";unknown.movement_settings.clear();
 	expect_true("an unknown movement is reported",
 		state.apply_settings(unknown)=="unknown movement bounce");
-	expect_true("an unknown movement gives the default",follows(state,"smoothstep")&&state.flip_enabled);
+	expect_true("an unknown movement gives the default",follows(state,"none")&&state.flip_enabled);
 	plugin_settingsst refused=s;refused.movement_settings={{"hop-height",1.5f}};
 	expect_true("refused settings are reported",!state.apply_settings(refused).empty());
 	expect_true("refused settings leave the hop",follows(state,"hop")&&

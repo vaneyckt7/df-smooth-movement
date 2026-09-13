@@ -28,7 +28,7 @@ enable smooth-movement
 ## Useful commands
 
 ```text
-smooth-movement             # show plugin status
+smooth-movement status      # show the plugin's settings; bare `smooth-movement` prints the usage
 disable smooth-movement     # disable the plugin
 smooth-movement all on      # enable flip and hauled icons (not the free camera or stats)
 smooth-movement all off     # disable flip and hauled icons
