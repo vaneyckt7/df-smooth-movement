@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Movements: how one tile step, which the game makes as a jump, is spread over frames. The
-// console calls the current movement the interpolation (`interpolation <name>`).
+// console selects the current movement with `movement <name>`.
 //
 // A step's elapsed time runs from 0 at its start to 1 at its end, a fraction. A movement
 // answers two questions about a step, and its position is the two put together:
