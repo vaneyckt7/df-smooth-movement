@@ -633,8 +633,89 @@ void test_tile_checks()
 	v.spatter_flags[2*dim_y+1]=0x10000000U;
 	if(!has_fire(&v.vp,2,1)||has_fire(&v.vp,2,0)||has_fire(&v.vp,1,1))
 		printf("has_fire wrong\n"),++failures;
+	// A tile inside the clip can still be outside the per-tile arrays, which are dim_x by
+	// dim_y whatever the clip says. Both checks answer on the arrays, not the clip alone:
+	// the index a tile past the last column lands one whole row into the next array.
+	v.vp.clipx={-1,dim_x};v.vp.clipy={-1,dim_y};
+	if(has_fire(&v.vp,dim_x,1)||has_fire(&v.vp,-1,1)||has_fire(&v.vp,2,dim_y)||
+		has_fire(&v.vp,2,-1))
+		printf("has_fire outside the arrays\n"),++failures;
+	if(!paintable_tile(&v.vp,0,0)||!paintable_tile(&v.vp,dim_x-1,dim_y-1)||
+		paintable_tile(&v.vp,-1,0)||paintable_tile(&v.vp,dim_x,0)||
+		paintable_tile(&v.vp,0,-1)||paintable_tile(&v.vp,0,dim_y))
+		printf("paintable_tile outside the arrays\n"),++failures;
+	// Inside the arrays it is the clip test, so a tile the clip excludes is not paintable.
+	v.vp.clipx={1,4};v.vp.clipy={0,2};
+	if(paintable_tile(&v.vp,0,0)||paintable_tile(&v.vp,1,3)||!paintable_tile(&v.vp,1,0))
+		printf("paintable_tile against the clip\n"),++failures;
 	v.vp.screentexpos_spatter_flag=nullptr;
 	if(has_fire(&v.vp,2,1))printf("has_fire without the array\n"),++failures;
+}
+
+// No proxy may cover a tile outside the per-tile arrays: the repaint indexes fifteen arrays
+// at x*dim_y+y for every covered tile and writes through the entry, so a covered tile past
+// the end is a write into whatever follows, not merely a stray read.
+void expect_inside_arrays(const char *name,const std::vector<render_proxyst> &proxies)
+{
+	for(const render_proxyst &proxy:proxies)
+		for(const auto &[x,y]:proxy.coverage)
+			if(x<0||x>=dim_x||y<0||y>=dim_y)
+				printf("%s: covers (%d,%d), outside the %dx%d arrays\n",name,x,y,dim_x,dim_y),
+				++failures;
+}
+
+// The clip and the arrays are two different rectangles: nothing derives clipx and clipy from
+// dim_x and dim_y, and nothing keeps the two in step. No recorded scene has a clip reaching
+// past the arrays, so these cases are not a scene the game is known to produce; they are the
+// smallest viewports that reach the sweep's per-tile reads and coverage inserts with a tile
+// outside the arrays, which is what the bounds check has to answer. Each widens the clip past
+// one edge so that the bounds check is the only thing left, and pins that the sweep neither
+// reads nor covers such a tile. Without the check each of these reads out of bounds.
+void test_outside_the_arrays()
+{
+	// A hopping creature on the top row overshoots into the row above, which is off the
+	// arrays. The overshoot tile must block the hop, the way any other blocked overshoot
+	// tile does, and leave the creature on the straight path.
+	{
+	scenest top(0);
+	top.select_hop();
+	top.v.vp.clipy={-1,dim_y-1};
+	const auto proxies=top.collect(false);
+	expect_inside_arrays("hop off the top",proxies);
+	for(const render_proxyst &proxy:proxies)
+		if(!proxy.use_straight_path)
+			printf("hop off the top: hopped over a tile outside the arrays\n"),++failures;
+	}
+	// A creature resting at the last column after walking east is mirrored, and its left
+	// fragment's mirrored coverage sweep reaches one tile past the last column. The
+	// fragment's own tile is inside the arrays, so only the coverage sweep is out.
+	{
+	viewportst v;
+	visual_animation_managerst manager;
+	constexpr int32_t start_x=dim_x-2,end_x=dim_x-1,edge_row=2;
+	// The left fragment's array tile sits one column left of the creature it belongs to.
+	v.at(L::center,start_x,edge_row)=center_texpos;
+	v.at(L::left,start_x-1,edge_row)=neighbour_texpos;
+	manager.begin_frame(1000);
+	manager.synchronize_viewport(v.input());
+	manager.end_frame();
+	v.advance();
+	v.at(L::center,start_x,edge_row)=0;v.at(L::left,start_x-1,edge_row)=0;
+	v.at(L::center,end_x,edge_row)=center_texpos;
+	v.at(L::left,end_x-1,edge_row)=neighbour_texpos;
+	manager.begin_frame(1016);
+	manager.synchronize_viewport(v.input());
+	manager.end_frame();
+	// Resting, so the mirrored resting sweep runs rather than the moving one.
+	manager.cancel_transitions();
+	v.vp.clipx={0,dim_x};
+	static int token;
+	const auto proxies=collect_proxies(&v.vp,manager,true,[](int32_t texpos)
+		{return texpos==0?nullptr:reinterpret_cast<SDL_Texture *>(&token);});
+	expect_inside_arrays("resting at the last column",proxies);
+	if(find(proxies,L::left)!=nullptr)
+		printf("resting left fragment painted past the last column\n"),++failures;
+	}
 }
 
 // A movement that overshoots to the right: on the straight path, with configurable right
@@ -699,6 +780,7 @@ int main()
 	test_column_overshoot();
 	test_carried_item_movement();
 	test_tile_checks();
+	test_outside_the_arrays();
 	if(failures!=0){printf("sprite proxy tests: %d failures\n",failures);return 1;}
 	printf("sprite proxy tests: OK\n");
 	return 0;

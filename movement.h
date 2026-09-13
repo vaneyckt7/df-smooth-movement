@@ -369,7 +369,8 @@ inline movement_sett make_movements()
 	return set;
 }
 
-// A movement a manager without a set of its own follows: the default, with no settings.
+// A movement a manager without a set of its own follows: smoothstep, with no settings. It
+// is not what a fresh plugin picks, which is initial_movement's none.
 inline const movementst &default_movement()
 {
 	static const smoothstep_movementst movement;
