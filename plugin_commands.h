@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 enum class command_outcomest
@@ -71,23 +72,58 @@ inline const char *on_off(bool on)
 	return on?"on":"off";
 }
 
+// Whether the movement of that name is the one the plugin follows. The console calls the
+// movement the interpolation.
+inline bool has_movement(const plugin_statest &state,std::string_view name)
+{
+	return name==state.render.animation_manager.movement().name();
+}
+
+// The movement of that name, current or not, with its settings. The words `hop`, `hopmult`
+// and `hops` set the `hop` movement's settings by their names whether or not it is current.
+inline movementst &named_movement(plugin_statest &state,std::string_view name)
+{
+	return *state.movements.find(name);
+}
+
+inline float movement_setting(const movementst &movement,std::string_view name)
+{
+	for(const movement_settingst &setting:movement.settings())
+		if(setting.name==name)return setting.value;
+	return 0.0f;
+}
+
+// The switches `linear on|off` and `hop on|off`: on picks that movement; off goes back to
+// the default when that one is current and leaves any other alone.
+inline void switch_movement(plugin_statest &state,std::string_view name,bool on)
+{
+	if(on)state.render.animation_manager.set_movement(named_movement(state,name));
+	else if(has_movement(state,name))
+		state.render.animation_manager.set_movement(state.movements.default_movement());
+}
+
 // One line per setting, named by the setting's command word. Printed by the setting's bare
 // command and by the bare `smooth-movement`, which lists them all.
 template<typename Output>
 void print_setting(Output &out,const plugin_statest &state,const std::string &word)
 {
+	const movementst &hop=*state.movements.find("hop");
 	if(word=="flip")out.print("sprite flipping: {}\n",on_off(state.flip_enabled));
+	if(word=="interpolation")
+		out.print("interpolation: {}\n",state.render.animation_manager.movement().name());
 	if(word=="linear")
-		out.print("linear movement: {}\n",on_off(state.render.animation_manager.is_linear()));
+		out.print("linear movement: {}\n",on_off(has_movement(state,"linear")));
 	if(word=="timestep")
 		out.print("time step: {} ms\n",state.render.animation_manager.step_duration_ms());
 	if(word=="hauled")out.print("hauled item icons: {}\n",on_off(state.hauled_enabled));
 	if(word=="hop")
-		out.print("walk hop: {}, amount {:.2f}\n",on_off(state.hop.enabled),state.hop.amplitude);
+		out.print("walk hop: {}, amount {:.2f}\n",
+			on_off(has_movement(state,"hop")),movement_setting(hop,"amount"));
 	if(word=="hopmult")
 		out.print("hop multipliers: horizontal {:.2f}, diagonal {:.2f}, vertical {:.2f}\n",
-			state.hop.horizontal_mult,state.hop.diagonal_mult,state.hop.vertical_mult);
-	if(word=="hops")out.print("hops per step: {}\n",state.hop.hops);
+			movement_setting(hop,"horizontal"),movement_setting(hop,"diagonal"),
+			movement_setting(hop,"vertical"));
+	if(word=="hops")out.print("hops per step: {}\n",int(movement_setting(hop,"hops")));
 }
 
 // Prints every setting, for the bare command.
@@ -101,7 +137,7 @@ void print_settings(Output &out,const plugin_statest &state,const command_hostst
 	out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
 		on_off(state.render.camera.is_enabled()),
 		-state.render.camera.requested_offset_x(),-state.render.camera.requested_offset_y());
-	for(const char *word:{"flip","linear","timestep","hauled","hop","hopmult","hops"})
+	for(const char *word:{"flip","interpolation","linear","timestep","hauled","hop","hopmult","hops"})
 		print_setting(out,state,word);
 	out.print("frame stats: {}\n",on_off(state.stats.enabled));
 }
@@ -233,6 +269,7 @@ command_outcomest camera_command(
 	return command_outcomest::wrong_usage;
 }
 
+
 template<typename Output>
 command_outcomest hop_command(
 	Output &out,const std::vector<std::string> &parameters,plugin_statest &state,
@@ -247,30 +284,24 @@ command_outcomest hop_command(
 	bool on=false;
 	if(parse_on_off(parameters,on))
 		{
-		state.hop.enabled=on;
+		switch_movement(state,"hop",on);
 		host.full_redraw();
 		out.print("smooth-movement: walk hop {}\n",on_off(on));
 		return command_outcomest::ok;
 		}
 	// Anything else is an amount, in tiles. It only sets the height: turning the hop off
-	// is `hop off`, so zero is rejected with the rest.
-	const float amount=parse_hop_value(parameters[1]);
-	if(amount<0.0f)return command_outcomest::wrong_usage;
-	if(amount==0.0f||amount>max_walk_hop_lift)
+	// is `hop off`, so zero is rejected with the rest (by the movement).
+	const float amount_tiles=parse_hop_value(parameters[1]);
+	if(amount_tiles<0.0f)return command_outcomest::wrong_usage;
+	const std::string error=
+		apply_movement_settings(named_movement(state,"hop"),{{"amount",amount_tiles}});
+	if(!error.empty())
 		{
-		out.printerr("hop amount must be within 0..{:.2f} tile\n",max_walk_hop_lift);
+		out.printerr("{}\n",error);
 		return command_outcomest::failed;
 		}
-	if(!walk_hop_lift_fits(amount,state.hop.horizontal_mult,state.hop.diagonal_mult,
-			state.hop.vertical_mult))
-		{
-		out.printerr("hop {:.2f} times the current multipliers lifts more than {:.2f} "
-			"tile; lower the multipliers first\n",amount,max_walk_hop_lift);
-		return command_outcomest::failed;
-		}
-	state.hop.amplitude=amount;
 	host.full_redraw();
-	out.print("smooth-movement: hop amount {:.2f}\n",state.hop.amplitude);
+	out.print("smooth-movement: hop amount {:.2f}\n",amount_tiles);
 	return command_outcomest::ok;
 }
 
@@ -288,20 +319,13 @@ command_outcomest hopmult_command(
 	const float diagonal=parse_hop_value(parameters[2]);
 	const float vertical=parse_hop_value(parameters[3]);
 	if(horizontal<0.0f||diagonal<0.0f||vertical<0.0f)return command_outcomest::wrong_usage;
-	if(horizontal>5.0f||diagonal>5.0f||vertical>5.0f)
+	const std::string error=apply_movement_settings(named_movement(state,"hop"),
+		{{"horizontal",horizontal},{"diagonal",diagonal},{"vertical",vertical}});
+	if(!error.empty())
 		{
-		out.printerr("hop multipliers must be within 0..5\n");
+		out.printerr("{}\n",error);
 		return command_outcomest::failed;
 		}
-	if(!walk_hop_lift_fits(state.hop.amplitude,horizontal,diagonal,vertical))
-		{
-		out.printerr("hop {:.2f} times that multiplier lifts more than {:.2f} tile; "
-			"lower one of them\n",state.hop.amplitude,max_walk_hop_lift);
-		return command_outcomest::failed;
-		}
-	state.hop.horizontal_mult=horizontal;
-	state.hop.diagonal_mult=diagonal;
-	state.hop.vertical_mult=vertical;
 	out.print("smooth-movement: hop multipliers horizontal {:.2f}, diagonal {:.2f}, "
 		"vertical {:.2f}\n",horizontal,diagonal,vertical);
 	return command_outcomest::ok;
@@ -328,7 +352,7 @@ command_outcomest run_command(
 		bool on=false;
 		if(!parse_on_off(parameters,on))return command_outcomest::wrong_usage;
 		state.flip_enabled=on;
-		state.render.animation_manager.set_linear(on);
+		switch_movement(state,"linear",on);
 		state.hauled_enabled=on;
 		host.full_redraw();
 		out.print("smooth-movement: flip, linear and hauled {}\n",on_off(on));
@@ -353,6 +377,22 @@ command_outcomest run_command(
 		out.print("smooth-movement: sprite flipping {}\n",on?"enabled":"disabled");
 		return command_outcomest::ok;
 		}
+	if(word=="interpolation")
+		{
+		if(parameters.size()==1)
+			{
+			print_setting(out,state,word);
+			out.print("interpolations: {}\n",state.movements.names());
+			return command_outcomest::ok;
+			}
+		if(parameters.size()!=2)return command_outcomest::wrong_usage;
+		const movementst *movement=state.movements.find(parameters[1]);
+		if(movement==nullptr)return command_outcomest::wrong_usage;
+		state.render.animation_manager.set_movement(*movement);
+		host.full_redraw();
+		out.print("smooth-movement: interpolation {}\n",movement->name());
+		return command_outcomest::ok;
+		}
 	if(word=="linear")
 		{
 		if(parameters.size()==1)
@@ -362,7 +402,7 @@ command_outcomest run_command(
 			}
 		bool on=false;
 		if(!parse_on_off(parameters,on))return command_outcomest::wrong_usage;
-		state.render.animation_manager.set_linear(on);
+		switch_movement(state,"linear",on);
 		out.print("smooth-movement: linear movement {}\n",on_off(on));
 		return command_outcomest::ok;
 		}
@@ -408,8 +448,9 @@ command_outcomest run_command(
 			}
 		if(parameters.size()==2&&(parameters[1]=="1"||parameters[1]=="2"))
 			{
-			state.hop.hops=parameters[1]=="1"?1:2;
-			out.print("smooth-movement: hops per step {}\n",state.hop.hops);
+			const int hops=parameters[1]=="1"?1:2;
+			apply_movement_settings(named_movement(state,"hop"),{{"hops",float(hops)}});
+			out.print("smooth-movement: hops per step {}\n",hops);
 			return command_outcomest::ok;
 			}
 		return command_outcomest::wrong_usage;

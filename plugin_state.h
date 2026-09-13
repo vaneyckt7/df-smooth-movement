@@ -108,9 +108,6 @@ struct plugin_statest
 	frame_recorderst recorder;
 	bool flip_enabled=false;
 	bool hauled_enabled=false;
-	// Compat: the old plugin_commands.h reads and writes this directly. Dead: the movement
-	// system uses `movements` below. Removed when plugin_commands.h is updated.
-	walk_hop_settingst hop;
 	// Every movement the console can pick, each with its settings; the animation manager
 	// follows one of them. A movement keeps its settings while another is current.
 	movement_sett movements=make_movements();
@@ -150,9 +147,6 @@ struct plugin_statest
 		s.movement=render.animation_manager.movement().name();
 		s.movement_settings=render.animation_manager.movement().settings();
 		s.step_ms=render.animation_manager.step_duration_ms();
-		// Compat: old plugin_commands.h reads these.
-		s.linear=render.animation_manager.is_linear();
-		s.hop=hop;
 		return s;
 		}
 
@@ -171,8 +165,6 @@ struct plugin_statest
 		render.camera.set_enabled(s.camera);
 		render.camera.set_rest(s.rest_x,s.rest_y);
 		render.animation_manager.set_step_duration_ms(s.step_ms);
-		// Compat: old plugin_commands.h writes these directly.
-		hop=s.hop;
 		for(std::unique_ptr<movementst> &movement:movements.all)
 			{
 			if(s.movement!=movement->name())continue;
@@ -180,11 +172,9 @@ struct plugin_statest
 			const std::string error=apply_movement_settings(*fresh,s.movement_settings);
 			if(error.empty())movement=std::move(fresh);
 			render.animation_manager.set_movement(*movement);
-			if(s.linear)render.animation_manager.set_linear(true);
 			return error;
 			}
 		render.animation_manager.set_movement(movements.default_movement());
-		if(s.linear)render.animation_manager.set_linear(true);
 		return "unknown movement "+s.movement;
 		}
 
