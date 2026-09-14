@@ -69,6 +69,10 @@ struct render_proxyst
 	float source_y_tiles;
 	int32_t target_x;
 	int32_t target_y;
+	// The game's own sprite for this tile and layer. It has already been spent: the draw
+	// uses `texture`, which cached_texture made from it. The id is kept because it is the
+	// one field that names which sprite a proxy came from, and the tests read it to check
+	// the sweep took the right tile and to tell one creature's proxies from a neighbour's.
 	int32_t texpos;
 	// The final draw offset in tiles from the source tile, and the fraction travelled used
 	// to replace it with the straight path when that is required (see collect_proxies).
