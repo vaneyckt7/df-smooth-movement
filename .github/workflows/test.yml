@@ -1,0 +1,27 @@
+name: Tests
+
+# The harness builds against the stub headers in harness/stubs, so this needs a C++17
+# compiler and python3 and nothing else: no DFHack checkout and no Dwarf Fortress.
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  pull_request:
+
+# A new push to a branch makes the run already going on it pointless.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      # Builds and runs the seven unit test suites, replays the recording the codec test
+      # writes, and replays everything in harness/recordings against harness/expected.
+      # It exits non-zero when any of that fails.
+      - name: Run the harness
+        run: harness/test.sh .
