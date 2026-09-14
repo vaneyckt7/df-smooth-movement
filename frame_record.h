@@ -100,7 +100,9 @@ struct writerst
 	// it reaches memcpy through a dozen inlined templates, and GCC 11 loses the size of the
 	// destination on the way and warns that the copy overflows an empty region. The warning
 	// is wrong -- resize has already made the room -- but this is the shorter path to the
-	// same bytes, and it says what it does.
+	// same bytes, and it says what it does. `data` must not point into `bytes`: the copy is
+	// a memcpy, and the resize above it may move what `bytes` holds. Nothing does; every
+	// caller hands over a literal or another object's characters.
 	void raw(const void *data,size_t size)
 		{
 		if(size==0)return;
