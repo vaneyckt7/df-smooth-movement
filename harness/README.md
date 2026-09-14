@@ -97,7 +97,8 @@ such as the repository root (`.`) or an export of another branch, for example
   or `recinfo.py` reads a different number of frames than the replay.
   It prints the replay's repaint total alongside the game's from the self-check, which
   match only for the plugin version that made the recording. With `recordings/` empty that
-  last part checks nothing, and the run says so rather than passing quietly.
+  last part checks nothing, so the run fails rather than passing quietly; set
+  `HARNESS_ALLOW_NO_RECORDINGS=1` to run the rest of the harness knowing that it is missing.
 - `compile.sh <plugin dir>`: builds the plugin in DFHack's docker build image against the real
   headers. Needs `DFHACK_SRC` pointing at a DFHack checkout with `build/linux` configured,
   and touches nothing outside that build directory.
