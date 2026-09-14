@@ -33,5 +33,12 @@ jobs:
       # Builds and runs the seven unit test suites, replays the recording the codec test
       # writes, and replays everything in harness/recordings against harness/expected.
       # It exits non-zero when any of that fails.
+      #
+      # -Werror is set here rather than in the harness scripts so that the build is held
+      # warning-clean against the one compiler this file pins, and a warning that some other
+      # compiler invents stays a warning on the machine that sees it instead of stopping the
+      # work. Both scripts take it from CXXFLAGS.
       - name: Run the harness
+        env:
+          CXXFLAGS: -Werror
         run: harness/test.sh .

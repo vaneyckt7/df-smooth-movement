@@ -96,10 +96,20 @@ struct writerst
 		while(v>=0x80){bytes.push_back(uint8_t(v|0x80));v>>=7;}
 		bytes.push_back(uint8_t(v));
 		}
+	// Grow, then copy. vector::insert from a pair of pointers would say the same thing, but
+	// it reaches memcpy through a dozen inlined templates, and GCC 11 loses the size of the
+	// destination on the way and warns that the copy overflows an empty region. The warning
+	// is wrong -- resize has already made the room -- but this is the shorter path to the
+	// same bytes, and it says what it does. `data` must not point into `bytes`: the copy is
+	// a memcpy, and the resize above it may move what `bytes` holds. Nothing does; every
+	// caller hands over a literal, a string's characters, or one of the viewport's own
+	// per-tile arrays, and none of those is this writer's buffer.
 	void raw(const void *data,size_t size)
 		{
-		const uint8_t *p=static_cast<const uint8_t *>(data);
-		bytes.insert(bytes.end(),p,p+size);
+		if(size==0)return;
+		const size_t at=bytes.size();
+		bytes.resize(at+size);
+		std::memcpy(bytes.data()+at,data,size);
 		}
 
 	// Run-codes `count` entries of `current` against `previous` (the same array one frame
