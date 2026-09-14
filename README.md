@@ -38,10 +38,10 @@ Every command starts with `smooth-movement`. A bare `smooth-movement` prints the
 command naming a setting without a value prints that setting's current value instead of
 changing it.
 
-Run these after `enable smooth-movement`, not before. The console accepts them while the
-plugin is disabled and says it did, but enabling the plugin puts every setting back to its
-default, so anything set beforehand is silently lost. The one setting that survives is the
-choice of movement.
+Set these after `enable smooth-movement`, not before. The console accepts a setting while
+the plugin is disabled and says it did, but enabling the plugin puts every setting back to
+its default, so anything set beforehand is silently lost. The one setting that survives is
+the choice of movement.
 
 ```text
 smooth-movement status              # print every setting and its current value
@@ -91,7 +91,7 @@ smooth-movement all on|off          # flip and hauled together; leaves everythin
 smooth-movement camera              # print the free camera's state
 smooth-movement camera on|off       # the free camera: map scrolls glide, middle-mouse drag pans
 smooth-movement camera reset        # clear the sub-tile offset
-smooth-movement camera 0.25 -0.25   # rest this far east and south of the tile grid, in tiles
+smooth-movement camera 0.25 0.25    # rest this far east and south of the tile grid, in tiles
 smooth-movement stats               # print the render hook's frame timings
 smooth-movement stats on|off        # start or stop timing the render hook
 smooth-movement stats reset         # clear the numbers collected so far
@@ -102,9 +102,11 @@ smooth-movement record status       # whether a recording is running, and how fa
 ```
 
 `all on|off` covers `flip` and `hauled` and nothing else: not the movement, not the free
-camera, not the stats, not a recording. `record` is the one command that needs the plugin
-already enabled; it refuses otherwise. A `camera <fx> <fy>` offset is a fraction of a tile
-between -0.99 and 0.99 on each axis, and setting one turns the free camera on.
+camera, not the stats, not a recording. Starting a recording is the one thing that needs
+the plugin already enabled; it refuses otherwise, while `record stop` and `record status`
+work either way. A `camera <fx> <fy>` offset is a fraction of a tile between -0.99 and 0.99
+on each axis, positive being east and south of the tile grid, and setting one turns the free
+camera on.
 
 ### Walk hop
 
