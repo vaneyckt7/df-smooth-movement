@@ -48,7 +48,7 @@ struct sdl_apist
 // simulation's frame counter is read there, not at paint time when it may already have
 // moved on. Draw serial in the high half, tick in the low half, in one word so the paint side
 // reads both as they were stored.
-struct drawn_buffersst
+struct drawn_arraysst
 {
 	std::atomic<uint64_t> drawn{0};
 	uint32_t draw_serial=0;         // simulation thread
@@ -93,7 +93,7 @@ struct render_statest
 	// after.
 	blank_summariest<df::graphic_viewportst> blank_summaries;
 
-	drawn_buffersst drawn_buffers;
+	drawn_arraysst drawn_arrays;
 
 	// What the hook did on the frame in progress, for the recorder. Render thread only, so
 	// a `stats reset` from the console cannot skew them.

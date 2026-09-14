@@ -175,11 +175,11 @@ viewport_visual_animation_inputst animation_input(df::graphic_viewportst *vp)
 		vp->screentexpos_background_old,
 		window_x?*window_x:0,
 		window_y?*window_y:0,
-		state.render.drawn_buffers.frame_simulation_tick
+		state.render.drawn_arrays.frame_simulation_tick
 		};
 }
 
-// The layer buffers are freed and nulled without clearing the active flag.
+// The layer arrays are freed and nulled without clearing the active flag.
 bool viewport_readable(df::graphic_viewportst *vp)
 {
 	return vp!=nullptr&&vp->flag.bits.active&&animation_input(vp).valid();
@@ -452,7 +452,7 @@ void record_frame_start(df::renderer_2d_base *renderer,uint32_t now_ms)
 		frame_recorderst::frame_inputst input;
 		frame_record::frame_headerst &header=input.header;
 		header.settings=state.settings();
-		header.simulation_tick=state.render.drawn_buffers.frame_simulation_tick;
+		header.simulation_tick=state.render.drawn_arrays.frame_simulation_tick;
 		header.tick_ms=now_ms;
 		header.window_x=window_x?*window_x:0;
 		header.window_y=window_y?*window_y:0;
@@ -581,7 +581,7 @@ std::vector<viewport_renderst> collect_viewport_renders(
 	return renders;
 }
 
-void draw_interpolation_stages(
+void draw_movement_stages(
 	df::renderer_2d_base *renderer,
 	df::graphic_viewportst *vp,
 	const std::vector<render_proxyst> &proxies,
@@ -611,7 +611,7 @@ void redraw_viewport_tiles(
 		}
 }
 
-void draw_viewport_interpolation_stages(
+void draw_viewport_movement_stages(
 	df::renderer_2d_base *renderer,
 	const std::vector<viewport_renderst> &viewports,
 	const tile_coveragest &coverage,
@@ -623,7 +623,7 @@ void draw_viewport_interpolation_stages(
 		// Reapply that viewport before its own proxies, matching DF's lower-to-main draw order.
 		if(index>0)redraw_viewport_tiles(renderer,viewports[index],coverage);
 		const viewport_renderst &viewport=viewports[index];
-		draw_interpolation_stages(
+		draw_movement_stages(
 			renderer,viewport.viewport,viewport.proxies,viewport.coverage);
 		if(index+1==viewports.size())
 			for(const carried_item_proxyst &proxy:carried_items)
@@ -656,7 +656,7 @@ void fill_black(SDL_Renderer *sdl_renderer,const std::vector<SDL_Rect> &rects)
 	state.sdl.set_render_draw_color(sdl_renderer,old_r,old_g,old_b,old_a);
 }
 
-void render_interpolated_world(df::renderer_2d_base *renderer)
+void render_world_with_movement(df::renderer_2d_base *renderer)
 {
 	state.stats.frames.fetch_add(1,std::memory_order_relaxed);
 	// Read once: if the console flipped the flag on mid-frame, the guard would subtract a
@@ -664,7 +664,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	const bool timing_enabled=state.stats.enabled.load(std::memory_order_relaxed);
 	// The frame's clock, read once so that a recording carries the value the frame used.
 	const uint32_t now_ms=Core::getInstance().p->getTickCount();
-	state.render.drawn_buffers.frame_simulation_tick=state.render.drawn_buffers.take_tick();
+	state.render.drawn_arrays.frame_simulation_tick=state.render.drawn_arrays.take_tick();
 	record_frame_start(renderer,now_ms);
 	state.render.hook_repaints=0;
 	state.render.hook_painted=false;
@@ -775,7 +775,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 			for(int32_t y=vp->clipy[0];y<=vp->clipy[1];++y)
 				redraw_world_tile(renderer,viewport_renders,coverage,x,y);
 			}
-		draw_viewport_interpolation_stages(
+		draw_viewport_movement_stages(
 			renderer,viewport_renders,coverage,carried_items);
 		renderer->origin_x=saved_origin_x;
 		renderer->origin_y=saved_origin_y;
@@ -809,7 +809,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 		if(paintable_tile(vp,x,y))
 			redraw_world_tile(renderer,viewport_renders,coverage,x,y);
 		}
-	draw_viewport_interpolation_stages(
+	draw_viewport_movement_stages(
 		renderer,viewport_renders,coverage,carried_items);
 
 	state.render.previous_coverage=std::move(coverage);
@@ -826,7 +826,7 @@ IMPLEMENT_VMETHOD_INTERPOSE(renderer_hook,update_all);
 void renderer_hook::interpose_fn_update_all()
 {
 	// update_all is the existing UI stage, so world correction must run first.
-	render_interpolated_world(this);
+	render_world_with_movement(this);
 	INTERPOSE_NEXT(update_all)();
 }
 
@@ -834,7 +834,7 @@ void renderer_hook::interpose_fn_update_all()
 // thread; the interposes note the simulation tick they were filled at.
 void note_map_render()
 {
-	if(world!=nullptr)state.render.drawn_buffers.note_drawn(world->frame_counter);
+	if(world!=nullptr)state.render.drawn_arrays.note_drawn(world->frame_counter);
 }
 
 struct dwarfmode_hook : df::viewscreen_dwarfmodest

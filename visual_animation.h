@@ -137,7 +137,7 @@ struct viewport_visual_animation_inputst
 	const int32_t *current_background=nullptr;
 	const int32_t *previous_background=nullptr;
 	// Current map-scroll offset (window_x/window_y). A pure pan does not bump context_revision.
-	// Only a hint: it changes at input time, the buffers shift on a later render frame.
+	// Only a hint: it changes at input time, the per-tile arrays shift on a later render frame.
 	int32_t pan_x=0;
 	int32_t pan_y=0;
 	// The simulation's frame counter, or -1 when unknown. Creatures only step when it
@@ -329,21 +329,21 @@ class visual_animation_managerst
 		int32_t pan_x=0;
 		int32_t pan_y=0;
 		bool has_pan=false;
-		// Window scrolls not yet observed in the buffers, oldest first.
+		// Window scrolls not yet observed in the per-tile arrays, oldest first.
 		// A signed total would cancel on a reversing drag while both shifts are still owed.
 		std::vector<std::array<int32_t,2>> pending;
 		// Redraws no prefix has matched.
 		int32_t pending_frames=0;
-		// Redraws spent waiting for the buffers to move at all.
+		// Redraws spent waiting for the per-tile arrays to move at all.
 		int32_t pending_age=0;
 		// Redraws left in which new-movement detection stays suppressed after scroll activity.
 		int32_t suppress_frames=0;
 		// Simulation tick the per-tile arrays last changed at, to tell a step from a repaint.
-		int64_t buffer_tick=-1;
-		// Buffer contents last seen, to recognize a repeat of them.
-		uint64_t buffer_signature=0;
-		bool has_buffer_signature=false;
-		// Set while the previous buffer still belongs to a view that has been left behind.
+		int64_t array_tick=-1;
+		// Array entries last seen, to recognize a repeat of them.
+		uint64_t array_signature=0;
+		bool has_array_signature=false;
+		// Set while the previous entries still belong to a view that has been left behind.
 		bool previous_view_stale=false;
 		bool landed_this_frame=false;
 		bool abandoned_this_frame=false;
@@ -439,8 +439,8 @@ class visual_animation_managerst
 			lanes[0]=(lanes[0]^uint64_t(uint32_t(values[i])))*fnv_prime;
 		}
 
-	// Identifies the buffer contents this frame, to tell a redrawn viewport from a repeated one.
-	static uint64_t compute_buffer_signature(const viewport_visual_animation_inputst &input)
+	// Identifies the array entries this frame, to tell a redrawn viewport from a repeated one.
+	static uint64_t compute_array_signature(const viewport_visual_animation_inputst &input)
 		{
 		// FNV-1a in lanes. Only ever compared against the previous frame's value, never stored.
 		constexpr uint64_t fnv_offset_basis=0xcbf29ce484222325ULL;
@@ -498,7 +498,7 @@ class visual_animation_managerst
 			}
 		}
 
-	// Fraction of tracked sprites consistent with a buffer shift: current[x]==previous[x+dwx].
+	// Fraction of tracked sprites consistent with an array shift: current[x]==previous[x+dwx].
 	// Negative when there is nothing to compare.
 	static double background_shift_match_ratio(
 		const viewport_visual_animation_inputst &input,
@@ -737,15 +737,15 @@ class visual_animation_managerst
 				return;
 				}
 
-			// Only a replaced view leaves a previous buffer belonging somewhere else; a first
+			// Only a replaced view leaves previous entries belonging somewhere else; a first
 			// sighting does not.
 			const bool view_switched=state.has_context&&
 				(state.context_revision!=input.context_revision||
 				state.dim_x!=input.dim_x||state.dim_y!=input.dim_y);
 			const bool context_changed=!state.has_context||view_switched;
-			// The scroll delta is queued here as a hint; the buffers are hypothesis-tested each
+			// The scroll delta is queued here as a hint; the per-tile arrays are hypothesis-tested each
 			// frame to find where it lands. Detection stays suppressed until then: a shifted
-			// buffer makes every panned creature look like a real move.
+			// array makes every panned creature look like a real move.
 			if(state.has_pan&&(state.pan_x!=input.pan_x||state.pan_y!=input.pan_y))
 				{
 				if(state.pending.size()>=max_pending_shifts)
@@ -785,23 +785,23 @@ class visual_animation_managerst
 				}
 			// This hook runs per frame; the viewport is recomputed only when it changes, and while
 			// paused hardly at all. Re-reading a landed scroll steps every sprite by a tile.
-			const uint64_t signature=compute_buffer_signature(input);
-			const bool buffers_advanced=!state.has_buffer_signature||
-				state.buffer_signature!=signature;
-			state.buffer_signature=signature;
-			state.has_buffer_signature=true;
+			const uint64_t signature=compute_array_signature(input);
+			const bool arrays_advanced=!state.has_array_signature||
+				state.array_signature!=signature;
+			state.array_signature=signature;
+			state.has_array_signature=true;
 			// A redraw at the tick the arrays last changed at shows the same world: whatever
 			// differs is presentation, not a step, and a paused game is nothing but such redraws.
 			const bool world_advanced=input.simulation_tick<0||
-				state.buffer_tick!=input.simulation_tick;
-			if(buffers_advanced)state.buffer_tick=input.simulation_tick;
+				state.array_tick!=input.simulation_tick;
+			if(arrays_advanced)state.array_tick=input.simulation_tick;
 
 			if(context_changed)
 				{
 				// Skips the recompute sweep, so clear has_mirrored here or a stale true survives.
 				state.has_mirrored=false;
 				reset_tracking(state);
-				// window_z, zoom and resize change at input time; the buffers cross later.
+				// window_z, zoom and resize change at input time; the per-tile arrays cross later.
 				// This reset covers only the input frame, not the crossing itself.
 				if(view_switched)state.previous_view_stale=true;
 				return;
@@ -809,15 +809,15 @@ class visual_animation_managerst
 
 			// On the crossing frame `current` is the new view and `previous` the old one, so a
 			// sprite on each side, a tile apart, reads as one that moved between them.
-			const bool crossed_views=buffers_advanced&&state.previous_view_stale;
-			if(buffers_advanced)state.previous_view_stale=false;
+			const bool crossed_views=arrays_advanced&&state.previous_view_stale;
+			if(arrays_advanced)state.previous_view_stale=false;
 			// The new view is drawn at the current window, so a queued scroll is already in it.
 			// Left queued it would never match, and suppress everything until it aged out.
 			if(crossed_views)clear_pending(state);
 
 			bool translated=false;
 			std::array<int32_t,2> landed_shift{};
-			bool pending_testable=buffers_advanced;
+			bool pending_testable=arrays_advanced;
 			bool repeated_landing_allowed=false;
 			if(!pending_testable&&!state.pending.empty())
 				{
@@ -862,7 +862,7 @@ class visual_animation_managerst
 						any_data=true;
 						const int32_t applied=base_components+ix+iy;
 						if(ratio<(used_background?0.6:0.5)||
-							(!buffers_advanced&&!repeated_landing_allowed)||
+							(!arrays_advanced&&!repeated_landing_allowed)||
 							(best.valid&&ratio<best.score)||
 							(best.valid&&ratio==best.score&&applied>=best.applied_components))
 							continue;
@@ -955,11 +955,11 @@ class visual_animation_managerst
 					}
 				}
 
-			const bool suppress=(!buffers_advanced&&!translated)||crossed_views||
+			const bool suppress=(!arrays_advanced&&!translated)||crossed_views||
 				(!translated&&!state.pending.empty())||state.suppress_frames>0||
 				!world_advanced;
 			// The countdown measures redraws, not frames, so a repeated viewport must not spend it.
-			if(buffers_advanced&&state.suppress_frames>0)--state.suppress_frames;
+			if(arrays_advanced&&state.suppress_frames>0)--state.suppress_frames;
 
 			// On the landing frame `previous` is still framed on the pre-scroll view.
 			// Rebasing it by the landed delta keeps a creature that walked during the scroll.
