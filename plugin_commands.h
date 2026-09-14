@@ -285,7 +285,14 @@ command_outcomest run_command(
 			return command_outcomest::ok;
 			}
 		movementst *movement=state.movements.find(parameters[1]);
-		if(movement==nullptr)return command_outcomest::wrong_usage;
+		if(movement==nullptr)
+			{
+			// The usage names <name> without saying which names exist, so say it here,
+			// the way an unknown setting below says which settings exist.
+			out.printerr("no movement named {}; movements: {}\n",
+				parameters[1],state.movements.names());
+			return command_outcomest::failed;
+			}
 		if(parameters.size()==2)
 			{
 			state.render.animation_manager.set_movement(*movement);
@@ -293,17 +300,24 @@ command_outcomest run_command(
 			out.print("smooth-movement: movement {}\n",movement->name());
 			return command_outcomest::ok;
 			}
+		if(parameters.size()!=3&&parameters.size()!=4)return command_outcomest::wrong_usage;
+		// The setting name is looked up before the value is parsed, so that a misspelt
+		// name reads the same whether or not a value follows it. settings() answers with
+		// a copy, so the vector is held while the entry it owns is used.
+		const std::vector<movement_settingst> settings=movement->settings();
+		const movement_settingst *named=nullptr;
+		for(const movement_settingst &setting:settings)
+			if(setting.name==parameters[2]){named=&setting;break;}
+		if(named==nullptr)
+			{
+			out.printerr("{} has no setting named {}\n",movement->name(),parameters[2]);
+			return command_outcomest::failed;
+			}
 		if(parameters.size()==3)
 			{
-			for(const movement_settingst &setting:movement->settings())
-				if(setting.name==parameters[2])
-					{
-					out.print("movement {} {}: {}\n",movement->name(),setting.name,setting.value);
-					return command_outcomest::ok;
-					}
-			return command_outcomest::wrong_usage;
+			out.print("movement {} {}: {}\n",movement->name(),named->name,named->value);
+			return command_outcomest::ok;
 			}
-		if(parameters.size()!=4)return command_outcomest::wrong_usage;
 		const float value=parse_hop_value(parameters[3]);
 		if(value<0.0f)return command_outcomest::wrong_usage;
 		const std::string error=apply_movement_settings(*movement,{{parameters[2],value}});

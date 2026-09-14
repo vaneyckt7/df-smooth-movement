@@ -50,7 +50,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -328,21 +327,14 @@ class hop_movementst:public movementst
 			{
 			return delta_tiles>-0.5f&&delta_tiles<=0.5f;
 			}
-
-		static std::string format(const char *pattern,float value)
-			{
-			char text[96];
-			std::snprintf(text,sizeof text,pattern,double(value));
-			return text;
-			}
 };
 
-// Every movement, one instance each with its settings, the default first.
+// Every movement, one instance each with its settings, the plugin's initial movement first.
 struct movement_sett
 {
 	std::vector<std::unique_ptr<movementst>> all;
 
-	movementst &default_movement() const
+	movementst &initial_movement() const
 		{
 		return *all.front();
 		}
@@ -377,7 +369,8 @@ inline movement_sett make_movements()
 	return set;
 }
 
-// A movement a manager without a set of its own follows: the default, with no settings.
+// A movement a manager without a set of its own follows: smoothstep, with no settings. It
+// is not what a fresh plugin picks, which is initial_movement's none.
 inline const movementst &default_movement()
 {
 	static const smoothstep_movementst movement;

@@ -255,7 +255,7 @@ void redraw_world_tile(
 	const bool staged_tile=staged.count({x,y})!=0;
 	for(const viewport_renderst &viewport:viewports)
 		{
-		if(inside_clip(viewport.viewport,x,y))
+		if(paintable_tile(viewport.viewport,x,y))
 			redraw_viewport_tile(renderer,viewport,x,y,staged_tile);
 		if(staged_tile)break;
 		}
@@ -515,7 +515,7 @@ std::vector<carried_item_proxyst> collect_carried_item_proxies(
 		{
 		const int32_t x=unit->pos.x-*window_x;
 		const int32_t y=unit->pos.y-*window_y;
-		if(!inside_clip(vp,x,y))continue;
+		if(!paintable_tile(vp,x,y))continue;
 		const int32_t index=x*vp->dim_y+y;
 		if(vp->screentexpos[index]==0)continue;
 		const int32_t texpos=item_texpos(hauled_item(unit));
@@ -535,7 +535,7 @@ std::vector<carried_item_proxyst> collect_carried_item_proxies(
 			coverage_x<=int32_t(std::ceil(std::max(source_x_tiles,float(x))));++coverage_x)
 			for(int32_t coverage_y=int32_t(std::floor(std::min(source_y_tiles,float(y))));
 				coverage_y<=int32_t(std::ceil(std::max(source_y_tiles,float(y))));++coverage_y)
-				if(inside_clip(vp,coverage_x,coverage_y))
+				if(paintable_tile(vp,coverage_x,coverage_y))
 					proxy.coverage.emplace(coverage_x,coverage_y);
 		proxies.push_back(std::move(proxy));
 		}
@@ -603,7 +603,7 @@ void redraw_viewport_tiles(
 	df::graphic_viewportst *vp=viewport.viewport;
 	for(const auto &[x,y]:coverage)
 		{
-		if(!inside_clip(vp,x,y))continue;
+		if(!paintable_tile(vp,x,y))continue;
 		redraw_viewport_tile(renderer,viewport,x,y,true);
 		}
 }
@@ -629,7 +629,7 @@ void draw_viewport_interpolation_stages(
 		// Restricting it to the tiles this viewport has sprites on would not deepen with distance.
 		for(const auto &[x,y]:coverage)
 			{
-			if(inside_clip(viewport.viewport,x,y))
+			if(paintable_tile(viewport.viewport,x,y))
 				draw_interface_only(renderer,viewport.viewport,x,y);
 			}
 		}
@@ -790,7 +790,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 	std::vector<SDL_Rect> tile_rects;
 	for(const auto &[x,y]:redraw_coverage)
 		{
-		if(!inside_clip(vp,x,y))continue;
+		if(!paintable_tile(vp,x,y))continue;
 		tile_rects.push_back(
 			{
 			tile_pixel(x,renderer->origin_x,zoom),
@@ -803,7 +803,7 @@ void render_interpolated_world(df::renderer_2d_base *renderer)
 
 	for(const auto &[x,y]:redraw_coverage)
 		{
-		if(inside_clip(vp,x,y))
+		if(paintable_tile(vp,x,y))
 			redraw_world_tile(renderer,viewport_renders,coverage,x,y);
 		}
 	draw_viewport_interpolation_stages(

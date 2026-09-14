@@ -347,8 +347,21 @@ void test_movement()
 		"hop height must be within (0, 1] tiles\n");
 	expect_failed("multiplier over the limit",run(state,{"movement","hop","vertical-mult","5.5"}),
 		"hop multipliers must be within 0..5\n");
-	expect_usage("unknown movement",run(state,{"movement","bounce"}));
-	expect_usage("unknown setting",run(state,{"movement","hop","bounce"}));
+	// An unknown movement says so and lists the names, as the usage does not name them.
+	expect_failed("unknown movement",run(state,{"movement","bounce"}),
+		"no movement named bounce; movements: none, smoothstep, linear, hop\n");
+	expect_failed("unknown setting query",run(state,{"movement","hop","bounce"}),
+		"hop has no setting named bounce\n");
+	expect_failed("unknown setting value",run(state,{"movement","hop","bounce","5"}),
+		"hop has no setting named bounce\n");
+	// The setting name is checked before the value, so an unknown name reads the same
+	// whether the value that follows it parses or not.
+	expect_failed("unknown setting, bad value",run(state,{"movement","hop","bounce","x"}),
+		"hop has no setting named bounce\n");
+	// A movement without settings has nothing to name, so every name is unknown to it.
+	expect_failed("setting on a movement without settings",
+		run(state,{"movement","linear","hop-height","0.2"}),
+		"linear has no setting named hop-height\n");
 	expect_usage("setting without value",run(state,{"movement","hop","hop-height","0","extra"}));
 	expect_usage("negative setting",run(state,{"movement","hop","hop-height","-0.1"}));
 }

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <random>
 #include <string>
@@ -76,6 +77,13 @@ int main(int argc,char **argv)
 	frame_record::readerst t;t.data=w.bytes.data();t.size=w.bytes.size()/2;
 	t.words(b.data(),50);
 	if(t.ok()){puts("truncated stream accepted");++failures;}
+	}
+	// A size request whose addition would wrap must still be rejected.
+	{
+	frame_record::readerst r;
+	r.pos=std::numeric_limits<size_t>::max()-1;
+	r.size=std::numeric_limits<size_t>::max();
+	if(r.need(2)||r.ok()){puts("overflowing size request accepted");++failures;}
 	}
 	// A run longer than the array must be rejected, not written past it.
 	{

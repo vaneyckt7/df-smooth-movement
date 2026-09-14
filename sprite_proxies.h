@@ -26,6 +26,21 @@ bool inside_clip(const Viewport *vp,int32_t x,int32_t y)
 		y>=vp->clipy[0]&&y<=vp->clipy[1];
 }
 
+// A tile the plugin may read, cover or repaint: inside the viewport's per-tile arrays as
+// well as inside its clip. Being inside the clip is not enough on its own. The game sets the
+// clip from what is on screen and the dimensions from how the arrays were allocated, so a
+// tile can be inside the clip and past the end of every array; the sprite proxy test widens
+// a clip past the dimensions for exactly that reason. Reading such a tile runs off an array,
+// and a repaint of one writes a zero off as many as twenty-five of them, every per-tile array
+// the game draws a tile from, and restores it from there. Every place that indexes a per-tile
+// array, puts a tile in a proxy's coverage or repaints a tile asks this rather than
+// inside_clip.
+template<typename Viewport>
+bool paintable_tile(const Viewport *vp,int32_t x,int32_t y)
+{
+	return x>=0&&x<vp->dim_x&&y>=0&&y<vp->dim_y&&inside_clip(vp,x,y);
+}
+
 template<typename Flag>
 bool fire_frame(const Flag &flag)
 {
@@ -36,9 +51,13 @@ bool fire_frame(const Flag &flag)
 }
 
 template<typename Viewport>
+// Answers for a tile inside the arrays. A tile outside them holds nothing to read, so it
+// has no fire. Callers gate on paintable_tile, which is stricter than this; the bounds are
+// here so that a caller which forgets reads no further than the answer.
 bool has_fire(const Viewport *vp,int32_t x,int32_t y)
 {
 	return vp->screentexpos_spatter_flag!=nullptr&&
+		x>=0&&x<vp->dim_x&&y>=0&&y<vp->dim_y&&
 		fire_frame(vp->screentexpos_spatter_flag[x*vp->dim_y+y]);
 }
 
@@ -51,6 +70,10 @@ struct render_proxyst
 	float source_y_tiles;
 	int32_t target_x;
 	int32_t target_y;
+	// The game's own sprite for this tile and layer. It has already been spent: the draw
+	// uses `texture`, which cached_texture made from it. The id is kept because it is the
+	// one field that names which sprite a proxy came from, and the tests read it to check
+	// the sweep took the right tile and to tell one creature's proxies from a neighbour's.
 	int32_t texpos;
 	// The final draw offset in tiles from the source tile, and the fraction travelled used
 	// to replace it with the straight path when that is required (see collect_proxies).
@@ -286,7 +309,7 @@ std::vector<render_proxyst> collect_proxies(
 						if(extra_x>=first_col&&extra_x<=last_col&&
 							extra_y>=first_row&&extra_y<=last_row)continue;
 						for(const int32_t shifted_x:{extra_x,extra_x+proxy.mirror_shift})
-							if(!inside_clip(vp,shifted_x,extra_y)||
+							if(!paintable_tile(vp,shifted_x,extra_y)||
 								has_fire(vp,shifted_x,extra_y))
 								{
 								proxy.use_straight_path=true;
@@ -305,7 +328,7 @@ std::vector<render_proxyst> collect_proxies(
 					coverage_y<=int32_t(std::ceil(
 						std::max(proxy.source_y_tiles,float(y))));++coverage_y)
 					{
-					if(!inside_clip(vp,coverage_x,coverage_y))
+					if(!paintable_tile(vp,coverage_x,coverage_y))
 						{
 						blocked=true;
 						break;
@@ -324,23 +347,23 @@ std::vector<render_proxyst> collect_proxies(
 			if(proxy.mirror_shift!=0)
 				{
 				std::set<std::pair<int32_t,int32_t>> mirrored_coverage;
-				for(const auto &tile:proxy.coverage)
+				for(const auto &coverage_tile:proxy.coverage)
 					mirrored_coverage.emplace(
-						tile.first+proxy.mirror_shift,tile.second);
-				for(const auto &tile:mirrored_coverage)
+						coverage_tile.first+proxy.mirror_shift,coverage_tile.second);
+				for(const auto &mirrored_tile:mirrored_coverage)
 					{
-					if(!inside_clip(vp,tile.first,tile.second))
+					if(!paintable_tile(vp,mirrored_tile.first,mirrored_tile.second))
 						{
 						blocked=true;
 						break;
 						}
 					if(visual_render_group(proxy.layer)==visual_render_groupst::main&&
-						has_fire(vp,tile.first,tile.second))
+						has_fire(vp,mirrored_tile.first,mirrored_tile.second))
 						{
 						blocked=true;
 						break;
 						}
-					proxy.coverage.insert(tile);
+					proxy.coverage.insert(mirrored_tile);
 					}
 				if(blocked)continue;
 				}
@@ -395,8 +418,13 @@ std::vector<render_proxyst> collect_proxies(
 					{
 					if(extra_x>=first_col&&extra_x<=last_col&&
 						extra_y>=first_row&&extra_y<=last_row)continue;
-					proxy.coverage.emplace(extra_x,extra_y);
-					proxy.coverage.emplace(extra_x+proxy.mirror_shift,extra_y);
+					// The candidate loop above has already given up the overshoot
+					// for a tile it cannot paint, so these two are inside the arrays;
+					// asking again keeps that true here rather than in that loop.
+					if(paintable_tile(vp,extra_x,extra_y))
+						proxy.coverage.emplace(extra_x,extra_y);
+					if(paintable_tile(vp,extra_x+proxy.mirror_shift,extra_y))
+						proxy.coverage.emplace(extra_x+proxy.mirror_shift,extra_y);
 					}
 			}
 		}
@@ -464,7 +492,7 @@ std::vector<render_proxyst> collect_proxies(
 				for(int32_t coverage_x=coverage_first;
 					coverage_x<=coverage_last;++coverage_x)
 					{
-					if(!inside_clip(vp,coverage_x,y)||
+					if(!paintable_tile(vp,coverage_x,y)||
 						(group==visual_render_groupst::main&&
 						has_fire(vp,coverage_x,y)))
 						{

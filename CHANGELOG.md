@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- The sprite sweep asks whether a tile is inside the viewport's per-tile arrays before it
+  reads one, covers the tile or asks the game to repaint it. It used to ask only whether the
+  tile was inside the clip rectangle, which is a different rectangle: nothing derives clipx
+  and clipy from dim_x and dim_y, and nothing keeps the two in step. A tile one column past
+  the last one indexes a whole row into the next array, which the repaint then writes through
+  for as many as twenty-five arrays, every per-tile array the game draws a tile from, so an
+  accepted tile outside the arrays is a write and not only a stray read. Every place that
+  asked `inside_clip` now asks `paintable_tile`, which is the clip test and the array bounds
+  together, and `has_fire` checks the bounds before it reads the spatter flags. No recorded
+  scene has a viewport whose clip reaches outside its arrays: over the two
+  recordings kept for the harness, all 7047 viewport headers have a clip exactly equal to the
+  array rectangle, so on those scenes the two tests agree on every tile and nothing the plugin
+  draws changes. This is a bound the sweep was missing, not a fault seen in a game.
+- `movement <name>` with a name the plugin does not have says so and lists the names it does
+  have, where it used to print only the usage, which names `<name>` without saying which
+  names exist. `movement <name> <setting> <value>` checks the setting name before it looks at
+  the value, so a misspelt setting reads the same whether or not the value that follows it
+  parses. Every command that worked before prints what it printed before.
+- A recording that ends mid-field is reported as truncated rather than read past its end: the
+  reader's remaining-bytes check no longer overflows when a length read out of the file is
+  larger than the file. Recordings the plugin writes are unaffected.
+
 - Names in the movement path say their unit: `_ms` for milliseconds, `_tiles` for tiles, `_px` for pixels, `_pct` for a fraction from 0 to 1. Nothing the plugin draws or records changes.
 - Fix the free camera sitting a whole tile off after two camera commands within one frame of each other in a running game (`camera <x> <y>` followed at once by `camera reset` or by another `camera <x> <y>`): a command now asks for its offset against the window as written, so a window write of the camera's own that has not landed yet is taken off the offset and comes back when it lands.
 - Fix the free camera sitting one tile off after `camera <x> <y>` in a paused game, or when a recording started, the followed unit changed, the z-level or zoom changed, or the window was resized within a frame or two of the command. The camera folds whole tiles of the offset into the game's window and used to wait for that scroll to land before moving the offset the other way; a restart of the camera's tracking (every paused frame, a recording's first frame, a change of followed unit) forgot the wait, and the offset never moved. The restart now folds the write into the offset at once.

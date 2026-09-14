@@ -142,7 +142,7 @@ struct readerst
 	void fail(const char *what){if(error.empty())error=what;}
 	bool need(size_t n)
 		{
-		if(pos+n>size){fail("truncated");return false;}
+		if(pos>size||n>size-pos){fail("truncated");return false;}
 		return true;
 		}
 	uint8_t u8(){if(!need(1))return 0;return data[pos++];}
