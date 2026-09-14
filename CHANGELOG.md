@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `camera <east> <south>` checks that its two offsets are decimal numbers before it uses
+  them. It used to hand each word straight to `std::stod`, which accepts `nan`: a NaN then
+  failed the -0.99..0.99 range test the way it fails every comparison, so it was accepted
+  and fed `std::lround` every frame until another camera command replaced it. `std::stod`
+  also stops at the first character it cannot read, so `camera 0.5abc 0` silently meant
+  `0.5`. Both now read as a usage error, like `camera east 0` always has. An offset is an
+  optional leading minus then digits with at most one point, which is the rule `timestep`
+  and the hop settings already follow.
+
 - The sprite sweep asks whether a tile is inside the viewport's per-tile arrays before it
   reads one, covers the tile or asks the game to repaint it. It used to ask only whether the
   tile was inside the clip rectangle, which is a different rectangle: nothing derives clipx

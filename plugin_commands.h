@@ -58,6 +58,24 @@ inline float parse_hop_value(const std::string &text)
 	return std::stof(text);
 }
 
+// A camera offset in tiles: an optional leading minus, then decimal digits with at most one
+// point. The whitelist is what keeps `nan` out. std::stod accepts "nan" and every comparison
+// against a NaN is false, so a NaN passes the range test below it and reaches the camera,
+// where it feeds std::lround every frame until another camera command replaces it. It also
+// stops a number being cut short at a stray character, the way "0.5abc" used to read as 0.5.
+// False when the text is not an offset; `value` is then untouched.
+inline bool parse_camera_offset(const std::string &text,double &value)
+{
+	if(text.empty())return false;
+	const std::string digits=text.front()=='-'?text.substr(1):text;
+	if(digits.empty()||digits.size()>8||
+		digits.find_first_not_of("0123456789.")!=std::string::npos||
+		digits.find('.')!=digits.rfind('.')||
+		digits.find_first_of("0123456789")==std::string::npos)return false;
+	value=std::stod(text);
+	return true;
+}
+
 // Whether the words are a setting's name followed by `on` or `off`, and which; the shape
 // every switch in the grammar takes.
 inline bool parse_on_off(const std::vector<std::string> &parameters,bool &on)
@@ -205,25 +223,19 @@ command_outcomest camera_command(
 		}
 	if(parameters.size()==3)
 		{
-		try
-			{
-			const double fx=std::stod(parameters[1]);
-			const double fy=std::stod(parameters[2]);
-			if(fx<-0.99||fx>0.99||fy<-0.99||fy>0.99)
-				{
-				out.printerr("offsets must be within -0.99..0.99 tiles\n");
-				return command_outcomest::failed;
-				}
-			// User-facing: positive = view sits east/south of the grid position.
-			state.render.camera.set_enabled(true);
-			state.render.camera.request_rest(-fx,-fy);
-			state.render.camera.normalize_rest(host.scroll_window);
-			return command_outcomest::ok;
-			}
-		catch(...)
-			{
+		double fx=0.0,fy=0.0;
+		if(!parse_camera_offset(parameters[1],fx)||!parse_camera_offset(parameters[2],fy))
 			return command_outcomest::wrong_usage;
+		if(fx<-0.99||fx>0.99||fy<-0.99||fy>0.99)
+			{
+			out.printerr("offsets must be within -0.99..0.99 tiles\n");
+			return command_outcomest::failed;
 			}
+		// User-facing: positive = view sits east/south of the grid position.
+		state.render.camera.set_enabled(true);
+		state.render.camera.request_rest(-fx,-fy);
+		state.render.camera.normalize_rest(host.scroll_window);
+		return command_outcomest::ok;
 		}
 	return command_outcomest::wrong_usage;
 }

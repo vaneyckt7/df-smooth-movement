@@ -293,6 +293,26 @@ void test_camera()
 	expect_usage("camera offset not a number",run(state,{"camera","east","0"}));
 	expect_usage("camera bogus",run(state,{"camera","sideways"}));
 	expect_usage("camera one number",run(state,{"camera","0.5","0","0"}));
+	// std::stod reads every one of these. "nan" parses to a NaN, which fails the range test
+	// the way it fails every comparison, so it used to be accepted and then fed lround each
+	// frame; the rest parse to a number cut short at the first character stod stops on. The
+	// offset is checked after each one to show nothing reached the camera.
+	for(const std::string &offset:{"nan","NAN","inf","-inf","0.5abc","0x1","1e-3",".","-",
+		"0.5.5","999999999"})
+		{
+		expect_usage(("camera offset "+offset).c_str(),run(state,{"camera",offset,"0"}));
+		expect_usage(("camera offset "+offset+" as y").c_str(),
+			run(state,{"camera","0",offset}));
+		expect_near(("camera offset "+offset+" leaves x").c_str(),
+			state.render.camera.rest_offset_x(),-1.0);
+		}
+	// A leading minus is the one non-digit an offset may start with, and it must still work.
+	// The user's -0.25 east becomes a rest of 0.25, less the tile of self-scroll the earlier
+	// "past half a tile" command wrote and no frame has landed yet, so -0.75. Both offsets
+	// are inside half a tile, so normalize_rest scrolls nothing further here.
+	expect_ok("camera negative offset",run(state,{"camera","-0.25","-0.125"}),"");
+	expect_near("camera negative offset x",state.render.camera.rest_offset_x(),-0.75);
+	expect_near("camera negative offset y",state.render.camera.rest_offset_y(),0.125);
 }
 
 void test_flip_hauled()
