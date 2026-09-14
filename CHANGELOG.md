@@ -9,7 +9,18 @@
   also stops at the first character it cannot read, so `camera 0.5abc 0` silently meant
   `0.5`. Both now read as a usage error, like `camera east 0` always has. An offset is an
   optional leading minus then digits with at most one point, which is the rule `timestep`
-  and the hop settings already follow.
+  and the hop settings already follow. A leading plus, which `std::stod` read as nothing at
+  all, is the one spelling that used to work and now does not: write `camera 0.5 0`.
+
+- A camera offset and a hop setting keep their decimal point whatever the process's locale
+  says one looks like. `std::stod` and `std::stof` take the point from `LC_NUMERIC`: under a
+  locale whose decimal separator is a comma they stop at the `.`, so `camera 0.99 0` quietly
+  meant `camera 0 0`, and `movement hop hop-height 0.5` read as `0`, which is outside the
+  `(0, 1]` a hop height must be in and so was refused outright. On a leading point like `.5`
+  they threw instead, and nothing on the command path catches that. The digits are now read
+  where the command's own rule for them is written, which needs no locale. Nothing in the
+  plugin sets one, but DFHack opens Lua's standard library, so a script calling
+  `os.setlocale` moves it for the whole process.
 
 - The sprite sweep asks whether a tile is inside the viewport's per-tile arrays before it
   reads one, covers the tile or asks the game to repaint it. It used to ask only whether the

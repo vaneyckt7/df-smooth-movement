@@ -20,6 +20,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # One of the command tests reads a fraction under a locale whose decimal point is a
+      # comma, which is where a conversion that goes through the C library gets it wrong. The
+      # runner image has no such locale, and the test says so and checks the C locale only
+      # rather than failing, so without this step that check would quietly not happen here.
+      - name: Install a comma-decimal locale
+        run: |
+          sudo locale-gen de_DE.UTF-8
+          sudo update-locale
+          locale -a | grep -i '^de_DE'
+
       # Builds and runs the seven unit test suites, replays the recording the codec test
       # writes, and replays everything in harness/recordings against harness/expected.
       # It exits non-zero when any of that fails.

@@ -36,6 +36,28 @@ struct command_hostst
 	std::array<bool,2> (*scroll_window)(int32_t kx,int32_t ky);
 };
 
+// The value of a text one of the whitelists below has already accepted: decimal digits with
+// at most one point, and nothing else. Reading the digits here rather than through std::stod
+// keeps the plugin off the process's locale, where the decimal point is whatever LC_NUMERIC
+// says it is. Under a comma-decimal locale std::stod stops at a point, so "0.99" reads as 0
+// and the user's offset silently goes missing, and it throws outright on a leading point like
+// ".5". Nothing in the plugin sets a locale, but a Lua script can set one for the whole
+// process. A whitelisted text is at most eight digits, so both the digits and the power of
+// ten fit a double exactly and the single division is correctly rounded: the answer is the
+// one std::stod gives in the C locale, for every text the whitelists accept. Fifteen is the
+// bound that buys that, not a length anyone would type: sixteen digits pass 2^53, where the
+// running total stops being the number it was given.
+inline double parse_decimal_digits(const std::string &text)
+{
+	const std::size_t point=text.find('.');
+	double digits=0.0;
+	for(const char c:text)if(c!='.')digits=digits*10.0+(c-'0');
+	double scale=1.0;
+	if(point!=std::string::npos)
+		for(std::size_t i=point+1;i<text.size();i++)scale*=10.0;
+	return digits/scale;
+}
+
 // The step time a `timestep` argument names, or -1 when it is not a whole number of
 // milliseconds from 20 to 2000.
 inline int32_t parse_step_ms(const std::string &text)
@@ -55,24 +77,29 @@ inline float parse_hop_value(const std::string &text)
 		text.find_first_not_of("0123456789.")!=std::string::npos||
 		text.find('.')!=text.rfind('.')||
 		text.find_first_of("0123456789")==std::string::npos)return -1.0f;
-	return std::stof(text);
+	return float(parse_decimal_digits(text));
 }
 
 // A camera offset in tiles: an optional leading minus, then decimal digits with at most one
-// point. The whitelist is what keeps `nan` out. std::stod accepts "nan" and every comparison
-// against a NaN is false, so a NaN passes the range test below it and reaches the camera,
-// where it feeds std::lround every frame until another camera command replaces it. It also
+// point. The whitelist is what keeps `nan` out. std::stod accepted "nan" and every comparison
+// against a NaN is false, so a NaN passed the range test below it and reached the camera,
+// where it fed std::lround every frame until another camera command replaced it. It also
 // stops a number being cut short at a stray character, the way "0.5abc" used to read as 0.5.
-// False when the text is not an offset; `value` is then untouched.
+// A leading plus is the one spelling this refuses that std::stod read. The length is the
+// digits parse_decimal_digits is exact for, not a limit on what an offset may say: everything
+// longer is out of the range below anyway, so this only decides whether such a text reads as
+// a usage error or as an offset that is too far. False when the text is not an offset;
+// `value` is then untouched.
 inline bool parse_camera_offset(const std::string &text,double &value)
 {
 	if(text.empty())return false;
 	const std::string digits=text.front()=='-'?text.substr(1):text;
-	if(digits.empty()||digits.size()>8||
+	if(digits.empty()||digits.size()>15||
 		digits.find_first_not_of("0123456789.")!=std::string::npos||
 		digits.find('.')!=digits.rfind('.')||
 		digits.find_first_of("0123456789")==std::string::npos)return false;
-	value=std::stod(text);
+	value=parse_decimal_digits(digits);
+	if(text.front()=='-')value=-value;
 	return true;
 }
 

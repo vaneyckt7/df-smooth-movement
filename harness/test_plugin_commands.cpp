@@ -7,6 +7,7 @@
 
 #include "plugin_commands.h"
 
+#include <clocale>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -293,12 +294,13 @@ void test_camera()
 	expect_usage("camera offset not a number",run(state,{"camera","east","0"}));
 	expect_usage("camera bogus",run(state,{"camera","sideways"}));
 	expect_usage("camera one number",run(state,{"camera","0.5","0","0"}));
-	// std::stod reads every one of these. "nan" parses to a NaN, which fails the range test
-	// the way it fails every comparison, so it used to be accepted and then fed lround each
-	// frame; the rest parse to a number cut short at the first character stod stops on. The
-	// offset is checked after each one to show nothing reached the camera.
+	// std::stod, which the command used to reach for, reads every one of these. "nan" parses
+	// to a NaN, which fails the range test the way it fails every comparison, so it used to be
+	// accepted and then fed lround each frame; the rest parse to a number cut short at the
+	// first character stod stops on. The offset is checked after each one to show nothing
+	// reached the camera.
 	for(const std::string &offset:{"nan","NAN","inf","-inf","0.5abc","0x1","1e-3",".","-",
-		"0.5.5","999999999"})
+		"0.5.5","9999999999999999"})
 		{
 		expect_usage(("camera offset "+offset).c_str(),run(state,{"camera",offset,"0"}));
 		expect_usage(("camera offset "+offset+" as y").c_str(),
@@ -313,6 +315,85 @@ void test_camera()
 	expect_ok("camera negative offset",run(state,{"camera","-0.25","-0.125"}),"");
 	expect_near("camera negative offset x",state.render.camera.rest_offset_x(),-0.75);
 	expect_near("camera negative offset y",state.render.camera.rest_offset_y(),0.125);
+
+	// A fresh camera, so each of these is the whole of the rest with no earlier scroll in it.
+	plugin_statest fresh;
+	// More precision than a tile offset can mean, but it is a number and it used to work, so
+	// it still does. The length the whitelist caps is the one the reading stays exact for.
+	expect_ok("camera long offset",run(fresh,{"camera","0.1234567","0"}),"");
+	expect_near("camera long offset x",fresh.render.camera.rest_offset_x(),-0.1234567);
+	// Length is not what decides this one: it is a number, so it is an offset that is too far
+	// rather than a word that is not an offset. Only past the exact reading does it flip.
+	expect_failed("camera far offset",run(fresh,{"camera","999999999","0"}),
+		"offsets must be within -0.99..0.99 tiles\n");
+	// A leading plus is the one spelling std::stod accepted that this does not. Worth pinning
+	// because it is a behaviour change, not an oversight.
+	expect_usage("camera plus offset",run(fresh,{"camera","+0.5","0"}));
+	expect_near("refused offsets leave the fresh camera",fresh.render.camera.rest_offset_x(),
+		-0.1234567);
+}
+
+// The decimal point the commands read is their own, not the process's. std::stod and
+// std::stof take the point from LC_NUMERIC: under a comma-decimal locale they stop at the "."
+// in "0.99", so the command would quietly act on 0, and they throw outright on a leading point
+// like ".5", which no caller catches. Nothing in the plugin sets a locale, but DFHack opens
+// Lua's standard library, so a script calling os.setlocale moves it for the whole process.
+// Every value below is checked in the C locale first, so the table stands on its own, and then
+// again under a comma-decimal locale, which is the half that fails if a conversion goes back
+// through the C library.
+void test_decimal_point()
+{
+	// The first of these the machine has; a runner without any of them still gets the C-locale
+	// pass below, and says so rather than reporting a check it did not make.
+	const char *comma=nullptr;
+	for(const char *name:{"de_DE.UTF-8","fr_FR.UTF-8","nl_BE.UTF-8","de_DE","fr_FR"})
+		if(std::setlocale(LC_NUMERIC,name)!=nullptr){comma=name;break;}
+	std::setlocale(LC_NUMERIC,"C");
+	for(int pass=0;pass<2;pass++)
+		{
+		if(pass==1)
+			{
+			if(comma==nullptr)
+				{
+				printf("plugin command tests: NOTE no comma-decimal locale installed, "
+					"the decimal point check ran in the C locale only\n");
+				break;
+				}
+			std::setlocale(LC_NUMERIC,comma);
+			}
+		const char *where=pass==0?"C locale":"comma locale";
+		// A fresh state, so the camera has no earlier self-scroll to carry and the offset is
+		// the whole of the rest. Quarter of a tile is inside half a tile, so nothing scrolls
+		// and the rest stays where the command put it.
+		plugin_statest state;
+		expect_ok((std::string("camera 0.25 in the ")+where).c_str(),
+			run(state,{"camera","0.25","-0.125"}),"");
+		expect_near((std::string("camera 0.25 in the ")+where+" reaches the camera").c_str(),
+			state.render.camera.rest_offset_x(),-0.25);
+		expect_near((std::string("camera -0.125 in the ")+where+" reaches the camera").c_str(),
+			state.render.camera.rest_offset_y(),0.125);
+		// A hop amount goes through the same reading, one helper over. The echo is part of the
+		// check: a stream writes it, so it keeps its point where a C-library print would not.
+		expect_ok((std::string("hop height 0.5 in the ")+where).c_str(),
+			run(state,{"movement","hop","hop-height","0.5"}),
+			"smooth-movement: movement hop hop-height 0.5\n",1);
+		expect_near((std::string("hop height 0.5 in the ")+where+" is a half").c_str(),
+			hop_setting(state,"hop-height"),0.5f);
+		// A leading point is the spelling std::stod threw on outright rather than misreading.
+		// The whitelist has always allowed it, so the command used to be one os.setlocale away
+		// from an uncaught exception; now it is read here and means what it says. Quarter of a
+		// tile again, because half a tile is the boundary normalize_rest scrolls at.
+		expect_ok((std::string("camera .25 in the ")+where).c_str(),
+			run(state,{"camera",".25","0"}),"");
+		expect_near((std::string("camera .25 in the ")+where+" is a quarter").c_str(),
+			state.render.camera.rest_offset_x(),-0.25);
+		expect_ok((std::string("hop height .25 in the ")+where).c_str(),
+			run(state,{"movement","hop","hop-height",".25"}),
+			"smooth-movement: movement hop hop-height 0.25\n",1);
+		expect_near((std::string("hop height .25 in the ")+where+" is a quarter").c_str(),
+			hop_setting(state,"hop-height"),0.25f);
+		}
+	std::setlocale(LC_NUMERIC,"C");
 }
 
 void test_flip_hauled()
@@ -524,6 +605,7 @@ int main()
 	test_record();
 	test_all();
 	test_camera();
+	test_decimal_point();
 	test_flip_hauled();
 	test_movement();
 	test_timestep();
