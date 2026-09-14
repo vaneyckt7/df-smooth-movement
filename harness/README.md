@@ -45,11 +45,11 @@ format.
 The scripts build and write under `harness/out/`, which is ignored by git, with the `c++` on
 the path; clang and g++ both work. Run them from the repository root. `<plugin dir>` is a
 directory holding the plugin sources (`smooth-movement.cpp`, `visual_animation.h`,
-`frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `free_camera.h`, `plugin_commands.h`,
-`plugin_settings.h`, `plugin_state.h`, `sprite_proxies.h`, `tile_coverage.h`, `tile_repaint.h`,
-`view_context.h` and the unit test),
+`movement.h`, `frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `free_camera.h`,
+`plugin_commands.h`, `plugin_settings.h`, `plugin_state.h`, `sprite_proxies.h`,
+`tile_coverage.h`, `tile_repaint.h`, `view_context.h` and the unit test),
 such as the repository root (`.`) or an export of another branch, for example
-`mkdir -p harness/out/src-base && git archive origin/release/v0.5.0 | tar -x -C harness/out/src-base`.
+`mkdir -p harness/out/src-base && git archive release/v0.5.0 | tar -x -C harness/out/src-base`.
 
 - `replay.sh <plugin dir> <label> <recording>`: builds the harness against that source and
   replays the recording, writing `out/<label>.trace` and printing the repaint stats and the
@@ -99,37 +99,51 @@ such as the repository root (`.`) or an export of another branch, for example
   match only for the plugin version that made the recording. With `recordings/` empty that
   last part checks nothing, so the run fails rather than passing quietly; set
   `HARNESS_ALLOW_NO_RECORDINGS=1` to run the rest of the harness knowing that it is missing.
+  See "Recordings in the repository" for why it is empty.
 - `compile.sh <plugin dir>`: builds the plugin in DFHack's docker build image against the real
   headers. Needs `DFHACK_SRC` pointing at a DFHack checkout with `build/linux` configured,
   and touches nothing outside that build directory.
 
 ## Recordings in the repository
 
-`recordings/` holds two recordings made in Dwarf Fortress 53.16 with DFHack 53.16-r1.1 and
-plugin 0.5.0 as of the recorder commit, both of the same fortress at zoom 192 with nine
-viewports on screen and the window still. `fortress-600.rec` is 600 frames with the free
-camera off, unpaused for all but two frames, with creatures moving. `fortress-camera-183.rec`
-is 183 frames with the free camera on, resting a little off the tile grid, with creatures
-walking left so their sprites are mirrored. Neither has hauled item icons, linear easing, a
-followed unit, a scroll or a zoom change; a change to those paths needs its own recording.
-Both predate format version 4, so they carry no simulation tick and the replay treats every
-change of the per-tile arrays as a candidate step, as the plugin did when they were made.
-Both predate format version 5 as well, so they carry no walk hop settings and replay with
-the hop off; the hop's proxy marking and coverage are covered by the sprite proxy test.
-The recordings are fixtures and stay fixed: every version of the plugin replays the same
-scenes. `expected/<name>.digest` holds, for each recording, one line per frame with the
-repaint count and the digest of the visible draws the current version asks for on it, made
-with `digest.py` from the trace of a replay. `test.sh` replays both recordings and requires
-every line to match, so a change to the plugin, the stubs or the replay that alters what the
-render hook draws, or how many repaints it asks for, on these scenes fails the test without
-the game. The rule for a change is by kind. A change that makes the plugin cheaper must
-change only the repaint count column of the file, with every frame's painted flag, draw
-count and digest the same, and that diff is its evidence. A change to what the plugin draws
-regenerates the file (`test.sh` prints the copy command) and shows what changed with
-`compare.sh` on traces of the two versions, since the digest only says which frames moved.
-Any other change, such as a refactor or a change to the stubs, must leave the file untouched.
-The game's repaint count in the recording's self-check then differs from the replay's and is
-only informative.
+**There are none right now.** `recordings/` and `expected/` are not in the repository:
+commit `b4c32fc`, which moved the settings and the recording format over to naming a
+movement, deleted `fortress-600.rec` and `fortress-camera-183.rec` along with the 783 digest
+lines that went with them. Both files are format version 2, and the reader now accepts
+version 7 only (`frame_record.h` sets `oldest_version` equal to `version`), so restoring them
+from git history would not help: they cannot be read. Getting this back means recording a
+fresh scene in the game and regenerating its digest.
+
+What that costs: the replay against `expected/` is the only check that a change leaves the
+drawing alone on a real scene, and nothing else covers it. The unit tests check pieces
+against the stubs, and the three-frame recording the codec test writes exercises the decoder
+but carries no viewport and no unit, so no tile is drawn on any of its frames. Until a scene
+is recorded, a change to the render path is reviewed and reasoned about but not measured.
+
+The rest of this section describes how the fixtures are meant to work, for when there are
+some again.
+
+A recording is a fixture and stays fixed: every version of the plugin replays the same scene.
+`expected/<name>.digest` holds, for each recording, one line per frame with the repaint count
+and the digest of the visible draws the current version asks for on it, made with `digest.py`
+from the trace of a replay. `test.sh` replays every recording and requires every line to
+match, so a change to the plugin, the stubs or the replay that alters what the render hook
+draws, or how many repaints it asks for, on those scenes fails the test without the game.
+
+The rule for a change is by kind. A change that makes the plugin cheaper must change only the
+repaint count column of the file, with every frame's painted flag, draw count and digest the
+same, and that diff is its evidence. A change to what the plugin draws regenerates the file
+(`test.sh` prints the copy command) and shows what changed with `compare.sh` on traces of the
+two versions, since the digest only says which frames moved. Any other change, such as a
+refactor or a change to the stubs, must leave the file untouched. The game's repaint count in
+the recording's self-check then differs from the replay's and is only informative.
+
+A scene is worth recording for the paths it covers, and a path no recording covers is not
+covered at all. The two that were here were of one fortress at zoom 192 with nine viewports
+and the window still, and between them covered the free camera on and off and mirrored
+sprites; neither had hauled item icons, a followed unit, a scroll or a zoom change. A
+replacement should say in this file what it covers, and which movement and settings were
+current when it was made, since the replay uses the ones the recording carries.
 
 ## What a replay tells you
 
