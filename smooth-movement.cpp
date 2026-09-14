@@ -286,9 +286,12 @@ SDL_Texture *cached_texture(
 	texture_id.texpos=texpos;
 	texture_id.r=texture_id.g=texture_id.b=1.0f;
 	texture_id.br=texture_id.bg=texture_id.bb=0.0f;
+	// Both arms are the bitfield's own width. Writing the bare 0 instead makes one arm an
+	// enumeration and the other an int, which is a warning and reads as if the two were
+	// different kinds of thing; they are the same field, set and clear.
 	texture_id.flag=transparent_background?
-		df::texture_fullid_flag::mask_transparent_background:
-		0;
+		uint32_t(df::texture_fullid_flag::mask_transparent_background):
+		uint32_t(0);
 	const auto texture=renderer->tile_cache.tile_cache.find(texture_id);
 	return texture==renderer->tile_cache.tile_cache.end()?
 		nullptr:
