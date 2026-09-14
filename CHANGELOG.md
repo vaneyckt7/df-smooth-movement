@@ -7,10 +7,11 @@
   tile was inside the clip rectangle, which is a different rectangle: nothing derives clipx
   and clipy from dim_x and dim_y, and nothing keeps the two in step. A tile one column past
   the last one indexes a whole row into the next array, which the repaint then writes through
-  for fifteen arrays, so an accepted tile outside the arrays is a write and not only a stray
-  read. Every place that asked `inside_clip` now asks `paintable_tile`, which is the clip test
-  and the array bounds together, and `has_fire` checks the bounds before it reads the spatter
-  flags. No recorded scene has a viewport whose clip reaches outside its arrays: over the two
+  for as many as twenty-five arrays, every per-tile array the game draws a tile from, so an
+  accepted tile outside the arrays is a write and not only a stray read. Every place that
+  asked `inside_clip` now asks `paintable_tile`, which is the clip test and the array bounds
+  together, and `has_fire` checks the bounds before it reads the spatter flags. No recorded
+  scene has a viewport whose clip reaches outside its arrays: over the two
   recordings kept for the harness, all 7047 viewport headers have a clip exactly equal to the
   array rectangle, so on those scenes the two tests agree on every tile and nothing the plugin
   draws changes. This is a bound the sweep was missing, not a fault seen in a game.

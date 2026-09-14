@@ -31,9 +31,10 @@ bool inside_clip(const Viewport *vp,int32_t x,int32_t y)
 // clip from what is on screen and the dimensions from how the arrays were allocated, so a
 // tile can be inside the clip and past the end of every array; the sprite proxy test widens
 // a clip past the dimensions for exactly that reason. Reading such a tile runs off an array,
-// and a repaint of one writes a zero off fifteen of them and restores it from there. Every
-// place that indexes a per-tile array, puts a tile in a proxy's coverage or repaints a tile
-// asks this rather than inside_clip.
+// and a repaint of one writes a zero off as many as twenty-five of them, every per-tile array
+// the game draws a tile from, and restores it from there. Every place that indexes a per-tile
+// array, puts a tile in a proxy's coverage or repaints a tile asks this rather than
+// inside_clip.
 template<typename Viewport>
 bool paintable_tile(const Viewport *vp,int32_t x,int32_t y)
 {
