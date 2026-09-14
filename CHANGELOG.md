@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `harness/recinfo.py` names a frame's movement `movement=` where it said `interpolation=`,
+  the word the movement interface replaced. `harness/test.sh` reads that field and changes
+  with it. Nothing the plugin does changes; only the harness tool's output.
+
 - `camera <east> <south>` checks that its two offsets are decimal numbers before it uses
   them. It used to hand each word straight to `std::stod`, which accepts `nan`: a NaN then
   failed the -0.99..0.99 range test the way it fails every comparison, so it was accepted
