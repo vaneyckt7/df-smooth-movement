@@ -102,7 +102,8 @@ struct writerst
 	// is wrong -- resize has already made the room -- but this is the shorter path to the
 	// same bytes, and it says what it does. `data` must not point into `bytes`: the copy is
 	// a memcpy, and the resize above it may move what `bytes` holds. Nothing does; every
-	// caller hands over a literal or another object's characters.
+	// caller hands over a literal, a string's characters, or one of the viewport's own
+	// per-tile arrays, and none of those is this writer's buffer.
 	void raw(const void *data,size_t size)
 		{
 		if(size==0)return;
