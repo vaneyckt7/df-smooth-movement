@@ -299,14 +299,13 @@ void test_camera()
 	// accepted and then fed lround each frame; the rest parse to a number cut short at the
 	// first character stod stops on. The offset is checked after each one to show nothing
 	// reached the camera.
-	for(const std::string &offset:{"nan","NAN","inf","-inf","0.5abc","0x1","1e-3",".","-",
+	for(const char *const offset:{"nan","NAN","inf","-inf","0.5abc","0x1","1e-3",".","-",
 		"0.5.5","9999999999999999"})
 		{
-		expect_usage(("camera offset "+offset).c_str(),run(state,{"camera",offset,"0"}));
-		expect_usage(("camera offset "+offset+" as y").c_str(),
-			run(state,{"camera","0",offset}));
-		expect_near(("camera offset "+offset+" leaves x").c_str(),
-			state.render.camera.rest_offset_x(),-1.0);
+		const std::string what=std::string("camera offset ")+offset;
+		expect_usage(what.c_str(),run(state,{"camera",offset,"0"}));
+		expect_usage((what+" as y").c_str(),run(state,{"camera","0",offset}));
+		expect_near((what+" leaves x").c_str(),state.render.camera.rest_offset_x(),-1.0);
 		}
 	// A leading minus is the one non-digit an offset may start with, and it must still work.
 	// The user's -0.25 east becomes a rest of 0.25, less the tile of self-scroll the earlier
@@ -326,11 +325,19 @@ void test_camera()
 	// rather than a word that is not an offset. Only past the exact reading does it flip.
 	expect_failed("camera far offset",run(fresh,{"camera","999999999","0"}),
 		"offsets must be within -0.99..0.99 tiles\n");
+	// Both sides of the length cap, because it is a number with a reason behind it: fifteen is
+	// how far the reading stays exact, so a shorter cap silently refuses offsets that work and
+	// a longer one accepts offsets it reads wrong. Without the first of these a cap of ten
+	// would pass every other check in this file.
+	expect_ok("camera offset at the cap",run(fresh,{"camera","0.1234567890123","0"}),"");
+	expect_near("camera offset at the cap x",fresh.render.camera.rest_offset_x(),
+		-0.1234567890123);
+	expect_usage("camera offset one past the cap",run(fresh,{"camera","0.12345678901234","0"}));
 	// A leading plus is the one spelling std::stod accepted that this does not. Worth pinning
 	// because it is a behaviour change, not an oversight.
 	expect_usage("camera plus offset",run(fresh,{"camera","+0.5","0"}));
 	expect_near("refused offsets leave the fresh camera",fresh.render.camera.rest_offset_x(),
-		-0.1234567);
+		-0.1234567890123);
 }
 
 // The decimal point the commands read is their own, not the process's. std::stod and
@@ -344,9 +351,12 @@ void test_camera()
 void test_decimal_point()
 {
 	// The first of these the machine has; a runner without any of them still gets the C-locale
-	// pass below, and says so rather than reporting a check it did not make.
+	// pass below, and says so rather than reporting a check it did not make. The last two are
+	// how the same locale is spelt on Windows, which is where the plugin ships and where none
+	// of the others is a name setlocale knows.
 	const char *comma=nullptr;
-	for(const char *name:{"de_DE.UTF-8","fr_FR.UTF-8","nl_BE.UTF-8","de_DE","fr_FR"})
+	for(const char *name:{"de_DE.UTF-8","fr_FR.UTF-8","nl_BE.UTF-8","de_DE","fr_FR",
+		"de-DE","German_Germany.1252"})
 		if(std::setlocale(LC_NUMERIC,name)!=nullptr){comma=name;break;}
 	std::setlocale(LC_NUMERIC,"C");
 	for(int pass=0;pass<2;pass++)

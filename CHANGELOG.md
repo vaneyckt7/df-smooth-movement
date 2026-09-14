@@ -9,8 +9,9 @@
   also stops at the first character it cannot read, so `camera 0.5abc 0` silently meant
   `0.5`. Both now read as a usage error, like `camera east 0` always has. An offset is an
   optional leading minus then digits with at most one point, which is the rule `timestep`
-  and the hop settings already follow. A leading plus, which `std::stod` read as nothing at
-  all, is the one spelling that used to work and now does not: write `camera 0.5 0`.
+  and the hop settings already follow. A leading plus is the one spelling that used to work
+  and now does not: `std::stod` read it as a sign, so `camera +0.5 0` meant `camera 0.5 0`.
+  Write the offset without it.
 
 - A camera offset and a hop setting keep their decimal point whatever the process's locale
   says one looks like. `std::stod` and `std::stof` take the point from `LC_NUMERIC`: under a

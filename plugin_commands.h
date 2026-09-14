@@ -42,11 +42,12 @@ struct command_hostst
 // says it is. Under a comma-decimal locale std::stod stops at a point, so "0.99" reads as 0
 // and the user's offset silently goes missing, and it throws outright on a leading point like
 // ".5". Nothing in the plugin sets a locale, but a Lua script can set one for the whole
-// process. A whitelisted text is at most eight digits, so both the digits and the power of
-// ten fit a double exactly and the single division is correctly rounded: the answer is the
-// one std::stod gives in the C locale, for every text the whitelists accept. Fifteen is the
-// bound that buys that, not a length anyone would type: sixteen digits pass 2^53, where the
-// running total stops being the number it was given.
+// process. The whitelists below cap their text at fifteen characters or fewer, so the digits
+// and the power of ten both fit a double exactly and the single division is correctly
+// rounded: the answer is the one std::stod gives in the C locale, for every text they accept.
+// Fifteen is that bound, not a length anyone would type. Sixteen digits pass 2^53, where the
+// running total stops being the number it was given, so a whitelist may tighten that cap but
+// must not loosen it.
 inline double parse_decimal_digits(const std::string &text)
 {
 	const std::size_t point=text.find('.');
