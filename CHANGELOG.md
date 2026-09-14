@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The vocabulary the movement interface introduced is used everywhere, so that one thing has
+  one name. `harness/recinfo.py` prints a frame's movement as `movement=` where it said
+  `interpolation=`, and `harness/test.sh`, which reads that field, changes with it. In the
+  plugin, `render_interpolated_world`, `draw_interpolation_stages` and
+  `draw_viewport_interpolation_stages` become `render_world_with_movement`,
+  `draw_movement_stages` and `draw_viewport_movement_stages`. The viewports' per-tile arrays
+  are called that rather than buffers: `drawn_buffersst`, `buffer_signature`, `buffer_tick`
+  and `buffers_advanced` become `drawn_arraysst`, `array_signature`, `array_tick` and
+  `arrays_advanced`, and about thirty comments follow. Names only; nothing the plugin draws,
+  records or prints changes, apart from that one field of `recinfo.py`.
+
 - `camera <east> <south>` checks that its two offsets are decimal numbers before it uses
   them. It used to hand each word straight to `std::stod`, which accepts `nan`: a NaN then
   failed the -0.99..0.99 range test the way it fails every comparison, so it was accepted
@@ -157,7 +168,7 @@
 - Animate creature status icons with their creature instead of letting their
   flashing texture fragments jump between tiles.
 - Animate item-layer wheelbarrows and the vehicle layer used by minecarts;
-  minecart sprite changes no longer interrupt interpolation, and consecutive
+  minecart sprite changes no longer interrupt a movement, and consecutive
   steps retarget from the current fractional position instead of snapping back
   to the previous tile center.
 - Optional free camera (`smooth-movement camera on`, off by default): map scrolls
@@ -165,8 +176,8 @@
   can rest between tiles, and `camera <fx> <fy>` sets a persistent sub-tile
   offset. Render-only; the game's tile camera is untouched.
 - Fix sprites floating while the camera pans. The scroll variables change at input time but the
-  viewport buffers shift on a later render frame, where the shift used to read as a real creature
-  move and started a bogus slide across the screen. The buffer shift is now detected directly
+  viewports' per-tile arrays shift on a later render frame, where the shift used to read as a real
+  creature move and started a bogus slide across the screen. The array shift is now detected directly
   (hypothesis-tested against the pending scroll delta): new-movement detection is suppressed while
   a pan is pending, and in-flight movements are translated on the frame the shift lands so they
   keep tracking the world. Zoom, Z-level, resize, and viewport changes still reset.
@@ -178,7 +189,7 @@
 
 ## 0.1.0 - 2026-07-28
 
-- Add smooth visual interpolation for adjacent creature movement.
+- Add smooth visual movement for adjacent creature steps.
 - Preserve world layer ordering and render UI after animated creatures.
-- Reset interpolation on camera, zoom, Z-level, resize, or viewport changes.
+- Reset movement on camera, zoom, Z-level, resize, or viewport changes.
 - Keep gameplay, simulation timing, and save data unchanged.

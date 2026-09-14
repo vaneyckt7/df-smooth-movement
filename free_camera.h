@@ -18,7 +18,7 @@
 //                and z-level changes. Kept in [-0.5,0.5] by normalization: whole-tile parts are
 //                folded into window_x/window_y (a plain UI scroll write -- NEVER the viewport
 //                dims, which crash DF; the sub-tile strip this leaves at one screen edge has no
-//                buffer data and stays black).
+//                per-tile array entries and stays black).
 //   transient -- the decaying scroll glide from before, in pixels, layered on top.
 // Render offset = transient + rest*tile. window_x/window_y remain the game's own tile camera.
 //
@@ -42,7 +42,7 @@ struct camera_framest
 class free_camerast
 {
 	bool enabled=false;                  // OFF by default: plain `enable smooth-movement`
-	                                     // keeps upstream behavior (creature interpolation
+	                                     // keeps upstream behaviour (creature movement
 	                                     // only); `smooth-movement camera on` opts in.
 	double transient_x=0.0;              // decaying glide offset, pixels
 	double transient_y=0.0;
@@ -173,7 +173,7 @@ class free_camerast
 			}
 
 		// Per-frame camera bookkeeping: observe window scrolls, attribute them when the
-		// buffers apply them (glide vs our own normalization writes), drive the drag, decay
+		// per-tile arrays apply them (glide vs our own normalization writes), drive the drag, decay
 		// the transient.
 		template<typename Manager,typename ScrollWindow>
 		void update(
@@ -276,7 +276,7 @@ class free_camerast
 			// --- pixel-perfect middle-mouse drag: the view follows the mouse 1:1 and rests
 			// where released. DF's own drag still moves window in tile steps; rest carries the
 			// remainder. Positions are tracked against the CONTENT window (window minus
-			// unlanded jumps) so the buffer lag never causes a visible stutter.
+			// unlanded jumps) so the array lag never causes a visible stutter.
 			const bool mbut=enabled&&frame.middle_button;
 			const double content_wx=double(wx-scroll.pending_x);
 			const double content_wy=double(wy-scroll.pending_y);

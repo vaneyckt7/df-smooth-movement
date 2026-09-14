@@ -2,8 +2,8 @@
 """Prints one line per frame of a `smooth-movement record` file, without the per-tile arrays.
 Usage: recinfo.py <recording> [first frame] [last frame]
 
-Per line: frame number; t, the frame clock in ms; the plugin's three switches; the
-interpolation, the movement by name; settings, the movement's settings as name=value pairs,
+Per line: frame number; t, the frame clock in ms; the plugin's three switches;
+movement, the movement by name; settings, the movement's settings as name=value pairs,
 or - for none; step, the one-tile step time in ms; sim, the simulation's frame counter when
 the game last filled the per-tile arrays, or -1 when no fill was seen since the previous frame; w, the window position x,y,z;
 P when the
@@ -108,11 +108,11 @@ def main():
             text = data[r.p:r.p + length].decode()
             r.p += length
             return text
-        interpolation = name()
+        movement = name()
         movement_settings = [(name(), r.f32()) for _ in range(r.u8())]
         step = r.u32()
         sim = r.i64()
-        settings += f' interpolation={interpolation}'
+        settings += f' movement={movement}'
         settings += ' settings=' + (','.join(f'{n}={v:g}' for n, v in movement_settings) or '-')
         tick = r.u32()
         wx, wy, wz = r.i32(), r.i32(), r.i32()
