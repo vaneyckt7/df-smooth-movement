@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - unreleased
+
+The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
+`v0.5.0` tag, so everything in this section is still unreleased.
 
 - The vocabulary the movement interface introduced is used everywhere, so that one thing has
   one name. `harness/recinfo.py` prints a frame's movement as `movement=` where it said
@@ -20,6 +23,24 @@
   harness still runs with `HARNESS_ALLOW_NO_RECORDINGS=1`, which the workflow sets with a
   note saying why, so that the gap is written down where it can be found rather than living
   in a log nobody reads while the job is green.
+
+- Movements are one named choice. How a creature is paced, and where it is drawn along the
+  way, is a movement picked by name: `movement none`, `movement smoothstep`,
+  `movement linear` or `movement hop`. `movement <name> <setting> <value>` sets one of that
+  movement's settings, `movement <name> <setting>` prints one, `movement <name>` prints them
+  all, and `movement` alone lists the names. The default is `none`, which draws every creature
+  at its tile exactly as the game does, so a freshly enabled plugin changes nothing on screen
+  until a movement is picked. This replaces the `linear on|off` flag, which is now the
+  movement named `linear`, and the walk hop's own flag, which is now the movement named `hop`.
+
+- `smooth-movement status` prints the plugin's settings, and bare `smooth-movement` prints the
+  usage. Every setting's bare command prints the same line that `status` lists for it.
+
+- Frame recordings name the movement in force and carry its settings (format version 7), so a
+  recording replays with the movement it was made with. Version 6 was never used: the format
+  went from 5 to 7 in one step. The reader accepts version 7 only, where it used to read every
+  version from 2; recordings in an older format are not read at all, which is why the two
+  fixtures that were in `harness/recordings/` were removed rather than converted.
 
 - `camera <east> <south>` checks that its two offsets are decimal numbers before it uses
   them. It used to hand each word straight to `std::stod`, which accepts `nan`: a NaN then
@@ -67,7 +88,6 @@
 - Names in the movement path say their unit: `_ms` for milliseconds, `_tiles` for tiles, `_px` for pixels, `_pct` for a fraction from 0 to 1. Nothing the plugin draws or records changes.
 - Fix the free camera sitting a whole tile off after two camera commands within one frame of each other in a running game (`camera <x> <y>` followed at once by `camera reset` or by another `camera <x> <y>`): a command now asks for its offset against the window as written, so a window write of the camera's own that has not landed yet is taken off the offset and comes back when it lands.
 - Fix the free camera sitting one tile off after `camera <x> <y>` in a paused game, or when a recording started, the followed unit changed, the z-level or zoom changed, or the window was resized within a frame or two of the command. The camera folds whole tiles of the offset into the game's window and used to wait for that scroll to land before moving the offset the other way; a restart of the camera's tracking (every paused frame, a recording's first frame, a change of followed unit) forgot the wait, and the offset never moved. The restart now folds the write into the offset at once.
-- The timestep changelog entry said the step resets "like `linear`"; `linear` is the one setting the plugin keeps across disable and enable, and the entry now says so.
 - The scroll detector counts the votes for a view shift over the background and over the sprite layers with one loop. Nothing the plugin draws changes.
 - The console commands read `on` and `off` through one parser, and a setting's bare command prints the same line the bare `smooth-movement` lists for it. Every command prints what it printed before.
 - `harness/test.sh` builds and runs each harness test through one shell function. Nothing the plugin does changes.
@@ -93,31 +113,29 @@
   `plugin_state.h` and `plugin_commands.h`; the commands are now covered by a harness test.
   Nothing the plugin draws or prints changes.
 - Frame recordings carry the walk hop settings (format version 5), so a recording made
-  with the hop on replays with it. The harness reads versions 2 to 4 as well, with the hop
-  off, which replays them as before.
-- Added: an optional walk hop. `hop on` lifts every gliding creature sprite twice per step,
-  like two footfalls, by `hop <amount>` (default 0.10 tile) times a multiplier for the step's
-  direction (`hopmult <horizontal> <diagonal> <vertical>`, default 1, 2.4, 2.7); `hops 1`
-  gives a single bounce. Off by default, and with it off nothing the plugin draws changes.
-  Carried item icons hop with their creature, vehicles never do, and a creature whose row
-  above is off the screen or burning glides without the hop.
+  with the hop on replays with it.
+- Added: the walk hop, the movement named `hop`. It lifts every gliding creature sprite twice
+  per step, like two footfalls, by `hop-height` (default 0.10 tile) times a multiplier for the
+  step's direction (`horizontal-mult`, `diagonal-mult` and `vertical-mult`, default 1, 2.4 and
+  2.7); `hops-per-step 1` gives a single bounce. Carried item icons hop with their creature,
+  vehicles never do, and a creature whose row above is off the screen or burning glides
+  without the hop. It arrived as a `bob on|off` flag and was renamed before release; no `bob`
+  command exists.
 - Fixed: a repaint while the game is paused can no longer be read as a step, so sprites do
   not slide or flip with the simulation standing still. A redraw at a simulation tick the
   per-tile arrays were already drawn at (the game showing the units sharing a tile in turn,
   blinking markers) is presentation, not a step, and starts no movement.
   The tick is read where the arrays are filled, in the map screens' render on the simulation
-  thread. Frame recordings carry it (format version 4); the harness reads versions 2 and 3
-  as well, with the tick unknown, which replays them as before.
+  thread. Frame recordings carry it (format version 4).
 - Frame recordings carry the one-tile step time (format version 3), so a recording made at
-  a `timestep` other than the default replays at that step. The harness reads version 2
-  recordings as well, at the 150 ms they were made with.
+  a `timestep` other than the default replays at that step.
 - Add `smooth-movement timestep <ms>`: how long a one-tile glide takes, 20 to 2000 ms,
   150 by default as before. A movement keeps the time it started with, so a change applies
-  to the movements that start after it. With `linear` on, the adaptive duration's floor is
-  the step time and its 500 ms ceiling rises to the step time when that is longer, and a
-  movement in flight keeps its own duration as the ceiling when the step time is lowered.
-  The setting returns to its default when the plugin is disabled or enabled; `linear` alone
-  is kept, as it has been since it was added.
+  to the movements that start after it. A step that continues an earlier step instead lasts
+  the time since that step started, its cadence, whichever movement is in force, clamped
+  between 1 ms and 500 ms or the step time when that is longer; a movement already in flight
+  keeps its own duration as that limit's floor, so lowering the step time never cuts it
+  short. The setting returns to its default when the plugin is disabled or enabled.
 - Add `smooth-movement stats [on|off|reset]`: counts frames, frames that reached the draw
   stage and tile repaints by the game, and (while on) times the render hook split into movement
   detection and drawing. Timing is off by default; counting costs one increment per frame,
@@ -153,10 +171,32 @@
   restored the entries of the layers it hides and then found the tile blank; the hook now
   summarizes which tiles have any non-zero entry once per viewport per glide frame and skips
   the blank ones before touching them. What the hook draws is unchanged.
+
+## 0.5.0-beta - 2026-09-04
+
 - Set smoothstep movement tweens to 150 ms. Add optional linear easing with
   adaptive 150–500 ms durations based on the cadence between consecutive steps
   (`smooth-movement linear on`) and icons for boulders, bars, and wood hauled by units
   (`smooth-movement hauled on`). Both flags are off by default.
+
+## 0.4.1 - 2026-08-06
+
+Written after the fact from the commits between `v0.4.0` and `v0.4.1`: no section was
+written when the tag was made, and the plugin still reported 0.3.0 at it.
+
+- Stop overdrawing upper viewports, and leave a viewport the game cannot draw readably alone.
+- Draw the z-level shading over the gliding sprites rather than under them.
+- Add the tag release workflow.
+
+## 0.4.0 - 2026-08-05
+
+Written after the fact from the commits between `v0.3.0` and `v0.4.0`: no section was written
+when the tag was made, and the plugin still reported 0.3.0 at it. The camera-pan fix listed
+under 0.3.0 was refined by further commits in this range.
+
+- Target DFHack 53.16-r1.
+- Animate viewports on lower z-levels.
+- Remove construction transitions.
 - Mirror creature sprites horizontally so they face their direction of travel.
   Dwarf Fortress creature art natively faces west, so only creatures moving
   east are mirrored. Facing is sticky: only horizontal movement changes it,
