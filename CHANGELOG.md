@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `harness/test.sh` fails when `harness/recordings/` is empty instead of passing. The replay
+  of a recorded scene against `harness/expected/` is the only check that a change leaves the
+  drawing alone on a real fortress, and the directory has been empty since the fixtures were
+  deleted, so the check has been running zero times and reporting success. The rest of the
+  harness still runs with `HARNESS_ALLOW_NO_RECORDINGS=1`, which the workflow sets with a
+  note saying why, so that the gap is written down where it can be found rather than living
+  in a log nobody reads while the job is green.
+
 - `camera <east> <south>` checks that its two offsets are decimal numbers before it uses
   them. It used to hand each word straight to `std::stod`, which accepts `nan`: a NaN then
   failed the -0.99..0.99 range test the way it fails every comparison, so it was accepted

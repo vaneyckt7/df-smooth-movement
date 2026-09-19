@@ -6,10 +6,11 @@
 # two-pass decode of a frame header is exercised without a fixture, then
 # replays every recording in recordings/ and requires that every frame's draws digest to
 # what expected/<name>.digest holds, and that recinfo.py reads the same number of frames.
-# Exits non-zero when any fails, and says so when recordings/ is empty and that last part
-# therefore checked nothing. The game's own repaint count from the recording's
-# self-check is printed for information: it matches only for the plugin version that made
-# the recording.
+# Exits non-zero when any fails, and also when recordings/ is empty, because that last part
+# is then checking nothing and a pass would say otherwise; HARNESS_ALLOW_NO_RECORDINGS=1
+# downgrades that to a note for a caller that knows. The game's own repaint count from the
+# recording's self-check is printed for information: it matches only for the plugin version
+# that made the recording.
 # Usage: harness/test.sh <plugin dir>
 set -eu
 src=$(cd "$1" && pwd); here=$(cd "$(dirname "$0")" && pwd); mkdir -p "$here/out"
@@ -73,11 +74,23 @@ for rec in "$here"/recordings/*.rec; do
 done
 if [ "$replayed" -eq 0 ]; then
 	# The loop above is the only check that a change leaves the drawing alone on a real
-	# scene. With no recordings it runs zero times, which used to leave the run looking
-	# like a pass, so say plainly that nothing checked the digests.
-	echo "NOTE: recordings/ holds no recordings, so nothing replayed a recorded scene or"
-	echo "      compared it with expected/. The replay coverage in this run was the three"
-	echo "      generated frames above. Record a scene in the game to restore it; see the"
-	echo "      \"Recordings in the repository\" section of harness/README.md."
+	# scene. With no recordings it runs zero times, and a run that checks nothing must not
+	# report success: a green check mark is read as "the drawing is unchanged", and nobody
+	# reads the log of a job that passed. So this is a failure by default. Setting
+	# HARNESS_ALLOW_NO_RECORDINGS turns it back into a note, for the one caller that knows
+	# the fixtures are missing and has said so where the next reader can see it.
+	if [ -z "${HARNESS_ALLOW_NO_RECORDINGS:-}" ]; then
+		echo "FAIL: recordings/ holds no recordings, so nothing replayed a recorded scene"
+		echo "      or compared it with expected/. The replay coverage in this run was the"
+		echo "      three generated frames above, which is not a scene at all: they carry"
+		echo "      no viewport and no unit, so no tile is drawn on any of them."
+		echo "      Record a scene in the game to restore it; see the \"Recordings in the"
+		echo "      repository\" section of harness/README.md. To run the rest of the"
+		echo "      harness knowingly without it, set HARNESS_ALLOW_NO_RECORDINGS=1."
+		exit 1
+	fi
+	echo "NOTE: recordings/ holds no recordings and HARNESS_ALLOW_NO_RECORDINGS is set, so"
+	echo "      nothing replayed a recorded scene or compared it with expected/. The replay"
+	echo "      coverage in this run was the three generated frames above."
 fi
 exit $status
