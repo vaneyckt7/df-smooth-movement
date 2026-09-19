@@ -5,6 +5,21 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- `harness/recordings/` holds four recorded scenes again, and `harness/expected/` the 1500
+  digest lines that go with them, so the harness checks what the plugin draws on a real
+  fortress rather than only on the three frames the codec test generates. They are
+  `fortress-600` (the free camera off, mirrored sprites, the hop's extra repainted row),
+  `fortress-camera-200` (the free camera on, resting at -0.3, 0.2 tiles), `fortress-hauled-400`
+  (hauled item icons, which no earlier fixture covered) and `fortress-smoothstep-300` (the
+  movement a new user is told to pick). All four were recorded in Dwarf Fortress 53.16 on
+  the version that made the digests, so each one's self-check repaint count matches the
+  replay's instead of only being informative. The CI workflow no longer sets
+  `HARNESS_ALLOW_NO_RECORDINGS`; `test.sh` still honours it for a tree that has none.
+  This replaces the two fixtures `b4c32fc` deleted, which were format 2 and unreadable. Note
+  that the format version alone does not make a recording readable: a version 7 file written
+  before the hop's settings were renamed is refused with `bad movement settings`, because the
+  setting names inside it are not the ones this version knows.
+
 - The vocabulary the movement interface introduced is used everywhere, so that one thing has
   one name. `harness/recinfo.py` prints a frame's movement as `movement=` where it said
   `interpolation=`, and `harness/test.sh`, which reads that field, changes with it. In the

@@ -96,32 +96,41 @@ such as the repository root (`.`) or an export of another branch, for example
   in `recordings/` and fails when any frame's digest differs from `expected/<name>.digest`
   or `recinfo.py` reads a different number of frames than the replay.
   It prints the replay's repaint total alongside the game's from the self-check, which
-  match only for the plugin version that made the recording. With `recordings/` empty that
-  last part checks nothing, so the run fails rather than passing quietly; set
-  `HARNESS_ALLOW_NO_RECORDINGS=1` to run the rest of the harness knowing that it is missing.
-  See "Recordings in the repository" for why it is empty.
+  match only for the plugin version that made the recording, which for the four now in
+  `recordings/` is the version that put them there. An empty `recordings/` would make that
+  last part check nothing, so the run fails rather than passing quietly; setting
+  `HARNESS_ALLOW_NO_RECORDINGS=1` runs the rest of the harness knowing the scenes are
+  missing, which is not the case here.
 - `compile.sh <plugin dir>`: builds the plugin in DFHack's docker build image against the real
   headers. Needs `DFHACK_SRC` pointing at a DFHack checkout with `build/linux` configured,
   and touches nothing outside that build directory.
 
 ## Recordings in the repository
 
-**There are none right now.** `recordings/` and `expected/` are not in the repository:
-commit `b4c32fc`, which moved the settings and the recording format over to naming a
-movement, deleted `fortress-600.rec` and `fortress-camera-183.rec` along with the 783 digest
-lines that went with them. Both files are format version 2, and the reader now accepts
-version 7 only (`frame_record.h` sets `oldest_version` equal to `version`), so restoring them
-from git history would not help: they cannot be read. Getting this back means recording a
-fresh scene in the game and regenerating its digest.
+There are four, all of one fortress -- Nakasmafol, a fresh embark -- at zoom 192 with nine
+viewports, the window still and sprite flipping on. They were recorded on 2026-09-19 with the
+plugin at `c4bb6ce`, which is the version that made the digests, so the game's repaint count
+in each one's self-check matches the replay's rather than only being informative.
 
-What that costs: the replay against `expected/` is the only check that a change leaves the
-drawing alone on a real scene, and nothing else covers it. The unit tests check pieces
-against the stubs, and the three-frame recording the codec test writes exercises the decoder
-but carries no viewport and no unit, so no tile is drawn on any of its frames. Until a scene
-is recorded, a change to the render path is reviewed and reasoned about but not measured.
+| recording | frames | movement and settings | what it covers |
+| --------- | -----: | --------------------- | -------------- |
+| `fortress-600.rec` | 600 | `hop`, defaults | the free camera off, mirrored sprites, the hop's extra repainted row |
+| `fortress-camera-200.rec` | 200 | `hop`, defaults | the free camera on, resting at -0.3, 0.2 tiles; every frame painted |
+| `fortress-hauled-400.rec` | 400 | `hop`, defaults | hauled item icons on |
+| `fortress-smoothstep-300.rec` | 300 | `smoothstep` | the movement the README tells a new user to pick, which has no lift and so no extra row |
 
-The rest of this section describes how the fixtures are meant to work, for when there are
-some again.
+None of them has a followed unit, a scroll, or a zoom change, and none uses `linear` or
+`none`. Those paths are still uncovered by a recorded scene.
+
+They replace `fortress-600.rec` and `fortress-camera-183.rec`, which commit `b4c32fc` deleted
+when the settings and the recording format moved over to naming a movement. Those two were
+format version 2 and the reader now accepts version 7 only (`frame_record.h` sets
+`oldest_version` equal to `version`), so they could not be restored from git history: they
+cannot be read. Note that the version number alone does not make a recording readable. A
+version 7 file written before the hop's settings were renamed -- when the movement was called
+`bob` and its settings `amount`, `horizontal`, `diagonal`, `vertical` and `hops` -- is refused
+with `bad movement settings`, because the names inside it are not the names this version
+knows.
 
 A recording is a fixture and stays fixed: every version of the plugin replays the same scene.
 `expected/<name>.digest` holds, for each recording, one line per frame with the repaint count
@@ -139,11 +148,10 @@ refactor or a change to the stubs, must leave the file untouched. The game's rep
 the recording's self-check then differs from the replay's and is only informative.
 
 A scene is worth recording for the paths it covers, and a path no recording covers is not
-covered at all. The two that were here were of one fortress at zoom 192 with nine viewports
-and the window still, and between them covered the free camera on and off and mirrored
-sprites; neither had hauled item icons, a followed unit, a scroll or a zoom change. A
-replacement should say in this file what it covers, and which movement and settings were
-current when it was made, since the replay uses the ones the recording carries.
+covered at all. That is why the table above says what each one covers and what none of them
+does. A recording added later belongs in that table with the same two things named: what it
+covers, and which movement and settings were current when it was made, since the replay uses
+the ones the recording carries rather than any default.
 
 ## What a replay tells you
 
