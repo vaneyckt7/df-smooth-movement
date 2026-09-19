@@ -20,6 +20,19 @@ The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); the
   before the hop's settings were renamed is refused with `bad movement settings`, because the
   setting names inside it are not the ones this version knows.
 
+- `harness/build.sh` and `harness/test.sh` compile with `-ffp-contract=off`, placed ahead of
+  `CXXFLAGS` so a caller can still override it. A digest hashes coordinates printed to three
+  decimals, so a build that contracts a multiply and a following add into one fused
+  instruction, rounding once where the pair rounds twice, digests the same scene differently
+  from one that does not. Both compilers contract by default; what decides it is the target,
+  since arm64 has a fused multiply-add in its baseline and x86-64 does not have one without
+  `-mfma`. The same 19 sites in the harness binary fuse under clang on arm64 and none under
+  GCC on x86-64, and one draw of `fortress-hauled-400` came out at `x=146.340` fused against
+  `x=146.339` unfused, which failed that frame on a scene where nothing had changed. Off is
+  the reachable direction, since every target can do a separate multiply and add. With it the
+  four recordings trace identically on both machines. The `fortress-hauled-400` digest for
+  that one frame is regenerated to match.
+
 - The vocabulary the movement interface introduced is used everywhere, so that one thing has
   one name. `harness/recinfo.py` prints a frame's movement as `movement=` where it said
   `interpolation=`, and `harness/test.sh`, which reads that field, changes with it. In the
