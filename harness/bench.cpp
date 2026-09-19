@@ -336,12 +336,12 @@ int run_replay(const char *record_path,const char *trace_path)
 		if(h.simulation_tick>=0)
 			{
 			world.frame_counter=int32_t(h.simulation_tick);
-			state.render.drawn_buffers.note_drawn(world.frame_counter);
+			state.render.drawn_arrays.note_drawn(world.frame_counter);
 			}
 		const uint64_t r0=repaint_calls,p0=state.stats.painted;
 		if(trace)fprintf(trace,"# frame replay %zu t=%u w=%d,%d\n",n,h.tick_ms,wx,wy);
 		const auto t0=clock::now();
-		render_interpolated_world(&renderer);
+		render_world_with_movement(&renderer);
 		const auto t1=clock::now();
 		const double frame_us=std::chrono::duration<double,std::micro>(t1-t0).count();
 		us+=frame_us;us_max=std::max(us_max,frame_us);

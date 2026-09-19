@@ -233,7 +233,7 @@ int main()
 	assert(manager.get_facing(nullptr,0,0)==native_sprite_facing);
 	}
 
-	// Each rendered z-level has its own viewport buffers; tracking one must not suppress another.
+	// Each rendered z-level has its own per-tile arrays; tracking one must not suppress another.
 	{
 	const int lower_token=0;
 	const int main_token=0;
@@ -327,7 +327,7 @@ int main()
 	unmatched_a[2*pan_dim+1]=78;
 	unmatched_b[2*pan_dim+1]=79;
 
-	// LANDED: the shift is recognized, so facing follows the buffers.
+	// LANDED: the shift is recognized, so facing follows the per-tile arrays.
 	{
 	visual_animation_managerst landed;
 	auto input=make_input(pan_viewport,pan_dim,pan_empty);
@@ -338,13 +338,13 @@ int main()
 	assert(landed.get_facing(pan_viewport,2,1)==visual_facingst::east);
 	assert(landed.has_mirrored_facing(pan_viewport));
 
-	// Frame A: the scroll is announced but the buffers have not moved yet.
+	// Frame A: the scroll is announced but the per-tile arrays have not moved yet.
 	input.pan_x=1;
 	set_layer(input,viewport_visual_layer::center,at_two,at_two);
 	run_frame(landed,input,1032);
 	assert(landed.get_facing(pan_viewport,2,1)==visual_facingst::east);
 
-	// Frame B: the buffers shift east by one and the majority-match test recognizes it.
+	// Frame B: the per-tile arrays shift east by one and the majority-match test recognizes it.
 	set_layer(input,viewport_visual_layer::center,at_one,at_two);
 	run_frame(landed,input,1048);
 	assert(landed.get_facing(pan_viewport,1,1)==visual_facingst::east);
@@ -352,7 +352,7 @@ int main()
 	assert(landed.has_mirrored_facing(pan_viewport));
 	}
 
-	// ABANDONED: the shift never shows up in the buffers, so no delta is ever identified.
+	// ABANDONED: the shift never shows up in the per-tile arrays, so no delta is ever identified.
 	// The grid must be back at the default while the tile is still OCCUPIED.
 	// The empty-tile sweep cannot reach that case, so only an explicit reset clears it.
 	{
@@ -364,7 +364,7 @@ int main()
 	run_frame(abandoned,input,2016);
 	assert(abandoned.get_facing(pan_viewport,2,1)==visual_facingst::east);
 
-	// Changed buffers keep the failed majority-match test running every frame.
+	// Changed entries keep the failed majority-match test running every frame.
 	// It tolerates four before giving up on the fifth.
 	input.pan_x=1;
 	for(int32_t frame=0;frame<4;++frame)
@@ -858,9 +858,10 @@ int main()
 	assert(!context.get_movement(
 		viewport,viewport_visual_layer::center,1,1).active);
 
-	// Camera-pan handling. window_x/window_y change at input time but the buffers shift on a later
-	// render frame, so the manager must (a) NOT create movements from the buffer shift itself (the
-	// floating-sprite bug), and (b) translate in-flight movements on the frame the shift lands.
+	// Camera-pan handling. window_x/window_y change at input time but the per-tile arrays
+	// shift on a later render frame, so the manager must (a) NOT create movements from the
+	// array shift itself (the floating-sprite bug), and (b) translate in-flight movements on
+	// the frame the shift lands.
 	std::array<int32_t,9> pan_current{};
 	std::array<int32_t,9> pan_previous{};
 	std::array<int32_t,9> pan_empty{};
@@ -871,24 +872,24 @@ int main()
 		pan_current.data(),
 		pan_previous.data());
 
-	// FLOAT REGRESSION: a stationary creature, pan announced at frame A, buffers shift at frame B.
-	// Frame B's buffers look exactly like a real move ((1,1)->(0,1) with a unique source) — the
+	// FLOAT REGRESSION: a stationary creature, pan announced at frame A, arrays shift at frame B.
+	// Frame B's entries look exactly like a real move ((1,1)->(0,1) with a unique source) — the
 	// manager must recognize it as the pending pan and create NO movement.
 	visual_animation_managerst floaty;
 	pan_previous[1*3+1]=42;
 	pan_current[1*3+1]=42;
 	run_frame(floaty,pan_input,4990);
-	pan_input.pan_x=1;                   // frame A: window scrolled, buffers unchanged
+	pan_input.pan_x=1;                   // frame A: window scrolled, arrays unchanged
 	run_frame(floaty,pan_input,5000);
 	assert(!floaty.get_movement(viewport,viewport_visual_layer::center,1,1).active);
-	pan_previous[1*3+1]=42;              // frame B: buffers apply the shift
+	pan_previous[1*3+1]=42;              // frame B: arrays apply the shift
 	pan_current.fill(0);
 	pan_current[0*3+1]=42;
 	run_frame(floaty,pan_input,5010);
 	assert(!floaty.get_movement(viewport,viewport_visual_layer::center,0,1).active);
 
 	// FOLLOW: an in-flight movement survives the announce frame untouched and is translated on the
-	// frame the buffers shift, so the sprite tracks the scrolled world.
+	// frame the per-tile arrays shift, so the sprite tracks the scrolled world.
 	visual_animation_managerst panner;
 	pan_current.fill(0);
 	pan_previous.fill(0);
@@ -900,21 +901,21 @@ int main()
 	auto moved=panner.get_movement(viewport,viewport_visual_layer::center,1,1);
 	assert(moved.active&&moved.source_x_tiles==0&&moved.source_y_tiles==1);
 
-	pan_input.pan_x=1;                   // frame A: pan announced, buffers unchanged
+	pan_input.pan_x=1;                   // frame A: pan announced, arrays unchanged
 	pan_previous[0*3+1]=0;
 	pan_previous[1*3+1]=42;              // previous now matches current (stationary at (1,1))
 	run_frame(panner,pan_input,6010);
 	moved=panner.get_movement(viewport,viewport_visual_layer::center,1,1);
 	assert(moved.active&&moved.source_x_tiles==0);   // untouched: still anchored to the old frame
 
-	pan_current.fill(0);                 // frame B: buffers shift east by one
+	pan_current.fill(0);                 // frame B: arrays shift east by one
 	pan_current[0*3+1]=42;
 	run_frame(panner,pan_input,6020);
 	assert(!panner.get_movement(viewport,viewport_visual_layer::center,1,1).active);
 	auto followed=panner.get_movement(viewport,viewport_visual_layer::center,0,1);
 	assert(followed.active&&followed.source_x_tiles==-1&&followed.source_y_tiles==1);
 
-	// SAME-FRAME: pan announced and buffers shifted in the same call — translated immediately.
+	// SAME-FRAME: pan announced and arrays shifted in the same call — translated immediately.
 	visual_animation_managerst same_frame;
 	pan_current.fill(0);
 	pan_previous.fill(0);
