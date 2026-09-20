@@ -258,6 +258,69 @@ int main(int argc,char **argv)
 	frame_record::readerst r2;r2.data=w2.bytes.data();r2.size=w2.bytes.size();std::vector<frame_record::unit_recordst> u;
 	if(frame_record::read_units(r2,u)||r2.ok()){puts("bad unit count accepted");++failures;}
 	}
+	// What the viewport slots claim between them is capped as well as each dimension, because
+	// a reader sizes a slot's storage from these numbers before it reads anything into it and
+	// keeps that storage from frame to frame. Every viewport below is well inside 4096 by
+	// 4096, so only the total can refuse one.
+	{
+	// One viewport of a recording: which slot it is in, and its size, which is square here.
+	struct casest{int slot,size;};
+	// Writes these frames, then reads the viewport headers back one at a time and answers how
+	// many were accepted before one was refused.
+	const auto accepted=[](const std::vector<std::vector<casest>> &frames)
+		{
+		frame_record::frame_headerst f;
+		f.settings.movement="linear";f.settings.step_ms=250;f.simulation_tick=0;f.tick_ms=1;f.zoom=64;
+		frame_record::writerst w;
+		frame_record::write_file_header(w);
+		for(const std::vector<casest> &frame:frames)
+			{
+			frame_record::write_frame_header(w,f);
+			for(const casest &c:frame)
+				frame_record::write_viewport_header(w,{c.slot,c.size,c.size,0,c.size-1,0,c.size-1,0,0});
+			}
+		frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
+		frame_record::frame_headerst out;frame_record::viewport_headerst vh;
+		if(!frame_record::read_file_header(r))return -1;
+		int count=0;
+		for(const std::vector<casest> &frame:frames)
+			{
+			if(!frame_record::read_frame_header(r,out))return count;
+			for(size_t i=0;i<frame.size();++i)
+				{
+				if(!frame_record::read_viewport_header(r,vh))return count;
+				++count;
+				}
+			}
+		return count;
+		};
+	// One frame of `count` viewports of `size`, in consecutive slots from `first`.
+	const auto frame_of=[](int first,int count,int size)
+		{
+		std::vector<casest> frame;
+		for(int i=0;i<count;++i)frame.push_back({(first+i)%frame_record::slot_count,size});
+		return frame;
+		};
+	// 1024 square is an eighth of the cap, so the ninth of nine viewports is one too many.
+	if(accepted({frame_of(0,9,1024)})!=8){puts("slots past the tile cap were accepted");++failures;}
+	// Exactly the cap is allowed: the check is on more than, not on as much as.
+	if(accepted({frame_of(0,8,1024)})!=8){puts("slots at the tile cap were refused");++failures;}
+	// A slot claims its storage once, not once per frame, or a long recording would be refused
+	// part way through however small its frames are.
+	if(accepted({frame_of(0,8,1024),frame_of(0,8,1024),frame_of(0,8,1024)})!=24)
+		{puts("the same slots counted again in a later frame");++failures;}
+	// A slot that only a later frame uses does count: the reader is still holding the others.
+	if(accepted({frame_of(0,8,1024),frame_of(8,1,1024)})!=8)
+		{puts("a slot first used by a later frame was not counted");++failures;}
+	// What a slot counts for is the largest it has ever been, because a reader that resizes a
+	// slot downward keeps the storage it already has. Slots 0 to 7 fill the cap, then slot 0
+	// shrinks to a sixteenth of what it was, and the 262,144 tiles slot 8 asks for next are
+	// still too many -- which they would not be if the shrink had given the space back.
+	if(accepted({frame_of(0,8,1024),{{0,512}},{{8,512}}})!=9)
+		{puts("a slot counted for less than the largest it has been");++failures;}
+	// A single viewport can be inside the per-dimension cap and past this one on its own.
+	if(accepted({frame_of(0,1,4096)})!=0){puts("a viewport past the tile cap was accepted");++failures;}
+	}
 	if(failures){printf("frame record tests: %d FAILED\n",failures);return 1;}
 	puts("frame record tests: OK");
 	return 0;

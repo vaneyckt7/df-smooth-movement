@@ -26,6 +26,11 @@
 //         reproduce exactly)
 // Run coding of an array of N entries: varint (length<<2 | op) where op 0 = zeros, 1 = same
 // entries as this array had in the previous frame, 2 = literal entries follow.
+//
+// A reader refuses a viewport wider or taller than 4096 tiles, and a recording whose nine
+// slots add up to more than `max_recording_tiles`; both are far above any grid the game
+// draws, and are there because a reader sizes its storage from these numbers before it has
+// read anything into it.
 #pragma once
 
 #include "df/graphic_viewportst.h"
@@ -79,6 +84,32 @@ void for_each_tile_array(Viewport &vp,Callback callback)
 	#undef tile_array
 }
 constexpr int tile_array_count=50;
+
+// The most tiles one recording may ask a reader to hold, added up over the nine viewport
+// slots. A reader sizes a slot's storage from the dimensions in that slot's viewport header,
+// before it reads a single tile into it, and keeps that storage from frame to frame, so what
+// a recording costs is the largest each slot ever gets, added up. The dimensions are cheap to
+// write: a run of zeros costs a few bytes however long it is, so the per-dimension cap of
+// 4096 alone lets a file of 2660 bytes claim 16.7 million tiles in each of the nine slots.
+// One tile costs 216 bytes across the fifty per-tile arrays, adding up their element types,
+// so that file asks a reader for 30.4 GiB before it has read a byte of what is supposed to go
+// in it.
+//
+// Eight million tiles is 1.69 GiB of per-tile arrays: an allocation a machine can make and
+// then refuse to exceed, rather than one it cannot. It is chosen from the other end, because
+// refusing a recording someone spent game time making is the worse mistake of the two. The
+// game draws at most nine viewports, and the largest one can be is the whole display, so the
+// most tiles a display can put in them is nine times its pixels divided by the size of a
+// tile. `tile_size_px` allows a tile as small as one pixel; at four pixels, nine viewports
+// each filling a display of 5120 by 2880 come to 8.3 million tiles, and this cap takes them.
+// Below four pixels on such a display it refuses, which is a tile too small to carry a
+// letter and a recording of a frame nobody is playing.
+//
+// That is a pessimistic reading: a viewport covers the map area, which is smaller than the
+// display, and the nine are the map at nine z-levels, all the same size. The largest frame in
+// this repository's recordings is nine viewports of 25 by 17, 3825 tiles, on a grid of 150 by
+// 66, which is one two-thousandth of this cap.
+constexpr int64_t max_recording_tiles=8*1024*1024;
 
 struct writerst
 {
@@ -146,6 +177,10 @@ struct readerst
 	size_t pos=0;
 	std::string error;
 	uint32_t version=0; // the file's version, set by read_file_header
+	// The most tiles each viewport slot has claimed anywhere in this recording, kept by
+	// `read_viewport_header`. It lives here rather than being passed in so that every reader
+	// is held to `max_recording_tiles` without carrying a tally of its own.
+	int64_t slot_tiles[slot_count]={};
 
 	bool ok() const{return error.empty();}
 	bool at_end() const{return pos>=size;}
@@ -358,6 +393,24 @@ inline bool read_viewport_header(readerst &r,viewport_headerst &v)
 	v.screen_x=r.i32();v.screen_y=r.i32();
 	if(v.slot<0||v.slot>=slot_count)r.fail("bad viewport slot");
 	if(v.dim_x<=0||v.dim_y<=0||v.dim_x>4096||v.dim_y>4096)r.fail("bad viewport size");
+	// Nine slots each inside the per-dimension cap still add up to more than a reader can
+	// hold, so what the slots claim between them is capped as well. A reader keeps a slot's
+	// storage from frame to frame -- an array can be written as "the same entries this array
+	// had last frame", so a slot a frame leaves out has to still be there when it comes back
+	// -- and resizes a slot only when that slot's own dimensions change. What it holds is
+	// therefore the largest each slot has ever been, added up, and that is what is charged
+	// here: a slot drawn every frame is charged once, and a slot that only a later frame uses
+	// is charged when it appears. The multiplication is in int64_t and both sides are already
+	// known to be at most 4096, so it cannot overflow, and the slot has already been checked
+	// to be one of the nine.
+	if(r.ok())
+		{
+		const int64_t tiles=int64_t(v.dim_x)*int64_t(v.dim_y);
+		if(tiles>r.slot_tiles[v.slot])r.slot_tiles[v.slot]=tiles;
+		int64_t total=0;
+		for(int slot=0;slot<slot_count;++slot)total+=r.slot_tiles[slot];
+		if(total>max_recording_tiles)r.fail("recording claims too many tiles");
+		}
 	return r.ok();
 }
 
