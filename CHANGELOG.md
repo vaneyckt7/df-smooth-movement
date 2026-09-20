@@ -5,6 +5,21 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- A recording's reader refuses a recording whose nine viewport slots claim more than eight
+  million tiles between them. Each viewport's width and height were already capped at 4096,
+  but nothing bounded what they claimed in total, and the replay sizes a slot's fifty
+  per-tile arrays from the numbers in that slot's viewport header before it reads anything
+  into them, then keeps that storage from frame to frame. A run of zeros costs a few bytes
+  however long it is, so a 2660-byte file of nine viewports at the per-dimension cap asked
+  the replay for 30.4 GiB, which on a machine that cannot give it is a crash in the harness
+  rather than a rejected recording. What is charged is the largest each slot has ever been,
+  added up, which is what the replay actually holds: a slot drawn in every frame is charged
+  once, so the length of a recording costs nothing, and a slot that only a later frame uses
+  is charged when it appears. The cap is 1.69 GiB of per-tile arrays, against 3825 tiles in
+  the largest frame of the recordings in this repository and 8.3 million for nine viewports
+  each filling a 5120 by 2880 display at four-pixel tiles. No format change: the reader
+  refuses more than it did, and every recording that read before still reads.
+
 - Every `camera` command that changes something replies with the camera's line, and
   `record stop` refuses when nothing is recording. A refused offset still prints only its
   reason, since it has not touched the camera.
