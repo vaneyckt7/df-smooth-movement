@@ -47,9 +47,9 @@ the path; clang and g++ both work. Run them from the repository root. `<plugin d
 directory holding the plugin sources (`smooth-movement.cpp`, `visual_animation.h`,
 `movement.h`, `frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `free_camera.h`,
 `plugin_commands.h`, `plugin_settings.h`, `plugin_state.h`, `sprite_drawing.h`,
-`sprite_placement.h`, `sprite_proxies.h`, `tile_coverage.h`, `tile_redraw.h`,
-`tile_repaint.h`, `view_context.h` and the unit test), such as the repository root (`.`) or
-an export of another branch, for example
+`sprite_placement.h`, `sprite_proxies.h`, `texture_cache.h`, `tile_coverage.h`,
+`tile_redraw.h`, `tile_repaint.h`, `view_context.h` and the unit test), such as the
+repository root (`.`) or an export of another branch, for example
 `mkdir -p harness/out/src-base && git archive release/v0.5.0 | tar -x -C harness/out/src-base`.
 
 - `replay.sh <plugin dir> <label> <recording>`: builds the harness against that source and
@@ -74,9 +74,13 @@ an export of another branch, for example
 - `test.sh <plugin dir>`: builds and runs the animation manager test
   (`test_visual_animation_manager.cpp` in the plugin directory, which steps creatures
   through the animation manager and checks the transitions, easing, retargets and hop
-  decisions it makes), the recording codec test, the tile repaint test
-  (`test_tile_repaint.cpp`, which checks against the stub viewport which of the 25 arrays
-  each repaint pass zeroes and that every entry is restored), the tile redraw test
+  decisions it makes), the recording codec test, the texture cache test
+  (`test_texture_cache.cpp`, which checks which texture the plugin gets back for a texture
+  position, which item a creature counts as hauling, which texture position that item's
+  material names, and that a tile borrowed to make a hauled item's texture is put back as it
+  was), the tile repaint test (`test_tile_repaint.cpp`, which checks against the stub
+  viewport which of the 25 arrays each repaint pass zeroes and that every entry is restored),
+  the tile redraw test
   (`test_tile_redraw.cpp`, which checks which tiles the plugin asks the game to repaint and
   the counters it bumps when it does: the per-tile check that a repaint would paint something,
   the camera glide's blank summary, the layers a tile's own sprites cover, and the rule that a

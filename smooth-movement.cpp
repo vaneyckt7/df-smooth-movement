@@ -6,20 +6,14 @@
 #include "VTableInterpose.h"
 
 #include "modules/DFSDL.h"
-#include "modules/Materials.h"
 #include "modules/Units.h"
 
 #include "df/enabler.h"
 #include "df/graphic.h"
 #include "df/graphic_viewportst.h"
-#include "df/item.h"
-#include "df/item_type.h"
-#include "df/material.h"
 #include "df/plotinfost.h"
 #include "df/renderer_2d_base.h"
-#include "df/texture_fullid.h"
 #include "df/unit.h"
-#include "df/unit_inventory_item.h"
 #include "df/viewport_spatter_flag.h"
 #include "df/viewscreen_dungeonmodest.h"
 #include "df/viewscreen_dwarfmodest.h"
@@ -34,6 +28,7 @@
 #include "sprite_drawing.h"
 #include "sprite_placement.h"
 #include "sprite_proxies.h"
+#include "texture_cache.h"
 #include "tile_coverage.h"
 #include "tile_redraw.h"
 #include "tile_repaint.h"
@@ -178,74 +173,6 @@ bool viewport_readable(df::graphic_viewportst *vp)
 	return vp!=nullptr&&vp->flag.bits.active&&animation_input(vp).valid();
 }
 
-SDL_Texture *cached_texture(
-	df::renderer_2d_base *renderer,
-	int32_t texpos,
-	bool transparent_background=true)
-{
-	if(texpos==0)return nullptr;
-	df::texture_fullid texture_id;
-	texture_id.texpos=texpos;
-	texture_id.r=texture_id.g=texture_id.b=1.0f;
-	texture_id.br=texture_id.bg=texture_id.bb=0.0f;
-	// Both arms are the bitfield's own width. Writing the bare 0 instead makes one arm an
-	// enumeration and the other an int, which is a warning and reads as if the two were
-	// different kinds of thing; they are the same field, set and clear.
-	texture_id.flag=transparent_background?
-		uint32_t(df::texture_fullid_flag::mask_transparent_background):
-		uint32_t(0);
-	const auto texture=renderer->tile_cache.tile_cache.find(texture_id);
-	return texture==renderer->tile_cache.tile_cache.end()?
-		nullptr:
-		static_cast<SDL_Texture *>(texture->second);
-}
-
-df::item *hauled_item(const df::unit *unit)
-{
-	if(unit==nullptr)return nullptr;
-	for(const df::unit_inventory_item *inventory_item:unit->inventory)
-		if(inventory_item!=nullptr&&inventory_item->item!=nullptr&&
-			inventory_item->mode==df::inv_item_role_type::Hauled)
-			return inventory_item->item;
-	return nullptr;
-}
-
-SDL_Texture *cached_viewport_texture(
-	df::renderer_2d_base *renderer,
-	df::graphic_viewportst *vp,
-	int32_t index,
-	int32_t texpos)
-{
-	if(texpos==0)return nullptr;
-	SDL_Texture *texture=cached_texture(renderer,texpos);
-	if(texture!=nullptr||vp->screentexpos_background_two==nullptr)return texture;
-	// Hauled items are not normally drawn, so stage one tile to populate the renderer cache.
-	scoped_value_restorest<int32_t> staged(vp->screentexpos_background_two[index]);
-	vp->screentexpos_background_two[index]=texpos;
-	game_repaint(state,renderer,vp,index/vp->dim_y,index%vp->dim_y);
-	return cached_texture(renderer,texpos);
-}
-
-int32_t item_texpos(df::item *item)
-{
-	if(item==nullptr)return 0;
-	const MaterialInfo material(item);
-	if(!material.isValid())return 0;
-	switch(item->getType())
-		{
-		case df::item_type::BOULDER:
-			return material.material->boulder_texpos1!=0?
-				material.material->boulder_texpos1:
-				material.material->boulder_texpos2;
-		case df::item_type::BAR:
-			return material.material->bar_texpos;
-		case df::item_type::WOOD:
-			return material.material->wood_texpos;
-		default:
-			return 0;
-		}
-}
-
 // The active viewports with their recording slots, for the recorder.
 frame_recorderst::viewport_listst recorded_viewports()
 {
@@ -353,7 +280,7 @@ std::vector<carried_item_proxyst> collect_carried_item_proxies(
 		const int32_t index=x*vp->dim_y+y;
 		if(vp->screentexpos[index]==0)continue;
 		const int32_t texpos=item_texpos(hauled_item(unit));
-		SDL_Texture *texture=cached_viewport_texture(renderer,vp,index,texpos);
+		SDL_Texture *texture=cached_viewport_texture(state,renderer,vp,index,texpos);
 		if(texture==nullptr)continue;
 		const auto movement=state.render.animation_manager.get_movement(
 			vp,viewport_visual_layer::center,x,y);

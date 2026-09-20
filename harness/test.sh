@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds and runs the unit tests (the animation manager, recording codec, tile repaint,
-# tile redraw, sprite proxy, sprite placement, sprite drawing, free camera, view context
-# and console command tests) against the stub headers in stubs/, then replays the
+# Builds and runs the unit tests (the animation manager, recording codec, texture cache,
+# tile repaint, tile redraw, sprite proxy, sprite placement, sprite drawing, free camera,
+# view context and console command tests) against the stub headers in stubs/, then replays the
 # recording the codec test writes, which is three frames in the current format naming a
 # different movement each, so that the replay's two-pass decode of a frame header is
 # exercised without a fixture, then replays every recording in recordings/ and requires
@@ -38,6 +38,7 @@ expected="none,-,250,1234567 linear,-,250,-1 hop,hop-height=0.15,horizontal-mult
 if [ "$sample" != "$expected" ]; then
 	echo "recinfo.py misreads the current format: $sample"; exit 1
 fi
+run_test texture-cache
 run_test tile-repaint
 run_test tile-redraw
 run_test sprite-proxies

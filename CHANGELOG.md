@@ -5,6 +5,14 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- Finding the texture the game has already made for a sprite moved out of
+  `smooth-movement.cpp` into `texture_cache.h`, along with the two questions the lookup is
+  asked: which item a creature is hauling, and which texture position that item's material
+  names. Looking a texture up now takes the renderer as a template argument and staging a
+  tile to make one takes the plugin's state as an argument rather than reading it, so a
+  harness test can hand them a cache and a state of its own. Nothing the plugin draws
+  changes.
+
 - Asking the game to repaint a viewport tile moved out of `smooth-movement.cpp` into
   `tile_redraw.h`, along with the gates around the ask: the check that a repaint would paint
   something, the camera glide's blank summary, the layers a tile's own sprites already cover,
