@@ -5,6 +5,15 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- Asking the game to repaint a viewport tile moved out of `smooth-movement.cpp` into
+  `tile_redraw.h`, along with the gates around the ask: the check that a repaint would paint
+  something, the camera glide's blank summary, the layers a tile's own sprites already cover,
+  and the rule that a staged tile is repainted by the lowest viewport alone. The functions
+  take the plugin's state as an argument rather than reading it, so a harness test can hand
+  them a state of its own, a renderer that records instead of painting, and read back both
+  the tiles that were asked for and the counters `stats` reports. Nothing the plugin draws
+  changes.
+
 - Handing a sprite to SDL moved out of `smooth-movement.cpp` into `sprite_drawing.h`: the
   rectangle a gliding sprite is copied into, the inset rectangle a hauled item's icon gets,
   and the choice between SDL's plain copy and the one that can flip a sprite horizontally.

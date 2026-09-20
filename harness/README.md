@@ -47,9 +47,9 @@ the path; clang and g++ both work. Run them from the repository root. `<plugin d
 directory holding the plugin sources (`smooth-movement.cpp`, `visual_animation.h`,
 `movement.h`, `frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `free_camera.h`,
 `plugin_commands.h`, `plugin_settings.h`, `plugin_state.h`, `sprite_drawing.h`,
-`sprite_placement.h`, `sprite_proxies.h`, `tile_coverage.h`, `tile_repaint.h`,
-`view_context.h` and the unit test), such as the repository root (`.`) or an export of
-another branch, for example
+`sprite_placement.h`, `sprite_proxies.h`, `tile_coverage.h`, `tile_redraw.h`,
+`tile_repaint.h`, `view_context.h` and the unit test), such as the repository root (`.`) or
+an export of another branch, for example
 `mkdir -p harness/out/src-base && git archive release/v0.5.0 | tar -x -C harness/out/src-base`.
 
 - `replay.sh <plugin dir> <label> <recording>`: builds the harness against that source and
@@ -76,7 +76,11 @@ another branch, for example
   through the animation manager and checks the transitions, easing, retargets and hop
   decisions it makes), the recording codec test, the tile repaint test
   (`test_tile_repaint.cpp`, which checks against the stub viewport which of the 25 arrays
-  each repaint pass zeroes and that every entry is restored) and the sprite proxy test
+  each repaint pass zeroes and that every entry is restored), the tile redraw test
+  (`test_tile_redraw.cpp`, which checks which tiles the plugin asks the game to repaint and
+  the counters it bumps when it does: the per-tile check that a repaint would paint something,
+  the camera glide's blank summary, the layers a tile's own sprites cover, and the rule that a
+  staged tile belongs to the lowest viewport alone) and the sprite proxy test
   (`test_sprite_proxies.cpp`, which steps a creature through the animation manager on the
   stub viewport and checks which sprites get a proxy, what tiles each covers, that fire,
   the clip and a missing texture block one, which proxies hop with the walk hop on and
