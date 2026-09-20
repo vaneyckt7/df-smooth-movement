@@ -41,10 +41,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -815,6 +817,24 @@ void render_world_with_movement(df::renderer_2d_base *renderer)
 	state.render.previous_coverage=std::move(coverage);
 }
 
+// The render thread runs update_all, and it is the one thread DFHack never lets take the
+// core suspend: Core.h asserts a CoreSuspender is never constructed on it, and the vmethod
+// interpose adds no lock of its own. `disable` reaches the teardown below with the suspend
+// held, and `unload`/`reload` reach it with no suspend at all, because Plugin::unload closes
+// its CoreSuspender scope before it calls plugin_shutdown. On either path a hook body can
+// still be running. These two gates close that window. The teardown clears hook_live and
+// then waits for in_flight to fall to zero; a body raises in_flight and only then reads
+// hook_live. Both pairs are sequentially consistent, which is what makes the two orders
+// exclusive: a body the wait did not count cannot yet have read hook_live, so it is bound
+// to see the cleared flag and leave the state alone. The hooks stay installed across the
+// wait on purpose -- removing them first would not help, because a body that had already
+// read the vtable slot is free to start afterwards. That body is the one window this does
+// not close: it enters after remove_hooks() has nulled the interpose chain, so the
+// INTERPOSE_NEXT below calls through a null pointer-to-member. That follows from patching a
+// live vtable and is the same for every DFHack interpose, so it is not this plugin's to fix.
+std::atomic<bool> hook_live{false};
+std::atomic<int> in_flight{0};
+
 struct renderer_hook : df::renderer_2d_base
 {
 	typedef df::renderer_2d_base interpose_base;
@@ -825,8 +845,16 @@ IMPLEMENT_VMETHOD_INTERPOSE(renderer_hook,update_all);
 
 void renderer_hook::interpose_fn_update_all()
 {
+	in_flight.fetch_add(1);
+	// Runs on every exit, so a teardown cannot wait for ever on a body that returned early
+	// or threw.
+	const scope_guardst leave([]{in_flight.fetch_sub(1);});
 	// update_all is the existing UI stage, so world correction must run first.
-	render_world_with_movement(this);
+	if(hook_live.load())render_world_with_movement(this);
+	// Counted as well, rather than left until after the guard: INTERPOSE_NEXT reads the
+	// interpose link's chain pointer where it stands, and remove() ends by nulling that
+	// pointer, so a body that had already left the counted region would call through null
+	// as soon as the teardown reached remove_hooks().
 	INTERPOSE_NEXT(update_all)();
 }
 
@@ -944,9 +972,15 @@ DFhackCExport command_result plugin_enable(color_ostream &out,bool enable)
 			state.sdl.clear();
 			return CR_FAILURE;
 			}
+		// Last, so that no body runs against state the lines above were still building.
+		hook_live.store(true);
 		}
 	else
 		{
+		// First, so that bodies starting from here on leave the state alone, then wait for
+		// the one that may already be running on the render thread. See hook_live.
+		hook_live.store(false);
+		while(in_flight.load()>0)std::this_thread::yield();
 		remove_hooks();
 		state.reset();
 		state.sdl.clear();
