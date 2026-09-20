@@ -718,19 +718,20 @@ void test_outside_the_arrays()
 	}
 }
 
-// A movement that overshoots to the right: on the straight path, with configurable right
-// overshoot. Tests that the column expansion in collect_proxies works.
-class rightward_movementst:public movementst
+// A movement on the straight path that overshoots by whatever a test asks for. The shipped
+// movements overshoot above and nowhere else -- the hop, by hop-height times its largest
+// multiplier -- so this is how the other three directions, and any amount, get exercised.
+class overshoot_movementst:public movementst
 {
 	public:
-		float right_amount_tiles=0.3f;
-		const char *name() const override{return "rightward";}
+		movement_overshootst amount;
+		const char *name() const override{return "overshoot";}
 		float travelled_pct(float elapsed_pct) const override{return elapsed_pct;}
 		sprite_offsetst path(float travelled_pct,tile_stepst step) const override
 			{return straight_path(travelled_pct,step);}
-		movement_overshootst overshoot() const override{return {0.0f,0.0f,0.0f,right_amount_tiles};}
+		movement_overshootst overshoot() const override{return amount;}
 		std::unique_ptr<movementst> clone() const override
-			{return std::make_unique<rightward_movementst>(*this);}
+			{return std::make_unique<overshoot_movementst>(*this);}
 };
 
 void test_column_overshoot()
@@ -739,7 +740,8 @@ void test_column_overshoot()
 	// With a movement that overshoots to the right, the column to the right of the path
 	// joins coverage.
 	scenest scene;
-	rightward_movementst rightward;
+	overshoot_movementst rightward;
+	rightward.amount.right_tiles=0.3f;
 	scene.manager.set_movement(rightward);
 	const auto proxies=scene.collect(false);
 	expect_count("rightward overshoot",proxies,3);
@@ -754,7 +756,8 @@ void test_column_overshoot()
 	// proxy covers only its path. (Fire on the fragment's own landing tile would drop the
 	// fragment instead, since a creature's path must be off burning tiles to move at all.)
 	scenest scene;
-	rightward_movementst rightward;
+	overshoot_movementst rightward;
+	rightward.amount.right_tiles=0.3f;
 	scene.manager.set_movement(rightward);
 	scene.v.spatter_flags[(to_x+2)*dim_y+row]=0x10000000U;
 	const auto proxies=scene.collect(false);
@@ -768,6 +771,158 @@ void test_column_overshoot()
 	}
 }
 
+// Every case above overshoots by a fraction of a tile, which rounds up to one. The amount is
+// not capped at a tile: the hop's is hop-height times its largest multiplier, which its own
+// ranges allow up to five tiles, and a movement of the test's own can name any of the four
+// directions. `collect_proxies` rounds each direction up to whole tiles once, at the top, and
+// then sweeps that many rows or columns out from every proxy's path. These pin what that
+// sweep covers when the rounding lands past one: how far it reaches on each axis, that the
+// four directions reach independently of each other, and that a creature whose deeper
+// overshoot no longer fits inside the viewport falls back the way a blocked one does.
+void test_multi_tile_overshoot()
+{
+	// The hop of a scene, set to overshoot two rows: 0.35 tiles of hop-height times a
+	// vertical multiplier of 5 is 1.75 rows, and each direction is rounded up. Both are
+	// inside the settings' own ranges, which allow up to five tiles of overshoot. The
+	// movement has to outlive the manager's use of it, so the caller keeps it.
+	const auto two_row_hop=[](scenest &scene)
+		{
+		std::unique_ptr<movementst> hop=scene.movements.find("hop")->clone();
+		if(apply_movement_settings(*hop,{{"hop-height",0.35f},{"vertical-mult",5.0f}})!="")
+			printf("the two-row hop: settings refused\n"),++failures;
+		return hop;
+		};
+	{
+	// Two rows above, with the room for them: the creature walks along the bottom row, so
+	// even the up fragment, a row higher than the centre, has two rows above it inside the
+	// viewport. Every proxy covers both of them as well as its own path, and nothing falls
+	// back.
+	constexpr int32_t bottom_row=dim_y-1;
+	scenest scene(bottom_row);
+	const std::unique_ptr<movementst> hop=two_row_hop(scene);
+	scene.manager.set_movement(*hop);
+	const auto proxies=scene.collect(false);
+	expect_count("two rows above",proxies,3);
+	expect_proxy("two rows above, center",proxies,L::center,to_x,bottom_row,false,0,
+		{{from_x,bottom_row-2},{from_x,bottom_row-1},{from_x,bottom_row},
+		{to_x,bottom_row-2},{to_x,bottom_row-1},{to_x,bottom_row}},center_texpos);
+	expect_proxy("two rows above, right",proxies,L::right,to_x+1,bottom_row,false,0,
+		{{from_x+1,bottom_row-2},{from_x+1,bottom_row-1},{from_x+1,bottom_row},
+		{to_x+1,bottom_row-2},{to_x+1,bottom_row-1},{to_x+1,bottom_row}},right_texpos);
+	expect_proxy("two rows above, up",proxies,L::up,to_x,bottom_row-1,false,0,
+		{{from_x,bottom_row-3},{from_x,bottom_row-2},{from_x,bottom_row-1},
+		{to_x,bottom_row-3},{to_x,bottom_row-2},{to_x,bottom_row-1}},up_texpos);
+	for(const render_proxyst &proxy:proxies)
+		if(proxy.use_straight_path)printf("two rows above: took the straight path\n"),++failures;
+	}
+	{
+	// The same movement one row higher up the viewport, which is where the other cases put
+	// the creature: the up fragment's second row above is off the top, so the whole creature
+	// falls back to the straight path and every proxy covers its path alone. Its first row
+	// above is inside the viewport, and a single-row overshoot there does not fall back
+	// (`hop on` above), so what refuses this one is how far the overshoot reaches and not
+	// which direction it reaches in.
+	scenest scene;
+	const std::unique_ptr<movementst> hop=two_row_hop(scene);
+	scene.manager.set_movement(*hop);
+	const auto proxies=scene.collect(false);
+	expect_count("two rows above the top",proxies,3);
+	for(const render_proxyst &proxy:proxies)
+		if(!proxy.use_straight_path)
+			printf("two rows above the top: did not take the straight path\n"),++failures;
+	expect_proxy("two rows above the top, center",proxies,L::center,to_x,row,false,0,
+		{{from_x,row},{to_x,row}},center_texpos);
+	expect_proxy("two rows above the top, up",proxies,L::up,to_x,row-1,false,0,
+		{{from_x,row-1},{to_x,row-1}},up_texpos);
+	}
+	{
+	// Two columns to the left, which 1.4 columns rounds to. No shipped movement overshoots
+	// sideways at all, so the column reach is the test's own movement throughout; the
+	// creature's leftmost path column is the third, which leaves exactly the room.
+	scenest scene;
+	overshoot_movementst leftward;
+	leftward.amount.left_tiles=1.4f;
+	scene.manager.set_movement(leftward);
+	const auto proxies=scene.collect(false);
+	expect_count("two columns left",proxies,3);
+	expect_proxy("two columns left, center",proxies,L::center,to_x,row,false,0,
+		{{from_x-2,row},{from_x-1,row},{from_x,row},{to_x,row}},center_texpos);
+	expect_proxy("two columns left, right",proxies,L::right,to_x+1,row,false,0,
+		{{from_x-1,row},{from_x,row},{from_x+1,row},{to_x+1,row}},right_texpos);
+	expect_proxy("two columns left, up",proxies,L::up,to_x,row-1,false,0,
+		{{from_x-2,row-1},{from_x-1,row-1},{from_x,row-1},{to_x,row-1}},up_texpos);
+	for(const render_proxyst &proxy:proxies)
+		if(proxy.use_straight_path)printf("two columns left: took the straight path\n"),++failures;
+	}
+	{
+	// Two rows below, which 1.2 rows rounds to, on a creature one row higher so that they
+	// fit. That an amount of zero sweeps nothing is already clear from the rightward case
+	// above; what is new here is that a non-zero amount in one direction does not reach in
+	// another. The row above the centre's path is inside the viewport and stays out of its
+	// coverage, which is what keeps a movement that only sinks from also erasing the row
+	// above every sprite that follows it.
+	constexpr int32_t second_row=1;
+	scenest scene(second_row);
+	overshoot_movementst downward;
+	downward.amount.below_tiles=1.2f;
+	scene.manager.set_movement(downward);
+	const auto proxies=scene.collect(false);
+	expect_count("two rows below",proxies,3);
+	expect_proxy("two rows below, center",proxies,L::center,to_x,second_row,false,0,
+		{{from_x,second_row},{from_x,second_row+1},{from_x,second_row+2},
+		{to_x,second_row},{to_x,second_row+1},{to_x,second_row+2}},center_texpos);
+	expect_proxy("two rows below, up",proxies,L::up,to_x,second_row-1,false,0,
+		{{from_x,second_row-1},{from_x,second_row},{from_x,second_row+1},
+		{to_x,second_row-1},{to_x,second_row},{to_x,second_row+1}},up_texpos);
+	for(const render_proxyst &proxy:proxies)
+		if(proxy.use_straight_path)printf("two rows below: took the straight path\n"),++failures;
+	}
+	{
+	// Fire on the second column to the left of the centre's path: the check that gives up an
+	// overshoot reaches as deep as the sweep that covers it, on the column axis as on the row
+	// axis, so the whole creature falls back and every proxy covers its path alone. The first
+	// column to the left is clear, so a check that only ever looked one column out would find
+	// nothing to fall back from.
+	scenest scene;
+	overshoot_movementst leftward;
+	leftward.amount.left_tiles=1.4f;
+	scene.manager.set_movement(leftward);
+	scene.v.spatter_flags[(from_x-2)*dim_y+row]=0x10000000U;
+	const auto proxies=scene.collect(false);
+	expect_count("fire two columns left",proxies,3);
+	for(const render_proxyst &proxy:proxies)
+		if(!proxy.use_straight_path)
+			printf("fire two columns left: did not take the straight path\n"),++failures;
+	expect_proxy("fire two columns left, center",proxies,L::center,to_x,row,false,0,
+		{{from_x,row},{to_x,row}},center_texpos);
+	expect_proxy("fire two columns left, up",proxies,L::up,to_x,row-1,false,0,
+		{{from_x,row-1},{to_x,row-1}},up_texpos);
+	}
+	{
+	// A row above and two columns to the left at once: the sweep is one rectangle around the
+	// path, reaching each of its four sides by that side's own amount, rather than one strip
+	// per direction. The tiles that tell those two apart are the corners, where the row above
+	// meets the columns beside: a pair of strips would cover the row above the path and the
+	// columns beside it and leave the corners out, so the corners are what these expect.
+	scenest scene;
+	overshoot_movementst corner;
+	corner.amount.above_tiles=0.2f;
+	corner.amount.left_tiles=1.4f;
+	scene.manager.set_movement(corner);
+	const auto proxies=scene.collect(false);
+	expect_count("a row above and two columns left",proxies,3);
+	expect_proxy("a row above and two columns left, center",proxies,L::center,to_x,row,false,0,
+		{{from_x-2,row-1},{from_x-2,row},{from_x-1,row-1},{from_x-1,row},
+		{from_x,row-1},{from_x,row},{to_x,row-1},{to_x,row}},center_texpos);
+	expect_proxy("a row above and two columns left, up",proxies,L::up,to_x,row-1,false,0,
+		{{from_x-2,row-2},{from_x-2,row-1},{from_x-1,row-2},{from_x-1,row-1},
+		{from_x,row-2},{from_x,row-1},{to_x,row-2},{to_x,row-1}},up_texpos);
+	for(const render_proxyst &proxy:proxies)
+		if(proxy.use_straight_path)
+			printf("a row above and two columns left: took the straight path\n"),++failures;
+	}
+}
+
 } // namespace
 
 int main()
@@ -778,6 +933,7 @@ int main()
 	test_coverage();
 	test_overshoot();
 	test_column_overshoot();
+	test_multi_tile_overshoot();
 	test_carried_item_movement();
 	test_tile_checks();
 	test_outside_the_arrays();
