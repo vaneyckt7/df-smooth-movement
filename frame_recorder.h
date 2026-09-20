@@ -63,10 +63,17 @@ struct frame_recorderst
 		return !failed;
 		}
 
-	void stop()
+	// Ends a recording, and answers whether there was one to end. The answer is taken under
+	// the same lock that ends it, so that a caller which wants to report what happened need
+	// not ask `running()` first: between a separate `running()` and this call the render
+	// thread can reach the frame limit and close the file itself, and the report would then
+	// describe a recording that was already over.
+	bool stop()
 		{
 		const std::lock_guard<std::mutex> lock(mutex);
+		const bool was_running=file!=nullptr;
 		close();
+		return was_running;
 		}
 
 	bool running()

@@ -5,6 +5,24 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- Every `camera` command that changes something replies with the camera's line, and
+  `record stop` refuses when nothing is recording. A refused offset still prints only its
+  reason, since it has not touched the camera.
+  `camera on`, `camera off`, `camera reset` and `camera <east> <south>`
+  used to change the camera and print nothing at all, alone among the settings, so there was
+  no way to tell an offset that was accepted from one that was silently refused, and no way
+  to see the part of an offset over half a tile that scrolling takes rather than the camera.
+  The reply is the line `status` prints, from one place, so the two can no longer say the
+  same state differently: bare `camera` used to leave off the
+  `(tiles east/south of the grid)` gloss that `status` carried. A rest of zero now reads as
+  `0.000` rather than `-0.000`, which is what negating a positive zero gives. `record stop`
+  used to confirm a stop whether or not a recording was running, which is how a `record` that
+  failed to start looks to anyone who then stops it; it now says `no recording is running`
+  and fails, deciding that under the one lock that ends the recording rather than asking
+  first and acting after. A recording that reached its own frame count has already ended, so
+  a `record stop` after that is refused too; `record status` still reports how many frames it
+  wrote and where.
+
 - `harness/recordings/` holds four recorded scenes again, and `harness/expected/` the 1500
   digest lines that go with them, so the harness checks what the plugin draws on a real
   fortress rather than only on the three frames the codec test generates. They are
