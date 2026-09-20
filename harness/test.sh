@@ -1,9 +1,9 @@
 #!/bin/sh
 # Builds and runs the unit tests (the animation manager, recording codec, tile repaint,
-# sprite proxy, free camera, view context and console command tests) against the stub
-# headers in stubs/, then replays the recording the codec test writes, which is three
-# frames in the current format naming a different movement each, so that the replay's
-# two-pass decode of a frame header is exercised without a fixture, then
+# sprite proxy, sprite placement, free camera, view context and console command tests)
+# against the stub headers in stubs/, then replays the recording the codec test writes,
+# which is three frames in the current format naming a different movement each, so that
+# the replay's two-pass decode of a frame header is exercised without a fixture, then
 # replays every recording in recordings/ and requires that every frame's draws digest to
 # what expected/<name>.digest holds, and that recinfo.py reads the same number of frames.
 # Exits non-zero when any fails, and also when recordings/ is empty, because that last part
@@ -39,6 +39,7 @@ if [ "$sample" != "$expected" ]; then
 fi
 run_test tile-repaint
 run_test sprite-proxies
+run_test sprite-placement
 run_test free-camera
 run_test view-context
 run_test plugin-commands

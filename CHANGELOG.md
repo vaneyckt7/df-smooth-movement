@@ -5,6 +5,14 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- The pixel arithmetic that places a sprite on screen moved out of `smooth-movement.cpp`
+  into `sprite_placement.h`: the tile size at a zoom, a tile's edge in pixels, and the
+  corner a gliding sprite's rectangle starts at. Like the other split headers it needs
+  nothing from DFHack, so a harness test now covers it. Every recording in the repository
+  was made at zoom 192, where a tile is exactly 48 pixels, so the replays had only ever run
+  this at that one zoom, never at the default zoom and never at a zoom whose tile size is
+  not a whole number of pixels; the test covers all three. Nothing the plugin draws changes.
+
 - A recording's reader refuses a recording whose nine viewport slots claim more than eight
   million tiles between them. Each viewport's width and height were already capped at 4096,
   but nothing bounded what they claimed in total, and the replay sizes a slot's fifty
