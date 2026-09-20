@@ -30,7 +30,7 @@ jobs:
           sudo update-locale
           locale -a | grep -i '^de_DE'
 
-      # Builds and runs the nine unit test suites, replays the recording the codec test
+      # Builds and runs the ten unit test suites, replays the recording the codec test
       # writes, and replays everything in harness/recordings against harness/expected.
       # It exits non-zero when any of that fails.
       #

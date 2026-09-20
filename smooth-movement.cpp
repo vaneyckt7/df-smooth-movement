@@ -35,6 +35,7 @@
 #include "sprite_placement.h"
 #include "sprite_proxies.h"
 #include "tile_coverage.h"
+#include "tile_redraw.h"
 #include "tile_repaint.h"
 #include "view_context.h"
 #include "visual_animation.h"
@@ -177,92 +178,6 @@ bool viewport_readable(df::graphic_viewportst *vp)
 	return vp!=nullptr&&vp->flag.bits.active&&animation_input(vp).valid();
 }
 
-struct viewport_renderst
-{
-	df::graphic_viewportst *viewport;
-	std::vector<render_proxyst> proxies;
-	render_coveragest coverage;
-};
-
-// Every tile repaint the plugin asks the game for goes through here so `stats` can count them.
-void game_repaint(df::renderer_2d_base *renderer,df::graphic_viewportst *vp,int32_t x,int32_t y)
-{
-	state.stats.repaints.fetch_add(1,std::memory_order_relaxed);
-	++state.render.hook_repaints;
-	renderer->update_viewport_tile(vp,x,y);
-}
-
-// A staged repaint: skipped when the tile, with the stage's layers hidden, has nothing to
-// paint. The repaint passes of tile_repaint.h call it as repaint(vp,x,y).
-auto staged_repainter(df::renderer_2d_base *renderer)
-{
-	return [renderer](df::graphic_viewportst *vp,int32_t x,int32_t y)
-		{
-		if(tile_paints_nothing(vp,x*vp->dim_y+y))return;
-		game_repaint(renderer,vp,x,y);
-		};
-}
-
-void redraw_viewport_tile(
-	df::renderer_2d_base *renderer,
-	const viewport_renderst &viewport,
-	int32_t x,
-	int32_t y,
-	bool defer_interface)
-{
-	df::graphic_viewportst *vp=viewport.viewport;
-	const int32_t index=x*vp->dim_y+y;
-	if(state.render.blank_summaries.known_blank(vp,index))return;
-	repaint_staged(
-		vp,x,y,selected_mask(viewport.coverage.selected,index),defer_interface,
-		staged_repainter(renderer));
-}
-
-// Runs after the proxies so the shading covers them rather than sitting underneath.
-void draw_interface_only(
-	df::renderer_2d_base *renderer,
-	df::graphic_viewportst *vp,
-	int32_t x,
-	int32_t y)
-{
-	if(!interface_pass_readable(vp))return;
-	if(state.render.blank_summaries.known_blank(vp,x*vp->dim_y+y))return;
-	repaint_interface_only(vp,x,y,staged_repainter(renderer));
-}
-
-void redraw_world_tile(
-	df::renderer_2d_base *renderer,
-	const std::vector<viewport_renderst> &viewports,
-	const tile_coveragest &staged,
-	int32_t x,
-	int32_t y)
-{
-	// The stage pass repaints everything above the lowest across the staged tiles, after the
-	// proxies.
-	const bool staged_tile=staged.count({x,y})!=0;
-	for(const viewport_renderst &viewport:viewports)
-		{
-		if(paintable_tile(viewport.viewport,x,y))
-			redraw_viewport_tile(renderer,viewport,x,y,staged_tile);
-		if(staged_tile)break;
-		}
-}
-
-void redraw_above(
-	df::renderer_2d_base *renderer,
-	df::graphic_viewportst *vp,
-	int32_t x,
-	int32_t y,
-	visual_render_groupst group,
-	const std::unordered_map<int32_t,uint16_t> &selected)
-{
-	const int32_t index=x*vp->dim_y+y;
-	if(state.render.blank_summaries.known_blank(vp,index))return;
-	repaint_above(
-		vp,x,y,group,selected_mask(selected,index),
-		staged_repainter(renderer));
-}
-
 SDL_Texture *cached_texture(
 	df::renderer_2d_base *renderer,
 	int32_t texpos,
@@ -307,7 +222,7 @@ SDL_Texture *cached_viewport_texture(
 	// Hauled items are not normally drawn, so stage one tile to populate the renderer cache.
 	scoped_value_restorest<int32_t> staged(vp->screentexpos_background_two[index]);
 	vp->screentexpos_background_two[index]=texpos;
-	game_repaint(renderer,vp,index/vp->dim_y,index%vp->dim_y);
+	game_repaint(state,renderer,vp,index/vp->dim_y,index%vp->dim_y);
 	return cached_texture(renderer,texpos);
 }
 
@@ -510,20 +425,7 @@ void draw_movement_stages(
 			if(visual_render_group(proxy.layer)==group)draw_proxy(state.sdl,renderer,proxy);
 		if(group==visual_render_groupst::designation)continue;
 		for(const auto &[x,y]:coverage.groups[index])
-			redraw_above(renderer,vp,x,y,group,coverage.selected);
-		}
-}
-
-void redraw_viewport_tiles(
-	df::renderer_2d_base *renderer,
-	const viewport_renderst &viewport,
-	const tile_coveragest &coverage)
-{
-	df::graphic_viewportst *vp=viewport.viewport;
-	for(const auto &[x,y]:coverage)
-		{
-		if(!paintable_tile(vp,x,y))continue;
-		redraw_viewport_tile(renderer,viewport,x,y,true);
+			redraw_above(state,renderer,vp,x,y,group,coverage.selected);
 		}
 }
 
@@ -537,7 +439,7 @@ void draw_viewport_movement_stages(
 		{
 		// A lower z-level's proxy must be covered by the next viewport's fog and terrain.
 		// Reapply that viewport before its own proxies, matching DF's lower-to-main draw order.
-		if(index>0)redraw_viewport_tiles(renderer,viewports[index],coverage);
+		if(index>0)redraw_viewport_tiles(state,renderer,viewports[index],coverage);
 		const viewport_renderst &viewport=viewports[index];
 		draw_movement_stages(
 			renderer,viewport.viewport,viewport.proxies,viewport.coverage);
@@ -549,7 +451,7 @@ void draw_viewport_movement_stages(
 		for(const auto &[x,y]:coverage)
 			{
 			if(paintable_tile(viewport.viewport,x,y))
-				draw_interface_only(renderer,viewport.viewport,x,y);
+				draw_interface_only(state,renderer,viewport.viewport,x,y);
 			}
 		}
 }
@@ -689,7 +591,7 @@ void render_world_with_movement(df::renderer_2d_base *renderer)
 		for(int32_t x=vp->clipx[0];x<=vp->clipx[1];++x)
 			{
 			for(int32_t y=vp->clipy[0];y<=vp->clipy[1];++y)
-				redraw_world_tile(renderer,viewport_renders,coverage,x,y);
+				redraw_world_tile(state,renderer,viewport_renders,coverage,x,y);
 			}
 		draw_viewport_movement_stages(
 			renderer,viewport_renders,coverage,carried_items);
@@ -723,7 +625,7 @@ void render_world_with_movement(df::renderer_2d_base *renderer)
 	for(const auto &[x,y]:redraw_coverage)
 		{
 		if(paintable_tile(vp,x,y))
-			redraw_world_tile(renderer,viewport_renders,coverage,x,y);
+			redraw_world_tile(state,renderer,viewport_renders,coverage,x,y);
 		}
 	draw_viewport_movement_stages(
 		renderer,viewport_renders,coverage,carried_items);
