@@ -38,14 +38,7 @@ jobs:
       # warning-clean against the one compiler this file pins, and a warning that some other
       # compiler invents stays a warning on the machine that sees it instead of stopping the
       # work. Both scripts take it from CXXFLAGS.
-      # HARNESS_ALLOW_NO_RECORDINGS is a standing admission, not a setting. harness/recordings/
-      # is empty: commit b4c32fc deleted both fixtures, and they cannot be restored as they were
-      # because they are format 2 and the reader now accepts format 7 only. Without this the
-      # harness fails, which is what it should do -- the replay against expected/ is the only
-      # check that a change leaves the drawing alone on a real scene, and nothing else covers
-      # it. Delete this line the moment a scene is recorded in the game at the current format.
       - name: Run the harness
         env:
           CXXFLAGS: -Werror
-          HARNESS_ALLOW_NO_RECORDINGS: 1
         run: harness/test.sh .

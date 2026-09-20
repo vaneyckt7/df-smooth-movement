@@ -16,12 +16,14 @@ set -eu
 src=$(cd "$1" && pwd); here=$(cd "$(dirname "$0")" && pwd); mkdir -p "$here/out"
 # The animation manager test lives with the plugin sources, as the CMake target
 # smooth-movement-test, which nothing else builds; it needs no stub.
-c++ -std=c++17 -O2 ${CXXFLAGS:-} -Wall -Wextra -I"$src" \
+# -ffp-contract=off for the same reason build.sh sets it: the tests compare floats the
+# plugin computes, and a fused multiply-add rounds differently from a separate pair.
+c++ -std=c++17 -O2 -ffp-contract=off ${CXXFLAGS:-} -Wall -Wextra -I"$src" \
     -o "$here/out/test-visual-animation-manager" "$src/test_visual_animation_manager.cpp"
 "$here/out/test-visual-animation-manager"
 # Builds and runs one harness test: harness/test_<name>.cpp against the stubs.
 run_test() {
-	c++ -std=c++17 -O2 ${CXXFLAGS:-} -Wall -Wextra -I"$here/stubs" -I"$src" \
+	c++ -std=c++17 -O2 -ffp-contract=off ${CXXFLAGS:-} -Wall -Wextra -I"$here/stubs" -I"$src" \
 	    -o "$here/out/test-$1" "$here/test_$(echo "$1" | tr - _).cpp"
 	"$here/out/test-$1"
 }
