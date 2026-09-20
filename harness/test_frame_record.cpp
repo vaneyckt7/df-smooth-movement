@@ -228,6 +228,21 @@ int main(int argc,char **argv)
 	frame_record::writerst w2;w2.raw("SMRC",4);w2.u32(frame_record::version+1);
 	frame_record::readerst r2;r2.data=w2.bytes.data();r2.size=w2.bytes.size();
 	if(frame_record::read_file_header(r2)||r2.ok()){puts("future version accepted");++failures;}
+	// The floor is checked as well as the ceiling. `oldest_version` equals `version`, so every
+	// older format is refused at the file header, with the reason named there rather than as a
+	// puzzling failure deeper in: an older frame header has a different layout, so a reader that
+	// let one past would go on to misread the movement's name and report bad settings instead.
+	// Without this case, lowering `oldest_version` or dropping the floor comparison leaves the
+	// suite green.
+	const auto rejects_version=[&failures](uint32_t file_version,const char *what)
+		{
+		frame_record::writerst w;w.raw("SMRC",4);w.u32(file_version);
+		frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
+		if(frame_record::read_file_header(r)||r.ok()){printf("%s accepted\n",what);++failures;}
+		};
+	rejects_version(frame_record::version-1,"the version below this one");
+	rejects_version(2,"the oldest version there ever was");
+	rejects_version(0,"version zero");
 	frame_record::writerst w3;frame_record::write_file_header(w3);f.settings.step_ms=0;
 	frame_record::write_frame_header(w3,f);
 	frame_record::readerst r3;r3.data=w3.bytes.data();r3.size=w3.bytes.size();
