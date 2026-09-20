@@ -128,129 +128,10 @@ int main(int argc,char **argv)
 		{"vertical-mult",2.7f},{"hops-per-step",1.0f}};
 	f.settings.step_ms=999;f.simulation_tick=77;f.tick_ms=5;f.zoom=64;
 	frame_record::frame_headerst f2,f3;
-	#if 0 // Pre-v7 recording compatibility cases, intentionally unsupported.
-	// A version 2 file has no step field in its frame header and reads back at the 150 ms
-	// every such recording was made with, a version 3 file no simulation tick and reads
-	// back as unknown, a version 4 file no walk hop settings, a version 5 file a linear
-	// switch and a hop switch that name the movement and fixed walk hop fields, a version 6
-	// file the movement's name and the fixed fields; a version past the current one is
-	// rejected, as is a step of zero, a tick below -1 and movement settings the commands
-	// would refuse.
-	{
-	// Writes a frame header in an older layout: the switches or the name, then the fixed
-	// walk hop fields of versions 5 and 6, then the rest as the current writer lays it out.
-	struct old_hopst{float amount,horizontal,diagonal,vertical;uint8_t hops;};
-	const auto write_old_header=[](frame_record::writerst &w,uint32_t version,
-		const frame_record::frame_headerst &g,bool linear,bool hop,const old_hopst &fields)
-		{
-		frame_record::writerst current;
-		frame_record::write_frame_header(current,g);
-		// The current header's tail, from the frame clock on: skip 'F', the switches, the
-		// name, the settings list, the step and the simulation tick.
-		size_t tail=4+1+g.settings.movement.size()+1;
-		for(const movement_settingst &setting:g.settings.movement_settings)
-			tail+=1+setting.name.size()+4;
-		tail+=4+8;
-		w.u8('F');w.u8(g.settings.flip);w.u8(g.settings.hauled);w.u8(g.settings.camera);
-		if(version>=6)
-			{
-			w.u8(uint8_t(g.settings.movement.size()));
-			w.raw(g.settings.movement.data(),g.settings.movement.size());
-			}
-		else w.u8(linear);
-		if(version>=3)w.u32(g.settings.step_ms);
-		if(version>=4)w.i64(g.simulation_tick);
-		if(version==5)w.u8(hop);
-		if(version>=5)
-			{
-			w.f32(fields.amount);w.f32(fields.horizontal);w.f32(fields.diagonal);
-			w.f32(fields.vertical);w.u8(fields.hops);
-			}
-		w.raw(current.bytes.data()+tail,current.bytes.size()-tail);
-		};
-	const old_hopst fields{0.3f,1.0f,2.4f,2.7f,1};
-	const std::vector<movement_settingst> fields_as_settings={{"amount",0.3f},{"horizontal",1.0f},
-		{"diagonal",2.4f},{"vertical",2.7f},{"hops",1.0f}};
-	frame_record::frame_headerst f;
-	f.settings.movement="hop";f.settings.movement_settings=fields_as_settings;
-	f.settings.step_ms=999;f.simulation_tick=77;
-	f.tick_ms=5;f.zoom=64;
-	// Reads one old header back, starting from a header that already names a movement with
-	// settings, as a replay that reuses one header per frame would: every read must reset it.
-	const auto read_old=[&](uint32_t version,bool linear,bool hop,
-		frame_record::frame_headerst &out)
-		{
-		frame_record::writerst w;
-		w.raw("SMRC",4);w.u32(version);
-		write_old_header(w,version,f,linear,hop,fields);
-		frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
-		out=f;
-		return frame_record::read_file_header(r)&&frame_record::read_frame_header(r,out)&&
-			r.at_end()&&r.version==version;
-		};
-	frame_record::frame_headerst f2;
-	if(!read_old(2,true,false,f2)||f2.settings.movement!="linear"||f2.settings.step_ms!=150||
-		f2.simulation_tick!=-1||!f2.settings.movement_settings.empty()||
-		f2.tick_ms!=5||f2.zoom!=64)
-		{puts("version 2 header read failed");++failures;}
-	frame_record::frame_headerst f3;
-	if(!read_old(3,true,false,f3)||f3.settings.movement!="linear"||f3.settings.step_ms!=999||
-		f3.simulation_tick!=-1||!f3.settings.movement_settings.empty()||f3.tick_ms!=5||f3.zoom!=64)
-		{puts("version 3 header read failed");++failures;}
-	frame_record::frame_headerst f4;
-	if(!read_old(4,false,false,f4)||f4.settings.movement!="smoothstep"||f4.settings.step_ms!=999||
-		f4.simulation_tick!=77||!f4.settings.movement_settings.empty()||f4.tick_ms!=5||f4.zoom!=64)
-		{puts("version 4 header read failed");++failures;}
-	// A version 5 header's two switches name the movement, and its fixed walk hop fields
-	// read back as the hop's settings when the hop is named, nothing otherwise; both
-	// switches on names none and is rejected. A version 6 header names the movement and
-	// carries the same fixed fields.
-	for(const uint32_t version:{5u,6u})
-		for(const auto &[linear,hop,name]:{
-			std::tuple<bool,bool,const char *>{false,false,"smoothstep"},{true,false,"linear"},
-			{false,true,"hop"}})
-			{
-			frame_record::frame_headerst g=f;g.settings.movement=name;
-			frame_record::writerst w;w.raw("SMRC",4);w.u32(version);
-			write_old_header(w,version,g,linear,hop,fields);
-			frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
-			frame_record::frame_headerst out=f;
-			const std::vector<movement_settingst> expected=
-				std::string(name)=="hop"?fields_as_settings:std::vector<movement_settingst>{};
-			if(!frame_record::read_file_header(r)||!frame_record::read_frame_header(r,out)||
-				!r.at_end()||r.version!=version||out.settings.movement!=name||
-				out.settings.movement_settings!=expected||out.settings.step_ms!=999||
-				out.simulation_tick!=77||out.tick_ms!=5)
-				{printf("version %u header read as %s failed\n",version,name);++failures;}
-			}
-	{
-	frame_record::frame_headerst fb;
-	if(read_old(5,true,true,fb))
-		{puts("a version 5 header with linear and hop was accepted");++failures;}
-	}
-	// A version 5 or 6 header whose fixed fields the hop would refuse is rejected when the
-	// hop is named, and read when it is not, since the fields then set nothing.
-	for(const uint32_t version:{5u,6u})
-		{
-		const old_hopst bad{0.4f,1.0f,2.4f,2.7f,3};
-		for(const auto &[linear,hop,name,accepted]:{
-			std::tuple<bool,bool,const char *,bool>{false,true,"hop",false},
-			{true,false,"linear",true}})
-			{
-			frame_record::frame_headerst g=f;g.settings.movement=name;
-			g.settings.movement_settings.clear();
-			frame_record::writerst w;w.raw("SMRC",4);w.u32(version);
-			write_old_header(w,version,g,linear,hop,bad);
-			frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
-			frame_record::frame_headerst out;
-			const bool read=frame_record::read_file_header(r)&&
-				frame_record::read_frame_header(r,out)&&r.at_end();
-			if(read!=accepted)
-				{printf("version %u header with bad hop fields as %s: %s\n",version,name,
-					read?"accepted":"rejected");++failures;}
-			}
-		}
-	#endif
+	// There are no pre-v7 cases here on purpose. `frame_record.h` sets `oldest_version`
+	// equal to `version`, so the reader accepts one format and a recording in any older
+	// one is not read at all; `harness/recinfo.py` asserts the same number. What each
+	// older format held is in `CHANGELOG.md`, version by version, and in git history.
 	{
 	// A replay decodes every frame into the same header. Settings from one frame must not
 	// remain when the next frame names a movement with none.
@@ -347,6 +228,21 @@ int main(int argc,char **argv)
 	frame_record::writerst w2;w2.raw("SMRC",4);w2.u32(frame_record::version+1);
 	frame_record::readerst r2;r2.data=w2.bytes.data();r2.size=w2.bytes.size();
 	if(frame_record::read_file_header(r2)||r2.ok()){puts("future version accepted");++failures;}
+	// The floor is checked as well as the ceiling. `oldest_version` equals `version`, so every
+	// older format is refused at the file header, with the reason named there rather than as a
+	// puzzling failure deeper in: an older frame header has a different layout, so a reader that
+	// let one past would go on to misread the movement's name and report bad settings instead.
+	// Without this case, lowering `oldest_version` or dropping the floor comparison leaves the
+	// suite green.
+	const auto rejects_version=[&failures](uint32_t file_version,const char *what)
+		{
+		frame_record::writerst w;w.raw("SMRC",4);w.u32(file_version);
+		frame_record::readerst r;r.data=w.bytes.data();r.size=w.bytes.size();
+		if(frame_record::read_file_header(r)||r.ok()){printf("%s accepted\n",what);++failures;}
+		};
+	rejects_version(frame_record::version-1,"the version below this one");
+	rejects_version(2,"the oldest version there ever was");
+	rejects_version(0,"version zero");
 	frame_record::writerst w3;frame_record::write_file_header(w3);f.settings.step_ms=0;
 	frame_record::write_frame_header(w3,f);
 	frame_record::readerst r3;r3.data=w3.bytes.data();r3.size=w3.bytes.size();
