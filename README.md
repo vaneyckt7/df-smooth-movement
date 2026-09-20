@@ -107,10 +107,11 @@ the plugin already enabled; it refuses otherwise, while `record stop` and `recor
 work either way. `record stop` refuses when nothing is recording, so a confirmation always
 means a recording ended. A `camera <fx> <fy>` offset is a fraction of a tile between -0.99
 and 0.99 on each axis, positive being east and south of the tile grid, and setting one turns
-the free camera on. Every `camera` command replies with the camera's line, the same one
-`status` prints, so the reply says where the camera ended up rather than what was asked for:
-an offset of more than half a tile is partly taken by scrolling the map, and the line reports
-the fraction that is left over.
+the free camera on. Every `camera` command that changes something replies with the camera's
+line, the same one `camera` alone and `status` print, so the reply says where the camera
+ended up rather than what was asked for: an offset of more than half a tile is partly taken
+by scrolling the map, and the line reports the fraction that is left over. A refused offset
+prints its reason and nothing about the camera, which it has not touched.
 
 ### Walk hop
 

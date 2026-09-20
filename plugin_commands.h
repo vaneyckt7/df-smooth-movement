@@ -251,8 +251,10 @@ command_outcomest camera_command(
 	Output &out,const std::vector<std::string> &parameters,plugin_statest &state,
 	const command_hostst &host)
 {
-	// Every branch here ends by printing the camera's line. A setter that changes something
-	// and says nothing is indistinguishable from one that silently refused, and the camera is
+	// Every branch here that changes something ends by printing the camera's line; the two
+	// that refuse print their reason instead, and say nothing about a camera they did not
+	// touch. A setter that changes something and says nothing is, after all, the thing being
+	// fixed: it is indistinguishable from one that silently refused, and the camera is
 	// the one setting whose effect can be invisible: `camera on` alone moves no pixel until
 	// something scrolls, and an offset within half a tile shifts the view by a few pixels that
 	// a user watching the console will not notice. Reporting the state after the change, rather
