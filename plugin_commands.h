@@ -118,6 +118,22 @@ inline const char *on_off(bool on)
 	return on?"on":"off";
 }
 
+// The camera's line: whether it is on and where it rests. Printed by `camera` with no
+// argument, by every `camera` command that changes something, and by `status`, so that the
+// answer to "what is the camera doing" is written once and cannot drift between them.
+//
+// The offset is negated because the camera stores rest as the direction the view moves and
+// says it as the direction the view sits, and it is subtracted from zero rather than negated
+// so that a rest of zero reads as `0.000` instead of the `-0.000` plain negation gives it.
+template<typename Output>
+void print_camera(Output &out,const plugin_statest &state)
+{
+	out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
+		on_off(state.render.camera.is_enabled()),
+		0.0-state.render.camera.requested_offset_x(),
+		0.0-state.render.camera.requested_offset_y());
+}
+
 // One line per setting, named by the setting's command word. Printed by the setting's bare
 // command and by `smooth-movement status`, which lists them all.
 template<typename Output>
@@ -139,9 +155,7 @@ void print_settings(Output &out,const plugin_statest &state,const command_hostst
 		"smooth-movement {}: {}\n",
 		host.plugin_version,
 		host.plugin_enabled?"enabled":"disabled");
-	out.print("free camera: {}, offset {:.3f} {:.3f} (tiles east/south of the grid)\n",
-		on_off(state.render.camera.is_enabled()),
-		-state.render.camera.requested_offset_x(),-state.render.camera.requested_offset_y());
+	print_camera(out,state);
 	for(const char *word:{"flip","movement","timestep","hauled"})
 		print_setting(out,state,word);
 	out.print("frame stats: {}\n",on_off(state.stats.enabled));
@@ -188,7 +202,17 @@ command_outcomest record_command(
 	if(parameters[1]=="stop")
 		{
 		if(parameters.size()!=2)return command_outcomest::wrong_usage;
-		state.recorder.stop();
+		// `stop` answers whether it stopped anything, under the one lock that decides it, so
+		// that the reply is about what happened rather than about what was asked. Saying
+		// "recording stopped" when none was running is how a mistyped file name looks when
+		// the `record` that was meant to start it had already failed: the user reads a
+		// confirmation and goes looking for a recording that was never begun. The refusal
+		// mirrors `record`'s own, which fails when a recording IS running.
+		if(!state.recorder.stop())
+			{
+			out.printerr("smooth-movement: no recording is running\n");
+			return command_outcomest::failed;
+			}
 		out.print("smooth-movement: recording stopped\n");
 		return command_outcomest::ok;
 		}
@@ -227,26 +251,35 @@ command_outcomest camera_command(
 	Output &out,const std::vector<std::string> &parameters,plugin_statest &state,
 	const command_hostst &host)
 {
+	// Every branch here ends by printing the camera's line. A setter that changes something
+	// and says nothing is indistinguishable from one that silently refused, and the camera is
+	// the one setting whose effect can be invisible: `camera on` alone moves no pixel until
+	// something scrolls, and an offset within half a tile shifts the view by a few pixels that
+	// a user watching the console will not notice. Reporting the state after the change, rather
+	// than the change, also means the reply carries the offset the camera actually took, which
+	// is not always the one asked for: `reset` leaves whatever whole tiles are still folded
+	// into the game's window.
 	if(parameters.size()==1)
 		{
-		out.print("free camera: {}, offset {:.3f} {:.3f}\n",
-			on_off(state.render.camera.is_enabled()),
-			-state.render.camera.requested_offset_x(),-state.render.camera.requested_offset_y());
+		print_camera(out,state);
 		return command_outcomest::ok;
 		}
 	if(parameters.size()==2&&parameters[1]=="on")
 		{
 		state.render.camera.set_enabled(true);
+		print_camera(out,state);
 		return command_outcomest::ok;
 		}
 	if(parameters.size()==2&&parameters[1]=="off")
 		{
 		state.render.camera.set_enabled(false);
+		print_camera(out,state);
 		return command_outcomest::ok;
 		}
 	if(parameters.size()==2&&parameters[1]=="reset")
 		{
 		state.render.camera.request_rest(0.0,0.0);
+		print_camera(out,state);
 		return command_outcomest::ok;
 		}
 	if(parameters.size()==3)
@@ -263,6 +296,7 @@ command_outcomest camera_command(
 		state.render.camera.set_enabled(true);
 		state.render.camera.request_rest(-fx,-fy);
 		state.render.camera.normalize_rest(host.scroll_window);
+		print_camera(out,state);
 		return command_outcomest::ok;
 		}
 	return command_outcomest::wrong_usage;

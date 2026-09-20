@@ -167,7 +167,7 @@ void test_settings_printout()
 	const runst r=run(state,{"status"});
 	expect_ok("status",r,
 		"smooth-movement 9.9.9: enabled\n"
-		"free camera: off, offset -0 -0 (tiles east/south of the grid)\n"
+		"free camera: off, offset 0 0 (tiles east/south of the grid)\n"
 		"sprite flipping: off\n"
 		"movement: none\n"
 		"time step: 150 ms\n"
@@ -222,8 +222,12 @@ void test_record()
 		run(state,{"record",refused,"10","x"},disabled_host));
 	expect_ok("record status while disabled",run(state,{"record","status"},disabled_host),
 		"recording: off\n");
-	expect_ok("record stop while disabled",run(state,{"record","stop"},disabled_host),
-		"smooth-movement: recording stopped\n");
+	// Nothing is recording, so `stop` refuses rather than confirming a stop that did not
+	// happen. The disabled host is what asks here, which also shows the refusal is about the
+	// recording and not about the plugin being off: `stop` is reachable either way.
+	expect_failed("record stop with nothing recording",
+		run(state,{"record","stop"},disabled_host),
+		"smooth-movement: no recording is running\n");
 	expect_failed("record to a directory",run(state,{"record","/"}),
 		"smooth-movement: cannot write /\n");
 	const std::string file="harness/out/test-commands.rec";
@@ -238,9 +242,17 @@ void test_record()
 		status.text.find("test-commands.rec")!=std::string::npos);
 	expect_ok("record stop",run(state,{"record","stop"}),"smooth-movement: recording stopped\n");
 	expect_true("record stop stops",!state.recorder.running());
+	// The same words a second time now have nothing to end. Without this case, a `stop` that
+	// always confirms passes the check above just as well.
+	expect_failed("record stop twice",run(state,{"record","stop"}),
+		"smooth-movement: no recording is running\n");
 	expect_ok("record default count",run(state,{"record",file}),
 		"smooth-movement: recording 900 frames to harness/out/test-commands.rec\n");
-	state.recorder.stop();
+	// A recording outlives the plugin being turned off, so the disabled host can still end it,
+	// and this one is ended that way both to show it and to leave nothing writing to the file
+	// the next line removes.
+	expect_ok("record stop while disabled",run(state,{"record","stop"},disabled_host),
+		"smooth-movement: recording stopped\n");
 	std::remove(file.c_str());
 }
 
@@ -262,13 +274,17 @@ void test_all()
 void test_camera()
 {
 	plugin_statest state;
-	expect_ok("camera",run(state,{"camera"}),"free camera: off, offset -0 -0\n");
-	expect_ok("camera on",run(state,{"camera","on"}),"");
+	expect_ok("camera",run(state,{"camera"}),
+		"free camera: off, offset 0 0 (tiles east/south of the grid)\n");
+	expect_ok("camera on",run(state,{"camera","on"}),
+		"free camera: on, offset 0 0 (tiles east/south of the grid)\n");
 	expect_true("camera on enables",state.render.camera.is_enabled());
-	expect_ok("camera off",run(state,{"camera","off"}),"");
+	expect_ok("camera off",run(state,{"camera","off"}),
+		"free camera: off, offset 0 0 (tiles east/south of the grid)\n");
 	expect_true("camera off disables",!state.render.camera.is_enabled());
 	scrolls=0;scrolled_x=0;scrolled_y=0;
-	expect_ok("camera offset",run(state,{"camera","0.25","-0.125"}),"");
+	expect_ok("camera offset",run(state,{"camera","0.25","-0.125"}),
+		"free camera: on, offset 0.25 -0.125 (tiles east/south of the grid)\n");
 	expect_true("camera offset enables",state.render.camera.is_enabled());
 	// The user's east/south offset is the camera's negative rest.
 	expect_near("camera offset x",state.render.camera.rest_offset_x(),-0.25);
@@ -276,11 +292,16 @@ void test_camera()
 	expect_true("camera offset normalizes through the host",scrolls==1);
 	expect_true("camera offset within half a tile scrolls nothing",
 		scrolled_x==0&&scrolled_y==0);
-	expect_ok("camera offset past half a tile",run(state,{"camera","0.75","0"}),"");
+	// A tile of the three quarters went into the window, so what the reply reports is the
+	// quarter left over on the other side of it.
+	expect_ok("camera offset past half a tile",run(state,{"camera","0.75","0"}),
+		"free camera: on, offset -0.25 0 (tiles east/south of the grid)\n");
 	expect_true("camera offset past half a tile scrolls a tile",scrolled_x==1&&scrolled_y==0);
 	// The printout is against the window as written, which the last command moved a tile.
-	expect_ok("camera printout",run(state,{"camera"}),"free camera: on, offset -0.25 -0\n");
-	expect_ok("camera reset",run(state,{"camera","reset"}),"");
+	expect_ok("camera printout",run(state,{"camera"}),
+		"free camera: on, offset -0.25 0 (tiles east/south of the grid)\n");
+	expect_ok("camera reset",run(state,{"camera","reset"}),
+		"free camera: on, offset 0 0 (tiles east/south of the grid)\n");
 	// No frame runs here, so the tile the previous command wrote has not landed: rest carries
 	// it until the landing, and the offset against the written window is zero.
 	expect_near("camera reset x",state.render.camera.rest_offset_x(),-1.0);
@@ -311,7 +332,8 @@ void test_camera()
 	// The user's -0.25 east becomes a rest of 0.25, less the tile of self-scroll the earlier
 	// "past half a tile" command wrote and no frame has landed yet, so -0.75. Both offsets
 	// are inside half a tile, so normalize_rest scrolls nothing further here.
-	expect_ok("camera negative offset",run(state,{"camera","-0.25","-0.125"}),"");
+	expect_ok("camera negative offset",run(state,{"camera","-0.25","-0.125"}),
+		"free camera: on, offset -0.25 -0.125 (tiles east/south of the grid)\n");
 	expect_near("camera negative offset x",state.render.camera.rest_offset_x(),-0.75);
 	expect_near("camera negative offset y",state.render.camera.rest_offset_y(),0.125);
 
@@ -319,7 +341,8 @@ void test_camera()
 	plugin_statest fresh;
 	// More precision than a tile offset can mean, but it is a number and it used to work, so
 	// it still does. The length the whitelist caps is the one the reading stays exact for.
-	expect_ok("camera long offset",run(fresh,{"camera","0.1234567","0"}),"");
+	expect_ok("camera long offset",run(fresh,{"camera","0.1234567","0"}),
+		"free camera: on, offset 0.123457 0 (tiles east/south of the grid)\n");
 	expect_near("camera long offset x",fresh.render.camera.rest_offset_x(),-0.1234567);
 	// Length is not what decides this one: it is a number, so it is an offset that is too far
 	// rather than a word that is not an offset. Only past the exact reading does it flip.
@@ -329,7 +352,8 @@ void test_camera()
 	// how far the reading stays exact, so a shorter cap silently refuses offsets that work and
 	// a longer one accepts offsets it reads wrong. Without the first of these a cap of ten
 	// would pass every other check in this file.
-	expect_ok("camera offset at the cap",run(fresh,{"camera","0.1234567890123","0"}),"");
+	expect_ok("camera offset at the cap",run(fresh,{"camera","0.1234567890123","0"}),
+		"free camera: on, offset 0.123457 0 (tiles east/south of the grid)\n");
 	expect_near("camera offset at the cap x",fresh.render.camera.rest_offset_x(),
 		-0.1234567890123);
 	expect_usage("camera offset one past the cap",run(fresh,{"camera","0.12345678901234","0"}));
@@ -377,7 +401,8 @@ void test_decimal_point()
 		// and the rest stays where the command put it.
 		plugin_statest state;
 		expect_ok((std::string("camera 0.25 in the ")+where).c_str(),
-			run(state,{"camera","0.25","-0.125"}),"");
+			run(state,{"camera","0.25","-0.125"}),
+			"free camera: on, offset 0.25 -0.125 (tiles east/south of the grid)\n");
 		expect_near((std::string("camera 0.25 in the ")+where+" reaches the camera").c_str(),
 			state.render.camera.rest_offset_x(),-0.25);
 		expect_near((std::string("camera -0.125 in the ")+where+" reaches the camera").c_str(),
@@ -394,7 +419,8 @@ void test_decimal_point()
 		// from an uncaught exception; now it is read here and means what it says. Quarter of a
 		// tile again, because half a tile is the boundary normalize_rest scrolls at.
 		expect_ok((std::string("camera .25 in the ")+where).c_str(),
-			run(state,{"camera",".25","0"}),"");
+			run(state,{"camera",".25","0"}),
+			"free camera: on, offset 0.25 0 (tiles east/south of the grid)\n");
 		expect_near((std::string("camera .25 in the ")+where+" is a quarter").c_str(),
 			state.render.camera.rest_offset_x(),-0.25);
 		expect_ok((std::string("hop height .25 in the ")+where).c_str(),
