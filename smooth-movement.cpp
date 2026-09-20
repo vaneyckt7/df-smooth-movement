@@ -31,6 +31,7 @@
 #include "free_camera.h"
 #include "plugin_commands.h"
 #include "plugin_state.h"
+#include "sprite_drawing.h"
 #include "sprite_placement.h"
 #include "sprite_proxies.h"
 #include "tile_coverage.h"
@@ -284,54 +285,6 @@ SDL_Texture *cached_texture(
 		static_cast<SDL_Texture *>(texture->second);
 }
 
-// The render_copy_ex_f null check is defensive only, not a graceful-degradation path.
-// `bind` aborts load_sdl on any missing symbol and plugin_enable then refuses the render hook.
-void render_copy_maybe_mirrored(
-	SDL_Renderer *renderer,
-	SDL_Texture *texture,
-	const SDL_FRect &destination,
-	bool mirrored)
-{
-	if(mirrored&&state.sdl.render_copy_ex_f!=nullptr)
-		{
-		state.sdl.render_copy_ex_f(
-			renderer,texture,nullptr,&destination,
-			0.0,nullptr,SDL_FLIP_HORIZONTAL);
-		return;
-		}
-	state.sdl.render_copy_f(renderer,texture,nullptr,&destination);
-}
-
-void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
-{
-	const sprite_placementst placement=place_sprite(renderer,proxy);
-	const SDL_FRect destination=
-		{
-		placement.x_px+float(proxy.mirror_shift)*placement.tile_size_px,
-		placement.y_px,
-		placement.tile_size_px,
-		placement.tile_size_px
-		};
-	render_copy_maybe_mirrored(
-		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
-		proxy.texture,
-		destination,
-		proxy.mirrored);
-}
-
-void draw_carried_item_proxy(
-	df::renderer_2d_base *renderer,
-	const carried_item_proxyst &proxy)
-{
-	// The icon rides the creature's movement so it stays on the sprite that carries it.
-	const sprite_placementst placement=place_sprite(renderer,proxy);
-	const auto icon=carried_item_icon_rect(placement.x_px,placement.y_px,placement.tile_size_px);
-	const SDL_FRect destination={icon.x_px,icon.y_px,icon.width_px,icon.height_px};
-	state.sdl.render_copy_f(
-		static_cast<SDL_Renderer *>(renderer->sdl_renderer),
-		proxy.texture,nullptr,&destination);
-}
-
 df::item *hauled_item(const df::unit *unit)
 {
 	if(unit==nullptr)return nullptr;
@@ -554,7 +507,7 @@ void draw_movement_stages(
 		{
 		const auto group=static_cast<visual_render_groupst>(index);
 		for(const render_proxyst &proxy:proxies)
-			if(visual_render_group(proxy.layer)==group)draw_proxy(renderer,proxy);
+			if(visual_render_group(proxy.layer)==group)draw_proxy(state.sdl,renderer,proxy);
 		if(group==visual_render_groupst::designation)continue;
 		for(const auto &[x,y]:coverage.groups[index])
 			redraw_above(renderer,vp,x,y,group,coverage.selected);
@@ -590,7 +543,7 @@ void draw_viewport_movement_stages(
 			renderer,viewport.viewport,viewport.proxies,viewport.coverage);
 		if(index+1==viewports.size())
 			for(const carried_item_proxyst &proxy:carried_items)
-				draw_carried_item_proxy(renderer,proxy);
+				draw_carried_item_proxy(state.sdl,renderer,proxy);
 		// A viewport shades everything drawn beneath it, so this covers every staged tile.
 		// Restricting it to the tiles this viewport has sprites on would not deepen with distance.
 		for(const auto &[x,y]:coverage)

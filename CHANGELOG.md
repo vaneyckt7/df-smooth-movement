@@ -5,6 +5,17 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- Handing a sprite to SDL moved out of `smooth-movement.cpp` into `sprite_drawing.h`: the
+  rectangle a gliding sprite is copied into, the inset rectangle a hauled item's icon gets,
+  and the choice between SDL's plain copy and the one that can flip a sprite horizontally.
+  The functions take the plugin's table of SDL functions as an argument rather than reading
+  the plugin's state, so a harness test can fill that table with stand-ins that record what
+  was asked for. It now covers the mirror shift in pixels and which of the two calls a
+  flipped sprite takes, neither of which any unit test reached before, only the replays,
+  and it covers the icon's insets being applied to the placed corner rather than to a tile
+  corner -- `carried_item_icon_rect` itself was already tested on its own. Nothing the
+  plugin draws changes.
+
 - The pixel arithmetic that places a sprite on screen moved out of `smooth-movement.cpp`
   into `sprite_placement.h`: the tile size at a zoom, a tile's edge in pixels, and the
   corner a gliding sprite's rectangle starts at. Like the other split headers it needs
