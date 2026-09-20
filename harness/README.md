@@ -46,9 +46,10 @@ The scripts build and write under `harness/out/`, which is ignored by git, with 
 the path; clang and g++ both work. Run them from the repository root. `<plugin dir>` is a
 directory holding the plugin sources (`smooth-movement.cpp`, `visual_animation.h`,
 `movement.h`, `frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `free_camera.h`,
-`plugin_commands.h`, `plugin_settings.h`, `plugin_state.h`, `sprite_placement.h`,
-`sprite_proxies.h`, `tile_coverage.h`, `tile_repaint.h`, `view_context.h` and the unit
-test), such as the repository root (`.`) or an export of another branch, for example
+`plugin_commands.h`, `plugin_settings.h`, `plugin_state.h`, `sprite_drawing.h`,
+`sprite_placement.h`, `sprite_proxies.h`, `tile_coverage.h`, `tile_repaint.h`,
+`view_context.h` and the unit test), such as the repository root (`.`) or an export of
+another branch, for example
 `mkdir -p harness/out/src-base && git archive release/v0.5.0 | tar -x -C harness/out/src-base`.
 
 - `replay.sh <plugin dir> <label> <recording>`: builds the harness against that source and
@@ -83,8 +84,11 @@ test), such as the repository root (`.`) or an export of another branch, for exa
   sprite placement test (`test_sprite_placement.cpp`, which checks the tile size and tile
   edge in pixels at each zoom and where a gliding sprite's corner lands, including at the
   default zoom and at a zoom whose tile size is not a whole number of pixels, neither of
-  which any recording was made at: all four are at zoom 192, a 48 pixel tile) and the
-  free camera test
+  which any recording was made at: all four are at zoom 192, a 48 pixel tile), the sprite
+  drawing test (`test_sprite_drawing.cpp`, which fills the plugin's table of SDL functions
+  with recording stand-ins and checks the rectangle each sprite is copied into, the mirror
+  shift, which of SDL's two copy calls a flipped sprite takes, and the inset rectangle a
+  carried item's icon gets) and the free camera test
   (`test_free_camera.cpp`, which drives the camera with a stand-in manager and checks the
   render offset a landed scroll, a window jump, a followed movement, a normalization write
   and a middle-mouse drag give) and the view context test (`test_view_context.cpp`, which
