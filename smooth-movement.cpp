@@ -31,6 +31,7 @@
 #include "free_camera.h"
 #include "plugin_commands.h"
 #include "plugin_state.h"
+#include "sprite_placement.h"
 #include "sprite_proxies.h"
 #include "tile_coverage.h"
 #include "tile_repaint.h"
@@ -82,18 +83,6 @@ struct scope_guardst
 };
 
 plugin_statest state;
-
-// The side of a tile on screen in pixels at the renderer's zoom: 32 at the default zoom of
-// 128, scaled with the zoom otherwise and never below one pixel.
-int32_t tile_size_px(int32_t zoom)
-{
-	return zoom==128?32:std::max(1,zoom*32/128);
-}
-
-double renderer_tile_px(const df::renderer_2d_base *renderer)
-{
-	return double(tile_size_px(renderer->viewport_zoom_factor));
-}
 
 // Scrolls the game's window position by whole tiles for the camera and says which axes it
 // applied: an axis without a window, or that would go negative, is left alone.
@@ -185,11 +174,6 @@ viewport_visual_animation_inputst animation_input(df::graphic_viewportst *vp)
 bool viewport_readable(df::graphic_viewportst *vp)
 {
 	return vp!=nullptr&&vp->flag.bits.active&&animation_input(vp).valid();
-}
-
-int32_t tile_pixel(int32_t tile,int32_t origin,int32_t zoom)
-{
-	return zoom==128?32*tile+origin:(zoom*32*tile)/128+origin;
 }
 
 struct viewport_renderst
@@ -316,29 +300,6 @@ void render_copy_maybe_mirrored(
 		return;
 		}
 	state.sdl.render_copy_f(renderer,texture,nullptr,&destination);
-}
-
-// Where a sprite gliding from its source tile to its target tile sits on screen this frame:
-// the top left corner in pixels and the tile size. The movement gives the sprite's offset
-// from the source tile (movement.h); a proxy that fell back takes the default movement's.
-struct sprite_placementst
-{
-	float x_px;
-	float y_px;
-	float tile_size_px;
-};
-
-template<typename Proxy>
-sprite_placementst place_sprite(const df::renderer_2d_base *renderer,const Proxy &proxy)
-{
-	const int32_t zoom=renderer->viewport_zoom_factor;
-	const float target_x_px=float(tile_pixel(proxy.target_x,renderer->origin_x,zoom));
-	const float target_y_px=float(tile_pixel(proxy.target_y,renderer->origin_y,zoom));
-	const float tile_px=float(tile_size_px(zoom));
-	const float source_x_px=target_x_px+(proxy.source_x_tiles-proxy.target_x)*tile_px;
-	const float source_y_px=target_y_px+(proxy.source_y_tiles-proxy.target_y)*tile_px;
-	return {source_x_px+proxy.offset_x_tiles*tile_px,
-		source_y_px+proxy.offset_y_tiles*tile_px,tile_px};
 }
 
 void draw_proxy(df::renderer_2d_base *renderer,const render_proxyst &proxy)
