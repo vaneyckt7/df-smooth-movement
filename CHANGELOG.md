@@ -5,6 +5,24 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- `harness/recordings/fortress-carried-400.rec` is a fifth recorded scene, the first in which
+  anything is actually being carried, with its 400 digest lines in `harness/expected/`. The
+  `hauled` setting has been on in a recording since `fortress-hauled-400`, but no unit in any
+  of the four earlier scenes was holding anything, so the icons never got drawn and the code
+  that draws them was checked by reading it. This one has a dwarf holding a boulder on every
+  frame -- 1636 of its 6118 unit records carry one, of three stone materials, and the replay
+  draws 1577 icons -- and it is at zoom 160, where the earlier four are all at zoom 192. The
+  scene is staged, which `harness/README.md` says where the recording is described: the
+  benchmark save is a fresh embark where nobody hauls anything, so the boulders were created
+  straight into the dwarves' inventories as hauled items and removed again afterwards. The
+  plugin reads an inventory item's mode and its material's texture position and nothing else,
+  so that is the same input to it as a real haul. Eleven mutations of the icon path were
+  measured against all five recordings: eight change what is drawn, and all eight are caught
+  by this recording and by none of the other four. The three that survive are ones no replay
+  can catch -- a rebuilt item is always a boulder, and every texture was already cached --
+  or that this scene has no need of, its every icon finding its carrier on the viewport the
+  icon is drawn over.
+
 - Painting the map over the frame the game has already finished moved out of
   `smooth-movement.cpp` into `map_painting.h`: blacking out the pixels that are about to be
   painted again, the camera glide's pass, which clips to the map rectangle, blacks out all of

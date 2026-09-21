@@ -92,15 +92,16 @@ the unit test), such as the repository root (`.`) or an export of another branch
   sprite placement test (`test_sprite_placement.cpp`, which checks the tile size and tile
   edge in pixels at each zoom and where a gliding sprite's corner lands, including at the
   default zoom and at a zoom whose tile size is not a whole number of pixels, neither of
-  which any recording was made at: all four are at zoom 192, a 48 pixel tile), the sprite
-  drawing test (`test_sprite_drawing.cpp`, which fills the plugin's table of SDL functions
-  with recording stand-ins and checks the rectangle each sprite is copied into, the mirror
-  shift, which of SDL's two copy calls a flipped sprite takes, and the inset rectangle a
-  carried item's icon gets), the movement drawing test (`test_movement_drawing.cpp`, which
-  records every sprite copy and every repaint in one ordered list and checks the order the
-  stages go down in, that each stage's repaint hides the layers the next stages cover, that
-  the designation stage asks for no repaint, that a lower viewport is put back before its own
-  sprites, and that the hauled icons go on last of all), the map painting test
+  which any recording was made at: they are at zoom 192 and zoom 160, a 48 and a 40 pixel
+  tile), the sprite drawing test (`test_sprite_drawing.cpp`, which fills the plugin's table
+  of SDL functions with recording stand-ins and checks the rectangle each sprite is copied
+  into, the mirror shift, which of SDL's two copy calls a flipped sprite takes, and the
+  inset rectangle a carried item's icon gets), the movement drawing test
+  (`test_movement_drawing.cpp`, which records every sprite copy and every repaint in one
+  ordered list and checks the order the stages go down in, that each stage's repaint hides
+  the layers the next stages cover, that the designation stage asks for no repaint, that a
+  lower viewport is put back before its own sprites, and that the hauled icons go on last of
+  all), the map painting test
   (`test_map_painting.cpp`, which checks which pixels of the finished frame each of the two
   passes paints over: that a covered tile and the tiles of the frame before are blacked out
   where they sit on screen, that a tile off the viewport is left alone, that the world layers
@@ -122,31 +123,53 @@ the unit test), such as the repository root (`.`) or an export of another branch
   in `recordings/` and fails when any frame's digest differs from `expected/<name>.digest`
   or `recinfo.py` reads a different number of frames than the replay.
   It prints the replay's repaint total alongside the game's from the self-check, which
-  match only for the plugin version that made the recording, which for the four now in
-  `recordings/` is the version that put them there. An empty `recordings/` would make that
-  last part check nothing, so the run fails rather than passing quietly; setting
-  `HARNESS_ALLOW_NO_RECORDINGS=1` runs the rest of the harness knowing the scenes are
-  missing, which is not the case here.
+  match only for the plugin version that made the recording or one that draws that scene
+  the same, which for the five now in `recordings/` holds at this version. An empty
+  `recordings/` would make that last part check nothing, so the run fails rather than
+  passing quietly; setting `HARNESS_ALLOW_NO_RECORDINGS=1` runs the rest of the harness
+  knowing the scenes are missing, which is not the case here.
 - `compile.sh <plugin dir>`: builds the plugin in DFHack's docker build image against the real
   headers. Needs `DFHACK_SRC` pointing at a DFHack checkout with `build/linux` configured,
   and touches nothing outside that build directory.
 
 ## Recordings in the repository
 
-There are four, all of one fortress -- Nakasmafol, a fresh embark -- at zoom 192 with nine
-viewports, the window still and sprite flipping on. They were recorded on 2026-09-19 with the
-plugin at `c4bb6ce`, which is the version that made the digests, so the game's repaint count
-in each one's self-check matches the replay's rather than only being informative.
+There are five, all of one fortress -- Nakasmafol, a fresh embark -- with nine viewports, the
+window still and sprite flipping on. The first four were recorded on 2026-09-19 at zoom 192
+with the plugin at `c4bb6ce`; `fortress-carried-400.rec` was recorded on 2026-09-20 at zoom
+160 with the plugin at `b536c3d`. Each one's self-check repaint count matches the replay's at
+this version rather than only being informative: for the first four because `c4bb6ce` made
+the digests, and for the carried one because every commit between `b536c3d` and here only
+moved the drawing code, which was checked by replaying it against a build of `b536c3d` and
+getting the same digest.
 
 | recording | frames | movement and settings | what it covers |
 | --------- | -----: | --------------------- | -------------- |
 | `fortress-600.rec` | 600 | `hop`, defaults | the free camera off, mirrored sprites, the hop's extra repainted row |
 | `fortress-camera-200.rec` | 200 | `hop`, defaults | the free camera on, resting at -0.3, 0.2 tiles; every frame painted |
-| `fortress-hauled-400.rec` | 400 | `hop`, defaults | hauled item icons on |
+| `fortress-carried-400.rec` | 400 | `hop`, defaults | hauled item icons on **and something to draw**: a dwarf holding a boulder on every frame, at zoom 160 |
+| `fortress-hauled-400.rec` | 400 | `hop`, defaults | hauled item icons on, with nothing being carried |
 | `fortress-smoothstep-300.rec` | 300 | `smoothstep` | the movement the README tells a new user to pick, which has no lift and so no extra row |
 
-None of them has a followed unit, a scroll, or a zoom change, and none uses `linear` or
-`none`. Those paths are still uncovered by a recorded scene.
+`fortress-carried-400.rec` is a staged scene, and says so here because a reader would
+otherwise take it for one the game produced on its own: the benchmark save is a fresh embark
+where nobody hauls anything, so the boulders in those dwarves' hands were created straight
+into their inventories with `mode` `Hauled` by a DFHack Lua script, three stone materials
+between them, and removed again afterwards. The plugin reads an inventory item's mode and its
+material's texture position and nothing else about how the item got there, so a staged item
+and a carried one are the same input to it. Measured on the recording: 1636 of its 6118 unit
+records carry an item, at least one on every frame, and the replay draws 1577 icons.
+
+Only one of the nine viewports draws anything in any of the five, so a sprite on a stacked
+z-level is still unwatched. None of them has a followed unit or a scroll, none changes zoom
+while it runs, and none uses `linear` or `none`. Two parts of the hauled path are uncovered
+by all five as well: the game had already cached a texture for every carried item, so the
+branch that stages a tile to make one never runs, and a recording carries an item's texture
+position rather than the item, so the replay rebuilds every carried item as a boulder and the
+bar and wood cases of `item_texpos` are unreachable. The texture cache test covers all three.
+Every icon in the carried recording also finds its carrier on the viewport it is drawn over,
+so the fallback that puts an unmatched item back on the straight path is left to the sprite
+proxies test.
 
 They replace `fortress-600.rec` and `fortress-camera-183.rec`, which commit `b4c32fc` deleted
 when the settings and the recording format moved over to naming a movement. Those two were
@@ -180,8 +203,8 @@ frame's digest on a scene where nothing had changed.
 So `build.sh` and `test.sh` compile with `-ffp-contract=off`, ahead of `CXXFLAGS` so a caller
 can still override it on purpose. Off rather than on is the direction that can be reached
 everywhere: every target can do a separate multiply and add, while making x86-64 fuse would
-mean requiring a CPU with FMA. With it the four recordings trace byte for byte the same on
-both machines. Anything else that builds the plugin for a digest has to set it too, and a
+mean requiring a CPU with FMA. With it the recordings trace byte for byte the same on both
+machines. Anything else that builds the plugin for a digest has to set it too, and a
 digest regenerated by a build without it belongs to that build alone.
 
 The rule for a change is by kind. A change that makes the plugin cheaper must change only the
