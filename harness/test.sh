@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds and runs the unit tests (the animation manager, recording codec, texture cache,
-# tile repaint, tile redraw, sprite proxy, sprite placement, sprite drawing, movement
-# drawing, free camera, view context and console command tests) against the stub headers in
+# Builds and runs the unit tests (the animation manager, recording codec, texture cache, tile
+# repaint, tile redraw, sprite proxy, sprite placement, sprite drawing, movement drawing, map
+# painting, free camera, view context and console command tests) against the stub headers in
 # stubs/, then replays the recording the codec test writes, which is three frames in the
 # current format naming a different movement each, so that the replay's two-pass decode of a
 # frame header is exercised without a fixture, then replays every recording in recordings/
@@ -45,6 +45,7 @@ run_test sprite-proxies
 run_test sprite-placement
 run_test sprite-drawing
 run_test movement-drawing
+run_test map-painting
 run_test free-camera
 run_test view-context
 run_test plugin-commands

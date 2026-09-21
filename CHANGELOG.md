@@ -5,6 +5,16 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- Painting the map over the frame the game has already finished moved out of
+  `smooth-movement.cpp` into `map_painting.h`: blacking out the pixels that are about to be
+  painted again, the camera glide's pass, which clips to the map rectangle, blacks out all of
+  it and repaints every tile of it at an origin shifted by a fraction of a tile, and the
+  ordinary pass, which repaints only the tiles a sprite covers this frame together with the
+  ones it covered last frame and has since left. Both passes take the renderer as a template
+  argument and the plugin's state as an argument rather than reading it, so a harness test can
+  hand them a state of its own and a renderer that records every rectangle, clip and repaint
+  it is handed. Nothing the plugin draws changes.
+
 - Drawing a frame's movement in stages moved out of `smooth-movement.cpp` into
   `movement_drawing.h`: painting one render group of sprites and then asking the game to
   repaint, above that group only, the tiles those sprites cover; skipping that repaint for

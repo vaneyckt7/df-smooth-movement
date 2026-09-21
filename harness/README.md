@@ -46,10 +46,10 @@ The scripts build and write under `harness/out/`, which is ignored by git, with 
 the path; clang and g++ both work. Run them from the repository root. `<plugin dir>` is a
 directory holding the plugin sources (`smooth-movement.cpp`, `visual_animation.h`,
 `movement.h`, `frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `free_camera.h`,
-`movement_drawing.h`, `plugin_commands.h`, `plugin_settings.h`, `plugin_state.h`,
-`sprite_drawing.h`, `sprite_placement.h`, `sprite_proxies.h`, `texture_cache.h`,
-`tile_coverage.h`, `tile_redraw.h`, `tile_repaint.h`, `view_context.h` and the unit test),
-such as the repository root (`.`) or an export of another branch, for example
+`map_painting.h`, `movement_drawing.h`, `plugin_commands.h`, `plugin_settings.h`,
+`plugin_state.h`, `sprite_drawing.h`, `sprite_placement.h`, `sprite_proxies.h`,
+`texture_cache.h`, `tile_coverage.h`, `tile_redraw.h`, `tile_repaint.h`, `view_context.h` and
+the unit test), such as the repository root (`.`) or an export of another branch, for example
 `mkdir -p harness/out/src-base && git archive release/v0.5.0 | tar -x -C harness/out/src-base`.
 
 - `replay.sh <plugin dir> <label> <recording>`: builds the harness against that source and
@@ -100,7 +100,13 @@ such as the repository root (`.`) or an export of another branch, for example
   records every sprite copy and every repaint in one ordered list and checks the order the
   stages go down in, that each stage's repaint hides the layers the next stages cover, that
   the designation stage asks for no repaint, that a lower viewport is put back before its own
-  sprites, and that the hauled icons go on last of all) and the free camera test
+  sprites, and that the hauled icons go on last of all), the map painting test
+  (`test_map_painting.cpp`, which checks which pixels of the finished frame each of the two
+  passes paints over: that a covered tile and the tiles of the frame before are blacked out
+  where they sit on screen, that a tile off the viewport is left alone, that the world layers
+  go down before the sprites, and that the camera glide clips to the map rectangle it measures
+  before shifting, blacks it out once, repaints every tile of it at the shifted origin, puts
+  the origin back and drops its blank summary) and the free camera test
   (`test_free_camera.cpp`, which drives the camera with a stand-in manager and checks the
   render offset a landed scroll, a window jump, a followed movement, a normalization write
   and a middle-mouse drag give) and the view context test (`test_view_context.cpp`, which
