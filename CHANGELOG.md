@@ -5,6 +5,16 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- Drawing a frame's movement in stages moved out of `smooth-movement.cpp` into
+  `movement_drawing.h`: painting one render group of sprites and then asking the game to
+  repaint, above that group only, the tiles those sprites cover; skipping that repaint for
+  the designation group, which has nothing above it; repeating the whole thing for each
+  stacked viewport, lowest first, with the viewport reapplied before its own sprites go on;
+  the hauled item icons over the topmost viewport; and the interface shading over everything.
+  Both functions take the renderer as a template argument and the plugin's state as an
+  argument rather than reading it, so a harness test can hand them a state of its own and a
+  renderer that records the order it was asked to draw in. Nothing the plugin draws changes.
+
 - Finding the texture the game has already made for a sprite moved out of
   `smooth-movement.cpp` into `texture_cache.h`, along with the two questions the lookup is
   asked: which item a creature is hauling, and which texture position that item's material

@@ -46,10 +46,10 @@ The scripts build and write under `harness/out/`, which is ignored by git, with 
 the path; clang and g++ both work. Run them from the repository root. `<plugin dir>` is a
 directory holding the plugin sources (`smooth-movement.cpp`, `visual_animation.h`,
 `movement.h`, `frame_record.h`, `frame_recorder.h`, `frame_stats.h`, `free_camera.h`,
-`plugin_commands.h`, `plugin_settings.h`, `plugin_state.h`, `sprite_drawing.h`,
-`sprite_placement.h`, `sprite_proxies.h`, `texture_cache.h`, `tile_coverage.h`,
-`tile_redraw.h`, `tile_repaint.h`, `view_context.h` and the unit test), such as the
-repository root (`.`) or an export of another branch, for example
+`movement_drawing.h`, `plugin_commands.h`, `plugin_settings.h`, `plugin_state.h`,
+`sprite_drawing.h`, `sprite_placement.h`, `sprite_proxies.h`, `texture_cache.h`,
+`tile_coverage.h`, `tile_redraw.h`, `tile_repaint.h`, `view_context.h` and the unit test),
+such as the repository root (`.`) or an export of another branch, for example
 `mkdir -p harness/out/src-base && git archive release/v0.5.0 | tar -x -C harness/out/src-base`.
 
 - `replay.sh <plugin dir> <label> <recording>`: builds the harness against that source and
@@ -96,7 +96,11 @@ repository root (`.`) or an export of another branch, for example
   drawing test (`test_sprite_drawing.cpp`, which fills the plugin's table of SDL functions
   with recording stand-ins and checks the rectangle each sprite is copied into, the mirror
   shift, which of SDL's two copy calls a flipped sprite takes, and the inset rectangle a
-  carried item's icon gets) and the free camera test
+  carried item's icon gets), the movement drawing test (`test_movement_drawing.cpp`, which
+  records every sprite copy and every repaint in one ordered list and checks the order the
+  stages go down in, that each stage's repaint hides the layers the next stages cover, that
+  the designation stage asks for no repaint, that a lower viewport is put back before its own
+  sprites, and that the hauled icons go on last of all) and the free camera test
   (`test_free_camera.cpp`, which drives the camera with a stand-in manager and checks the
   render offset a landed scroll, a window jump, a followed movement, a normalization write
   and a middle-mouse drag give) and the view context test (`test_view_context.cpp`, which

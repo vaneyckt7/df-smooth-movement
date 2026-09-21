@@ -1,12 +1,12 @@
 #!/bin/sh
 # Builds and runs the unit tests (the animation manager, recording codec, texture cache,
-# tile repaint, tile redraw, sprite proxy, sprite placement, sprite drawing, free camera,
-# view context and console command tests) against the stub headers in stubs/, then replays the
-# recording the codec test writes, which is three frames in the current format naming a
-# different movement each, so that the replay's two-pass decode of a frame header is
-# exercised without a fixture, then replays every recording in recordings/ and requires
-# that every frame's draws digest to what expected/<name>.digest holds, and that
-# recinfo.py reads the same number of frames.
+# tile repaint, tile redraw, sprite proxy, sprite placement, sprite drawing, movement
+# drawing, free camera, view context and console command tests) against the stub headers in
+# stubs/, then replays the recording the codec test writes, which is three frames in the
+# current format naming a different movement each, so that the replay's two-pass decode of a
+# frame header is exercised without a fixture, then replays every recording in recordings/
+# and requires that every frame's draws digest to what expected/<name>.digest holds, and
+# that recinfo.py reads the same number of frames.
 # Exits non-zero when any fails, and also when recordings/ is empty, because that last part
 # is then checking nothing and a pass would say otherwise; HARNESS_ALLOW_NO_RECORDINGS=1
 # downgrades that to a note for a caller that knows. The game's own repaint count from the
@@ -44,6 +44,7 @@ run_test tile-redraw
 run_test sprite-proxies
 run_test sprite-placement
 run_test sprite-drawing
+run_test movement-drawing
 run_test free-camera
 run_test view-context
 run_test plugin-commands
