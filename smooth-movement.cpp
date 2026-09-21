@@ -33,14 +33,13 @@
 #include "tile_redraw.h"
 #include "tile_repaint.h"
 #include "view_context.h"
+#include "viewport_collection.h"
 #include "visual_animation.h"
 
 #include <SDL_render.h>
 
-#include <algorithm>
 #include <array>
 #include <atomic>
-#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -149,30 +148,6 @@ void update_visual_context(
 	if(change.panned)state.render.previous_coverage.clear();
 }
 
-viewport_visual_animation_inputst animation_input(df::graphic_viewportst *vp)
-{
-	const df::graphic_viewportst *const_viewport=vp;
-	return {
-		vp,
-		vp->dim_x,
-		vp->dim_y,
-		state.render.view_context.revision(),
-		visual_layers(const_viewport),
-		visual_layers(const_viewport,true),
-		vp->screentexpos_background,
-		vp->screentexpos_background_old,
-		window_x?*window_x:0,
-		window_y?*window_y:0,
-		state.render.drawn_arrays.frame_simulation_tick
-		};
-}
-
-// The layer arrays are freed and nulled without clearing the active flag.
-bool viewport_readable(df::graphic_viewportst *vp)
-{
-	return vp!=nullptr&&vp->flag.bits.active&&animation_input(vp).valid();
-}
-
 // The active viewports with their recording slots, for the recorder.
 frame_recorderst::viewport_listst recorded_viewports()
 {
@@ -264,89 +239,6 @@ void record_frame_units(df::renderer_2d_base *renderer)
 		});
 }
 
-std::vector<carried_item_proxyst> collect_carried_item_proxies(
-	df::renderer_2d_base *renderer,
-	df::graphic_viewportst *vp)
-{
-	std::vector<carried_item_proxyst> proxies;
-	// An icon keeps to the path on its own; its carrier takes it along the movement (see
-	// mark_carried_item_movements).
-	const bool overshoots=state.render.animation_manager.movement().overshoot().any();
-	for(const df::unit *unit:units_in_view(vp))
-		{
-		const int32_t x=unit->pos.x-*window_x;
-		const int32_t y=unit->pos.y-*window_y;
-		if(!paintable_tile(vp,x,y))continue;
-		const int32_t index=x*vp->dim_y+y;
-		if(vp->screentexpos[index]==0)continue;
-		const int32_t texpos=item_texpos(hauled_item(unit));
-		SDL_Texture *texture=cached_viewport_texture(state,renderer,vp,index,texpos);
-		if(texture==nullptr)continue;
-		const auto movement=state.render.animation_manager.get_movement(
-			vp,viewport_visual_layer::center,x,y);
-		const float source_x_tiles=movement.active?movement.source_x_tiles:float(x);
-		const float source_y_tiles=movement.active?movement.source_y_tiles:float(y);
-		carried_item_proxyst proxy={
-			source_x_tiles,source_y_tiles,x,y,
-			movement.active?movement.offset_x_tiles:0.0f,
-			movement.active?movement.offset_y_tiles:0.0f,
-			movement.active?movement.travelled_pct:1.0f,
-			texture,overshoots,{}};
-		for(int32_t coverage_x=int32_t(std::floor(std::min(source_x_tiles,float(x))));
-			coverage_x<=int32_t(std::ceil(std::max(source_x_tiles,float(x))));++coverage_x)
-			for(int32_t coverage_y=int32_t(std::floor(std::min(source_y_tiles,float(y))));
-				coverage_y<=int32_t(std::ceil(std::max(source_y_tiles,float(y))));++coverage_y)
-				if(paintable_tile(vp,coverage_x,coverage_y))
-					proxy.coverage.emplace(coverage_x,coverage_y);
-		proxies.push_back(std::move(proxy));
-		}
-	return proxies;
-}
-
-std::vector<df::graphic_viewportst *> active_viewports()
-{
-	std::vector<df::graphic_viewportst *> viewports;
-	if(gps==nullptr)return viewports;
-	for(int32_t lower=7;lower>=0;--lower)
-		{
-		df::graphic_viewportst *vp=gps->lower_viewport[lower];
-		if(viewport_readable(vp))viewports.push_back(vp);
-		}
-	if(viewport_readable(gps->main_viewport))
-		viewports.push_back(gps->main_viewport);
-	return viewports;
-}
-
-std::vector<viewport_renderst> collect_viewport_renders(
-	df::renderer_2d_base *renderer,
-	const std::vector<df::graphic_viewportst *> &viewports)
-{
-	std::vector<viewport_renderst> renders;
-	renders.reserve(viewports.size());
-	for(df::graphic_viewportst *vp:viewports)
-		{
-		viewport_renderst render=
-			{
-			vp,
-			collect_proxies(
-				vp,state.render.animation_manager,state.flip_enabled,
-				[renderer](int32_t texpos){return cached_texture(renderer,texpos);}),
-			{}
-			};
-		render.coverage=collect_coverage(render.proxies,vp->dim_y);
-		renders.push_back(std::move(render));
-		}
-	return renders;
-}
-
-bool has_mirrored_viewport_facing(
-	const std::vector<df::graphic_viewportst *> &viewports)
-{
-	for(const df::graphic_viewportst *vp:viewports)
-		if(state.render.animation_manager.has_mirrored_facing(vp))return true;
-	return false;
-}
-
 void render_world_with_movement(df::renderer_2d_base *renderer)
 {
 	state.stats.frames.fetch_add(1,std::memory_order_relaxed);
@@ -372,8 +264,16 @@ void render_world_with_movement(df::renderer_2d_base *renderer)
 		state.stats.add_sync(sync_end_us-frame_start_us);
 		state.stats.add_render(end_us-sync_end_us);
 		});
+	// The game's tile camera, read once for the viewport questions this frame asks below. A
+	// null global reads as the origin, which is the answer the code below worked out for
+	// itself before it moved into viewport_collection.h. Everything reading these runs before
+	// the camera update, which can scroll the window itself; the carried-item icons run after
+	// it and read the globals again.
+	const int32_t window_x_tiles=window_x?*window_x:0;
+	const int32_t window_y_tiles=window_y?*window_y:0;
 	df::graphic_viewportst *vp=gps?gps->main_viewport:nullptr;
-	const std::vector<df::graphic_viewportst *> viewports=active_viewports();
+	const std::vector<df::graphic_viewportst *> viewports=
+		active_viewports(state,gps,window_x_tiles,window_y_tiles);
 
 	if(vp!=nullptr)update_visual_context(renderer,vp);
 	const int32_t follow_id=plotinfo?plotinfo->follow_unit:-1;
@@ -386,11 +286,13 @@ void render_world_with_movement(df::renderer_2d_base *renderer)
 		}
 	state.render.animation_manager.begin_frame(now_ms);
 	for(df::graphic_viewportst *viewport:viewports)
-		state.render.animation_manager.synchronize_viewport(animation_input(viewport));
+		state.render.animation_manager.synchronize_viewport(
+			animation_input(state,viewport,window_x_tiles,window_y_tiles));
 	state.render.animation_manager.end_frame();
 	if(timing_enabled)sync_end_us=frame_statsst::now_us();
 
-	if(!viewport_readable(vp)||renderer->sdl_renderer==nullptr)
+	if(!viewport_readable(state,vp,window_x_tiles,window_y_tiles)||
+		renderer->sdl_renderer==nullptr)
 		return;
 	const bool paused=pause_state&&*pause_state;
 	if(paused)state.render.camera.restart();
@@ -413,18 +315,23 @@ void render_world_with_movement(df::renderer_2d_base *renderer)
 		}
 	if(glide)state.render.camera_was_offset=true;
 	record_frame_units(renderer);
+	// The window again, not the locals read at the top of the frame: the camera update above
+	// scrolls it by whole tiles when it normalizes a finished drag, and an icon's tile has to
+	// come from the same window units_in_view puts its box around.
 	std::vector<carried_item_proxyst> carried_items=
-		state.hauled_enabled?collect_carried_item_proxies(renderer,vp):
+		state.hauled_enabled?
+		collect_carried_item_proxies(
+			state,renderer,vp,units_in_view(vp),window_x?*window_x:0,window_y?*window_y:0):
 		std::vector<carried_item_proxyst>{};
 	if(!glide&&!state.render.animation_manager.requires_full_redraw()&&
-		(!state.flip_enabled||!has_mirrored_viewport_facing(viewports))&&
+		(!state.flip_enabled||!has_mirrored_viewport_facing(state,viewports))&&
 		carried_items.empty()&&state.render.previous_coverage.empty())
 		return;
 	state.stats.painted.fetch_add(1,std::memory_order_relaxed);
 	state.render.hook_painted=true;
 
 	std::vector<viewport_renderst> viewport_renders=
-		collect_viewport_renders(renderer,viewports);
+		collect_viewport_renders(state,renderer,viewports);
 	tile_coveragest coverage=collect_viewport_coverage(viewport_renders);
 	// A hauled icon follows the movement with the creature under it, found among the main
 	// viewport's proxies; the icons are drawn over that viewport, the last one collected.
