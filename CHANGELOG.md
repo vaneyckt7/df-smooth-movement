@@ -5,6 +5,24 @@
 The plugin reports this version (`plugin_version` in `smooth-movement.cpp`); there is no
 `v0.5.0` tag, so everything in this section is still unreleased.
 
+- Deciding which viewports a frame draws from moved out of `smooth-movement.cpp` into
+  `viewport_collection.h`: which of the game's nine viewports can be read at all -- the game
+  frees a viewport's per-tile arrays without clearing its active flag, so being active is not
+  the same question as being readable -- listed lowest z-level first, the order the game draws
+  them in; what the animation manager is told about each of them; which sprites each viewport
+  contributes and which tiles those sprites cover; which creature in view carries a hauled
+  item icon, where that icon travels and which tiles it covers; and whether any viewport holds
+  a creature facing the way the tileset does not draw, which is what the `flip` setting turns
+  into a mirrored sprite. The functions take the renderer as a template argument, and the
+  plugin's state, the game's viewport table and the map scroll as arguments rather than
+  reading the globals, so a harness test can hand them a state, a renderer and viewports of
+  its own; `harness/test_viewport_collection.cpp` is that test. The map scroll is now read
+  into a pair of locals for the questions a frame asks before the camera update; the icon
+  path, which runs after that update and so after the camera may have scrolled the map
+  itself, still reads the globals where it stands, and now falls back to the origin as every
+  other reader already did; no frame reaches that fallback, because the list of creatures in
+  view is empty when the game has no scroll position. Nothing the plugin draws changes.
+
 - `harness/recordings/fortress-carried-400.rec` is a fifth recorded scene, the first in which
   anything is actually being carried, with its 400 digest lines in `harness/expected/`. The
   `hauled` setting has been on in a recording since `fortress-hauled-400`, but no unit in any

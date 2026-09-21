@@ -107,7 +107,13 @@ the unit test), such as the repository root (`.`) or an export of another branch
   where they sit on screen, that a tile off the viewport is left alone, that the world layers
   go down before the sprites, and that the camera glide clips to the map rectangle it measures
   before shifting, blacks it out once, repaints every tile of it at the shifted origin, puts
-  the origin back and drops its blank summary) and the free camera test
+  the origin back and drops its blank summary), the viewport collection test
+  (`test_viewport_collection.cpp`, which builds stub viewports around the real animation
+  manager and checks which of the game's nine viewports a frame reads and in what order, what
+  the manager is told about each, that a creature's tile is its world position less the map
+  scroll, which creatures get a carried-item icon and which tiles that icon covers, that an
+  item the game has never drawn is staged to make a texture for it, and that each viewport's
+  sprites and coverage come from that viewport alone) and the free camera test
   (`test_free_camera.cpp`, which drives the camera with a stand-in manager and checks the
   render offset a landed scroll, a window jump, a followed movement, a normalization write
   and a middle-mouse drag give) and the view context test (`test_view_context.cpp`, which
