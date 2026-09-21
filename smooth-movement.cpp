@@ -23,9 +23,9 @@
 #include "frame_recorder.h"
 #include "frame_stats.h"
 #include "free_camera.h"
+#include "movement_drawing.h"
 #include "plugin_commands.h"
 #include "plugin_state.h"
-#include "sprite_drawing.h"
 #include "sprite_placement.h"
 #include "sprite_proxies.h"
 #include "texture_cache.h"
@@ -339,50 +339,6 @@ std::vector<viewport_renderst> collect_viewport_renders(
 	return renders;
 }
 
-void draw_movement_stages(
-	df::renderer_2d_base *renderer,
-	df::graphic_viewportst *vp,
-	const std::vector<render_proxyst> &proxies,
-	const render_coveragest &coverage)
-{
-	for(size_t index=0;index<coverage.groups.size();++index)
-		{
-		const auto group=static_cast<visual_render_groupst>(index);
-		for(const render_proxyst &proxy:proxies)
-			if(visual_render_group(proxy.layer)==group)draw_proxy(state.sdl,renderer,proxy);
-		if(group==visual_render_groupst::designation)continue;
-		for(const auto &[x,y]:coverage.groups[index])
-			redraw_above(state,renderer,vp,x,y,group,coverage.selected);
-		}
-}
-
-void draw_viewport_movement_stages(
-	df::renderer_2d_base *renderer,
-	const std::vector<viewport_renderst> &viewports,
-	const tile_coveragest &coverage,
-	const std::vector<carried_item_proxyst> &carried_items)
-{
-	for(size_t index=0;index<viewports.size();++index)
-		{
-		// A lower z-level's proxy must be covered by the next viewport's fog and terrain.
-		// Reapply that viewport before its own proxies, matching DF's lower-to-main draw order.
-		if(index>0)redraw_viewport_tiles(state,renderer,viewports[index],coverage);
-		const viewport_renderst &viewport=viewports[index];
-		draw_movement_stages(
-			renderer,viewport.viewport,viewport.proxies,viewport.coverage);
-		if(index+1==viewports.size())
-			for(const carried_item_proxyst &proxy:carried_items)
-				draw_carried_item_proxy(state.sdl,renderer,proxy);
-		// A viewport shades everything drawn beneath it, so this covers every staged tile.
-		// Restricting it to the tiles this viewport has sprites on would not deepen with distance.
-		for(const auto &[x,y]:coverage)
-			{
-			if(paintable_tile(viewport.viewport,x,y))
-				draw_interface_only(state,renderer,viewport.viewport,x,y);
-			}
-		}
-}
-
 bool has_mirrored_viewport_facing(
 	const std::vector<df::graphic_viewportst *> &viewports)
 {
@@ -521,7 +477,7 @@ void render_world_with_movement(df::renderer_2d_base *renderer)
 				redraw_world_tile(state,renderer,viewport_renders,coverage,x,y);
 			}
 		draw_viewport_movement_stages(
-			renderer,viewport_renders,coverage,carried_items);
+			state,renderer,viewport_renders,coverage,carried_items);
 		renderer->origin_x=saved_origin_x;
 		renderer->origin_y=saved_origin_y;
 		state.render.blank_summaries.clear();
@@ -555,7 +511,7 @@ void render_world_with_movement(df::renderer_2d_base *renderer)
 			redraw_world_tile(state,renderer,viewport_renders,coverage,x,y);
 		}
 	draw_viewport_movement_stages(
-		renderer,viewport_renders,coverage,carried_items);
+		state,renderer,viewport_renders,coverage,carried_items);
 
 	state.render.previous_coverage=std::move(coverage);
 }
